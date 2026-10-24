@@ -3,7 +3,8 @@ import { SidecarCredentials } from "../service/sidecar-credentials"
 import { addRendererHeaders, hasHeader, upsertHeader } from "./headers"
 import { isRendererUrl } from "./scheme"
 
-const rendererPermissions = new Set(["clipboard-sanitized-write", "notifications"])
+// `media` lets the composer's dictation button capture the microphone (local Whisper transcription).
+const rendererPermissions = new Set(["clipboard-sanitized-write", "notifications", "media"])
 
 export function allowRendererPermissions(win: BrowserWindow) {
   const webContentsId = win.webContents.id

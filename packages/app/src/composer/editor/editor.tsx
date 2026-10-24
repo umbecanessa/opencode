@@ -44,6 +44,7 @@ import type {
   ComposerSuggestion,
 } from "../types"
 import type { ComposerEditorModel, ComposerSelectControl } from "./interaction"
+import { ComposerVoiceButton } from "../voice"
 import { isAttachment } from "../prompt-parts"
 import "../attachments/attachments.css"
 import "./editor.css"
@@ -394,6 +395,9 @@ export function ComposerEditor(props: ComposerEditorProps) {
                   <Keybind keys={props.exitShellKeybind ?? ["ESC"]} variant="neutral" />
                 </span>
               </Button>
+            </Show>
+            <Show when={state.mode === "normal"}>
+              <ComposerVoiceButton editor={() => editor} />
             </Show>
             <ComposerEditorSubmitButton
               mode={state.mode}

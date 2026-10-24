@@ -173,6 +173,15 @@ const source = {
   "ui.promptInput.steer": "Steer",
   "ui.promptInput.queue": "Queue",
   "ui.promptInput.steerHint": "Send without interrupting",
+  "ui.promptInput.voiceInput": "Dictate",
+  "ui.promptInput.voiceStop": "Stop dictation",
+  "ui.promptInput.voiceListening": "Listening…",
+  "ui.promptInput.voiceTranscribing": "Transcribing…",
+  "ui.promptInput.voiceModelLoading": "Loading the local Whisper model…",
+  "ui.promptInput.voiceError": "Dictation failed: {{message}}",
+  "ui.promptInput.voiceNoAudio": "No audio recorded — right-click the mic button to pick another microphone",
+  "ui.promptInput.voiceNoSpeech": "No speech detected",
+  "ui.promptInput.voiceUnsupported": "Voice input is not available in this browser",
 
   "ui.tabs.close": "Close tab",
 

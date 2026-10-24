@@ -34,6 +34,9 @@ export default defineConfig({
     allowedHosts: true,
     port: 3000,
   },
+  // transformers.js (local Whisper dictation) does its own dynamic fetching of wasm and model assets.
+  optimizeDeps: { exclude: ["@huggingface/transformers", "onnxruntime-web"] },
+  assetsInclude: ["**/*.wasm", "**/*.onnx"],
   build: {
     ...(process.env.VITE_OPENCODE_TEST_FIXTURES === "1"
       ? {
