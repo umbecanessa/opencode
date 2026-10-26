@@ -184,6 +184,9 @@ const getBase = (appId: string): Configuration => {
       icon: `resources/icons/icon.icns`,
       extendInfo: {
         NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac: true,
+        // Without this key macOS crashes the app when the composer's dictation
+        // button calls getUserMedia; the audio-input entitlement alone is not enough.
+        NSMicrophoneUsageDescription: "OpenCode uses the microphone for voice dictation.",
       },
       hardenedRuntime: true,
       gatekeeperAssess: false,
