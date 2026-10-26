@@ -6,6 +6,9 @@ exec > ~/mobile-build.log 2>&1
 
 step() { echo "=== $1 $(date +%T) ==="; }
 
+export LANG=en_US.UTF-8
+export LC_ALL=en_US.UTF-8
+
 step "node"
 export PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"
 command -v node > /dev/null 2>&1 || { echo "node not found; installing node@22 via brew"; brew install node@22 || exit 1; }
@@ -42,8 +45,7 @@ DEVELOPMENT_TEAM=JTTR6TBH4U xcodebuild \
   -destination "id=$UDID" \
   -derivedDataPath ./dd \
   -allowProvisioningUpdates \
-  CODE_SIGN_STYLE=Automatic \
-  build || exit 1
+  build CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=JTTR6TBH4U || exit 1
 
 APP=$(find dd/Build/Products/Debug-iphoneos -maxdepth 1 -name "*.app" | head -1)
 echo "app: $APP"

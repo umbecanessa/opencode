@@ -12,13 +12,16 @@
       "bundleIdentifier": "dev.umbecanessa.opencode-mobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
-        "UISupportedInterfaceOrientations": ["UIInterfaceOrientationPortrait"]
+        "UISupportedInterfaceOrientations": [
+          "UIInterfaceOrientationPortrait"
+        ]
       }
     },
     "plugins": [
       "expo-router",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-font"
     ],
     "extra": {
       "router": {
