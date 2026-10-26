@@ -23,7 +23,7 @@ git log --oneline -1
 
 step "js deps"
 cd mobile/app || exit 1
-npm ci --no-fund --no-audit || npm install --no-fund --no-audit || exit 1
+npm ci --no-fund --no-audit || npm install --no-fund --no-audit --legacy-peer-deps || exit 1
 
 step "prebuild ios"
 command -v pod > /dev/null 2>&1 || echo "WARN: cocoapods not on PATH; expo may fall back to bundled pod"
