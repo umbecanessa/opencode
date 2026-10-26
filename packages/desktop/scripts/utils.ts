@@ -3,7 +3,10 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { Option, Schema } from "effect"
 
-const CLI_VERSION = "dev"
+// Pinned: the floating `dev` dist-tag moved to a build (0.0.0-dev-21922) that registers
+// the dev service under service-dev.json/0xc0e0, while this repo's client still probes
+// service.json/0xc0de. Re-pin (or sync the client probe) after rebasing onto upstream dev.
+const CLI_VERSION = "0.0.0-dev-21792"
 
 const Manifest = Schema.fromJsonString(Schema.Struct({ version: Schema.NonEmptyString }))
 
