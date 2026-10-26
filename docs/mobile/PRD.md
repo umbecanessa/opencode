@@ -4,7 +4,7 @@ Status: agreed direction; implementation not started.
 
 ## Repository and scope
 
-Build inside the personal `umbecanessa/opencode` fork, alongside the existing desktop app. Do not create a separate repository or disturb the installed desktop apps. Proposed packages: `packages/mobile` and `packages/notification-bridge`. Package names and workspace integration must be checked before scaffolding.
+Build inside the personal `umbecanessa/opencode` fork, alongside the existing desktop app. Locations: `mobile/app` (Expo) and `mobile/bridge` (GX10 notifier), deliberately outside the workspace globs so neither affects desktop/CLI builds.
 
 ## Purpose
 

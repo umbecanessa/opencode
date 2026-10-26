@@ -20,8 +20,8 @@ Phone requests for conversations, files and controls go directly to the relevant
 
 ## Repository boundaries
 
-- `packages/mobile` (planned): Expo application, navigation, secure credential storage, API adapters, view state and reader.
-- `packages/notification-bridge` (planned): headless TypeScript service, independent host watchers, notification delivery and durable ledger.
+- `mobile/app` (created): Expo application, navigation, secure credential storage, API adapters, view state and reader. Kept outside the workspace globs so its React Native tree never enters desktop/CLI builds; it has its own package.json and npm install.
+- `mobile/bridge` (planned): headless TypeScript service, independent host watchers, notification delivery and durable ledger.
 - Reuse the existing generated client where compatible with React Native and installed hosts. Do not import server/core runtimes into mobile or edit generated clients by hand.
 - Introduce a shared package only when actual duplicated contracts justify it. Keep secrets and machine-specific deployment config outside version control.
 - This documentation lives under `docs/mobile` so it does not redefine product/design authority for the existing desktop app.

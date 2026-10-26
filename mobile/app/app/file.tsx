@@ -1,0 +1,92 @@
+import { useLocalSearchParams, useRouter } from "expo-router"
+import { useEffect, useState } from "react"
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
+import Markdown from "react-native-markdown-display"
+import SegmentedControl from "../src/components/Segmented"
+import { useHosts } from "../src/state/hosts"
+import { useTheme } from "../src/theme"
+
+export default function FileView() {
+  const t = useTheme()
+  const router = useRouter()
+  const { host, directory, path, name } = useLocalSearchParams<{ host: string; directory: string; path: string; name: string }>()
+  const { client } = useHosts()
+  const [mode, setMode] = useState<"rendered" | "source">(String(name).endsWith(".md") || String(name).endsWith(".mdx") ? "rendered" : "source")
+  const [text, setText] = useState<string>()
+  const [truncated, setTruncated] = useState(false)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    setError("")
+    client(host)
+      ?.fsRead({ directory }, path)
+      .then((r) => {
+        setText(r.text)
+        setTruncated(r.truncated)
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [host, directory, path, client])
+
+  const mdStyles = StyleSheet.create({
+    body: { color: t.label, fontSize: 16, lineHeight: 25 },
+    heading1: { color: t.label, fontSize: 26, fontWeight: "700", marginTop: 20, marginBottom: 8 },
+    heading2: { color: t.label, fontSize: 21, fontWeight: "700", marginTop: 18, marginBottom: 6 },
+    heading3: { color: t.label, fontSize: 18, fontWeight: "700", marginTop: 14, marginBottom: 4 },
+    code_block: { backgroundColor: t.codeBackground, color: t.label, padding: 12, borderRadius: 10, fontSize: 13, fontFamily: "Menlo" },
+    code_inline: { backgroundColor: t.codeBackground, color: t.label, fontFamily: "Menlo", fontSize: 14, borderRadius: 4 },
+    link: { color: t.tint },
+    blockquote: { borderLeftColor: t.separator, backgroundColor: "transparent" },
+    hr: { backgroundColor: t.separator },
+    table: { borderColor: t.separator },
+    th: { borderColor: t.separator },
+    td: { borderColor: t.separator },
+  })
+
+  return (
+    <View style={{ flex: 1, backgroundColor: t.background }}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} hitSlop={14} style={styles.close}>
+          <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>Done</Text>
+        </Pressable>
+        <Text style={[t.font.footnote, { color: t.tertiaryLabel }]} numberOfLines={1}>
+          {name} · {host}
+        </Text>
+      </View>
+      <View style={{ paddingHorizontal: 16 }}>
+        <SegmentedControl
+          values={["Rendered", "Source"]}
+          selectedIndex={mode === "rendered" ? 0 : 1}
+          onChange={(e) => setMode(e.nativeEvent.selectedSegmentIndex === 0 ? "rendered" : "source")}
+          tintColor={t.tint}
+        />
+      </View>
+      {truncated && (
+        <Text style={[t.font.footnote, styles.banner, { color: t.status.waiting, backgroundColor: t.fill.secondary }]}>
+          Showing the first part of this file.
+        </Text>
+      )}
+      {error && (
+        <Text style={[t.font.callout, styles.banner, { color: t.status.failed, backgroundColor: t.fill.secondary }]}>{error}</Text>
+      )}
+      {!text && !error && <ActivityIndicator style={{ marginTop: 30 }} color={t.tint} />}
+      {text && (
+        <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
+          {mode === "rendered" ? (
+            <Markdown style={mdStyles}>{text}</Markdown>
+          ) : (
+            <Text style={[styles.source, { color: t.label }]} selectable>
+              {text}
+            </Text>
+          )}
+        </ScrollView>
+      )}
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 16, paddingTop: 14, paddingBottom: 10, gap: 12 },
+  close: { paddingVertical: 4 },
+  banner: { marginHorizontal: 16, marginTop: 10, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  source: { fontFamily: "Menlo", fontSize: 13, lineHeight: 19 },
+})
