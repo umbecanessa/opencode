@@ -8,9 +8,9 @@ Probed live on the Windows dev service (2026-10-26): `/openapi.json` (124 paths)
 | --- | --- | --- |
 | Server identity | `GET /api/info` | `{version, pid, urls[], paths, capabilities}` — use `version` for the compatibility gate |
 | Mint pairing code | `POST /api/pair` (mobile+bridge) | `{code, expires_in}` |
-| Redeem code | `GET /auth/connect/{code}` (mobile+bridge) | `{token}` — long-lived session token; no security scheme is documented in OpenAPI, so confirm token placement (header) when first wired |
+| Redeem code | `GET /auth/connect/{code}` (mobile+bridge) | `{token}` — **verified live**: the token authenticates as the HTTP Basic *password* with fixed user `opencode` (`Authorization: Basic base64("opencode:" + token)`), matching the desktop app's own `runtime/server/api.ts`. `Bearer` is rejected with 401 |
 
-Authentication observed locally is HTTP Basic against the registration password; remote hosts authenticate with the paired token. Treat the wire auth details as the first integration test, not settled fact.
+Location-scoped endpoints take `location` as a **nested query parameter** — `location[directory]=<urlencoded absolute path>` (dot notation also accepted; JSON-stringified objects are rejected with 400). `fs/read/*` wildcard paths work raw, slash-encoded, or `%5C`-encoded. All verified against the pinned server with a paired token: info, session list, event stream, and fs list/read all 200.
 
 ## Projects and locations
 

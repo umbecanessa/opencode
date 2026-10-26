@@ -3,7 +3,7 @@ import type { FileContent, FileEntry, Host, MessagePage, PermissionRequest, Sess
 
 export type Location = { directory: string }
 
-const loc = (l: Location) => `location=${encodeURIComponent(JSON.stringify(l))}`
+const loc = (l: Location) => `location[directory]=${encodeURIComponent(l.directory)}`
 
 export class Client {
   constructor(
@@ -11,9 +11,11 @@ export class Client {
     private token: string,
   ) {}
 
+  // Server auth is HTTP Basic with the fixed user "opencode"; the paired session
+  // token is used as the password (see packages/app/src/runtime/server/api.ts).
   private headers = (accept = "application/json") => ({
     accept,
-    authorization: `Bearer ${this.token}`,
+    authorization: `Basic ${btoa(`opencode:${this.token}`)}`,
   })
 
   private async request<T>(path: string, init?: { method?: string; body?: string }): Promise<T> {
