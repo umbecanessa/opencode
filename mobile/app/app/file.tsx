@@ -56,8 +56,7 @@ export default function FileView() {
         <SegmentedControl
           values={["Rendered", "Source"]}
           selectedIndex={mode === "rendered" ? 0 : 1}
-          onChange={(e) => setMode(e.nativeEvent.selectedSegmentIndex === 0 ? "rendered" : "source")}
-          tintColor={t.tint}
+          onChange={(i) => setMode(i === 0 ? "rendered" : "source")}
         />
       </View>
       {truncated && (

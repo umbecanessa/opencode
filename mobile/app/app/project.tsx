@@ -57,8 +57,7 @@ export default function Project() {
         <SegmentedControl
           values={["Sessions", "Files"]}
           selectedIndex={tab === "sessions" ? 0 : 1}
-          onChange={(e) => setTab(e.nativeEvent.selectedSegmentIndex === 0 ? "sessions" : "files")}
-          tintColor={t.tint}
+          onChange={(i) => setTab(i === 0 ? "sessions" : "files")}
         />
       </View>
       {error && <Text style={[t.font.footnote, styles.error, { color: t.status.failed }]}>{error}</Text>}
