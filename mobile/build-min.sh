@@ -18,8 +18,7 @@ npm --version
 step "repo update"
 cd ~/src/opencode || exit 1
 git fetch origin dev || exit 1
-git checkout -B dev origin/dev || exit 1
-git reset --hard origin/dev || exit 1
+git checkout -f -B dev origin/dev || exit 1
 git log --oneline -1
 
 step "js deps"
