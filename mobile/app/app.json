@@ -24,7 +24,14 @@
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "OpenCode Mobile uses the microphone so you can dictate prompts to your agents.",
+          "speechRecognitionPermission": "OpenCode Mobile turns your dictation into text on this iPhone before sending it as a prompt."
+        }
+      ]
     ],
     "extra": {
       "router": {

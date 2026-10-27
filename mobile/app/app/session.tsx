@@ -15,6 +15,8 @@ import {
   type NativeSyntheticEvent,
 } from "react-native"
 import { joinPath } from "../src/api/files"
+import type { PermissionDecision, PermissionRequest, Session as SessionInfo } from "../src/api/types"
+import { ApprovalCard } from "../src/components/session/Approval"
 import { Composer } from "../src/components/session/Composer"
 import {
   AssistantText,
@@ -29,7 +31,7 @@ import {
   type Message,
 } from "../src/components/session/Timeline"
 import { useHosts } from "../src/state/hosts"
-import { statusOf, useLive } from "../src/state/live"
+import { familyStatus, liveKey, useLive } from "../src/state/live"
 import { useTheme } from "../src/theme"
 
 const REFRESH_MS = 900
@@ -54,9 +56,42 @@ export default function Session() {
   const pinned = useRef(true)
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
-  const status = statusOf(live, params.host, params.id)
+  const [subagents, setSubagents] = useState<SessionInfo[]>([])
+  const [requests, setRequests] = useState<PermissionRequest[]>([])
+
+  const status = requests.length ? "waiting" : familyStatus(live, params.host, [params.id, ...subagents.map((s) => s.id)])
   const running = status === "running" || sending
   const hostName = hosts.find((h) => h.id === params.host)?.name ?? ""
+
+  // Subagents raise their own approvals, so the parent screen asks each running child as well.
+  const runningChildren = subagents.filter((s) => live.running.has(liveKey(params.host, s.id))).map((s) => s.id).join(",")
+  useEffect(() => {
+    if (!c) return
+    let cancelled = false
+    const ids = [params.id, ...runningChildren.split(",").filter(Boolean)]
+    const poll = () =>
+      Promise.allSettled(ids.map((s) => c.sessionPermissions(s))).then((r) => {
+        if (!cancelled) setRequests(r.flatMap((x) => (x.status === "fulfilled" ? x.value : [])))
+      })
+    poll()
+    const timer = setInterval(poll, 2500)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [c, params.id, runningChildren])
+
+  useEffect(() => {
+    c?.children(params.id).then(setSubagents).catch(() => {})
+  }, [c, params.id, messages.length])
+
+  const decide = async (request: PermissionRequest, decision: PermissionDecision) => {
+    if (!c) return
+    await c.replyPermission(request.sessionID, request.id, decision)
+    setRequests((r) => r.filter((x) => x.id !== request.id))
+    live.refresh()
+    scheduleRefresh()
+  }
 
   const merge = useCallback((fresh: Message[]) => {
     setMessages((current) => {
@@ -278,6 +313,15 @@ export default function Session() {
           <Ionicons name="arrow-down" size={18} color={t.label} />
         </Pressable>
       )}
+
+      {requests.map((r) => (
+        <ApprovalCard
+          key={r.id}
+          request={r}
+          context={r.sessionID === params.id ? undefined : `From subagent: ${subagents.find((s) => s.id === r.sessionID)?.title ?? r.sessionID}`}
+          onDecide={decide}
+        />
+      ))}
 
       <Composer running={running} disabled={!c} onSend={send} onStop={stop} />
     </KeyboardAvoidingView>

@@ -1,11 +1,12 @@
 import { useLocalSearchParams, useRouter } from "expo-router"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native"
 import SegmentedControl from "../src/components/Segmented"
-import { Row } from "../src/components/Rows"
+import { flattenFamilies, TreeRow } from "../src/components/SessionTree"
 import type { FileEntry, Session } from "../src/api/types"
 import { useHosts } from "../src/state/hosts"
-import { statusOf, useLive } from "../src/state/live"
+import { useLive } from "../src/state/live"
+import { nestSessions } from "../src/state/tree"
 import { useTheme } from "../src/theme"
 
 export default function Project() {
@@ -23,6 +24,8 @@ export default function Project() {
 
   const hostID = hosts.find((h) => h.name === host)?.id ?? host
   const c = client(hostID)
+  const [open, setOpen] = useState<Set<string>>(new Set())
+  const tree = useMemo(() => flattenFamilies(nestSessions(sessions), open), [sessions, open])
 
   useEffect(() => {
     if (!c) return
@@ -64,17 +67,25 @@ export default function Project() {
       {tab === "sessions" ? (
         <FlatList
           contentContainerStyle={{ paddingTop: 10, paddingBottom: 40 }}
-          data={sessions}
-          keyExtractor={(s) => s.id}
+          data={tree}
+          keyExtractor={(i) => i.key}
           ListEmptyComponent={<Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>No sessions in this project.</Text>}
           renderItem={({ item, index }) => (
-            <Row
+            <TreeRow
+              item={item}
               first={index === 0}
-              last={index === sessions.length - 1}
-              title={item.title}
+              last={index === tree.length - 1}
               hostName={host}
-              status={statusOf(live, hostID, item.id)}
-              onPress={() => router.push({ pathname: "/session", params: { host: hostID, id: item.id, title: item.title } })}
+              live={live}
+              onOpen={(s) => router.push({ pathname: "/session", params: { host: hostID, id: s.id, title: s.title } })}
+              onToggle={(key) =>
+                setOpen((current) => {
+                  const next = new Set(current)
+                  if (next.has(key)) next.delete(key)
+                  else next.add(key)
+                  return next
+                })
+              }
             />
           )}
         />

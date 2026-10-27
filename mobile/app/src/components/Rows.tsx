@@ -48,6 +48,7 @@ export const Row = ({
   detail,
   first,
   last,
+  accessory,
   onPress,
 }: {
   title: string
@@ -56,6 +57,7 @@ export const Row = ({
   detail?: string
   first?: boolean
   last?: boolean
+  accessory?: React.ReactNode
   onPress: () => void
 }) => {
   const t = useTheme()
@@ -81,10 +83,11 @@ export const Row = ({
         <View style={styles.meta}>
           <HostTag name={hostName} />
           {detail && (
-            <Text style={[t.font.caption, { color: t.tertiaryLabel }]} numberOfLines={1}>
+            <Text style={[t.font.caption, { color: t.tertiaryLabel, flexShrink: 1 }]} numberOfLines={1}>
               {detail}
             </Text>
           )}
+          {accessory}
         </View>
       </View>
       {status && <StatusText status={status} />}

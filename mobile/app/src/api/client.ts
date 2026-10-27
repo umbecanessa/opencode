@@ -1,5 +1,14 @@
 import { fetch as streamingFetch } from "expo/fetch"
-import type { FileContent, FileEntry, Host, MessagePage, PermissionRequest, Session, SessionEvent } from "./types"
+import type {
+  FileContent,
+  FileEntry,
+  Host,
+  MessagePage,
+  PermissionDecision,
+  PermissionRequest,
+  Session,
+  SessionEvent,
+} from "./types"
 
 export type Location = { directory: string }
 
@@ -72,7 +81,26 @@ export class Client {
     return { text: decoder.decode(slice), truncated, size: size || bytes.length }
   }
 
-  permissionRequests = () => this.request<{ data: PermissionRequest[] }>("/api/permission/request")
+  // The global /api/permission/request list is scoped to one location; the per-session list is not.
+  sessionPermissions = (sessionID: string) =>
+    this.request<{ data: Omit<PermissionRequest, "host">[] }>(`/api/session/${sessionID}/permission`).then((r) =>
+      r.data.map((p) => ({ ...p, host: this.host.id }) satisfies PermissionRequest),
+    )
+
+  replyPermission = async (sessionID: string, requestID: string, decision: PermissionDecision) => {
+    const res = await fetch(`${this.host.origin}/api/session/${sessionID}/permission/${requestID}/reply`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+      headers: { ...this.headers(), "content-type": "application/json" },
+    })
+    if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
+    if (!res.ok) throw new Error(`${this.host.name}: ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300))
+  }
+
+  children = (parentID: string) =>
+    this.sessions(`parentID=${encodeURIComponent(parentID)}&limit=50&order=desc`).then((r) =>
+      r.data.map((raw) => ({ ...(raw as object), host: this.host.id }) as Session),
+    )
 
   events = (onEvent: (e: SessionEvent) => void, signal: AbortSignal) =>
     (async () => {

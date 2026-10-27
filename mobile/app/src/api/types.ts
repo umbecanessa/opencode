@@ -16,6 +16,7 @@ export type Project = {
 
 export type Session = {
   id: string
+  parentID?: string
   projectID: string
   location: { directory: string }
   title: string
@@ -51,9 +52,12 @@ export type PermissionRequest = {
   sessionID: string
   action: string
   resources: string[]
+  save?: string[]
   message?: string
   host: HostID
 }
+
+export type PermissionDecision = "once" | "always" | "reject"
 
 export type SessionEvent = {
   host: HostID

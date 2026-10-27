@@ -1,8 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import { useState } from "react"
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native"
+import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../../theme"
+import { useDictation, voiceLanguages } from "../../voice"
 
 export const Composer = ({
   running,
@@ -19,11 +20,13 @@ export const Composer = ({
   const insets = useSafeAreaInsets()
   const [text, setText] = useState("")
   const [busy, setBusy] = useState(false)
+  const voice = useDictation(setText)
   const canSend = text.trim().length > 0 && !busy && !disabled
-  const showStop = running && !text.trim()
+  const showStop = running && !text.trim() && !voice.listening
 
   const send = async () => {
     if (!canSend) return
+    if (voice.listening) voice.stop()
     const value = text.trim()
     setBusy(true)
     setText("")
@@ -44,11 +47,46 @@ export const Composer = ({
         { paddingBottom: Math.max(insets.bottom, 10), backgroundColor: t.background, borderTopColor: t.separator },
       ]}
     >
-      <View style={[styles.field, { backgroundColor: t.surface, borderColor: t.separator }]}>
+      {voice.error.length > 0 && (
+        <Text style={[t.font.footnote, styles.voiceError, { color: t.status.failed }]} numberOfLines={2}>
+          {voice.error}
+        </Text>
+      )}
+      <View
+        style={[
+          styles.field,
+          { backgroundColor: t.surface, borderColor: voice.listening ? t.status.failed : t.separator },
+        ]}
+      >
+        {voice.available && (
+          <Pressable
+            onPress={() => (voice.listening ? voice.stop() : voice.start(text))}
+            hitSlop={8}
+            style={({ pressed }) => [
+              styles.mic,
+              { backgroundColor: voice.listening ? t.status.failed : "transparent", opacity: pressed ? 0.7 : 1 },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={voice.listening ? "Stop dictation" : "Dictate a message"}
+          >
+            <Ionicons name={voice.listening ? "mic" : "mic-outline"} size={20} color={voice.listening ? "#FFFFFF" : t.secondaryLabel} />
+          </Pressable>
+        )}
+        {voice.listening && voiceLanguages.length > 1 && (
+          <Pressable
+            onPress={() => voice.switchLanguage(text)}
+            hitSlop={8}
+            style={[styles.lang, { backgroundColor: t.fill.secondary }]}
+            accessibilityRole="button"
+            accessibilityLabel={`Dictation language ${voice.lang}. Tap to switch.`}
+          >
+            <Text style={[t.font.caption, { color: t.label, fontWeight: "700" }]}>{voice.lang.slice(0, 2).toUpperCase()}</Text>
+          </Pressable>
+        )}
         <TextInput
           value={text}
           onChangeText={setText}
-          placeholder={running ? "Steer the agent…" : "Message the agent"}
+          placeholder={voice.listening ? "Listening…" : running ? "Steer the agent…" : "Message the agent"}
           placeholderTextColor={t.tertiaryLabel}
           multiline
           editable={!disabled}
@@ -90,11 +128,14 @@ const styles = StyleSheet.create({
     alignItems: "flex-end",
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingLeft: 16,
+    paddingLeft: 5,
     paddingRight: 5,
     paddingVertical: 5,
     minHeight: 44,
   },
-  input: { flex: 1, fontSize: 16, lineHeight: 21, maxHeight: 132, paddingTop: 7, paddingBottom: 7, marginRight: 8 },
+  input: { flex: 1, fontSize: 16, lineHeight: 21, maxHeight: 132, paddingTop: 7, paddingBottom: 7, marginLeft: 8, marginRight: 8 },
+  mic: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  lang: { height: 26, minWidth: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", marginLeft: 4, marginBottom: 4, paddingHorizontal: 5 },
+  voiceError: { paddingHorizontal: 8, paddingBottom: 6 },
   action: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
 })
