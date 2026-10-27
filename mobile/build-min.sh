@@ -39,6 +39,7 @@ SCHEME=$(xcodebuild -list -project ios/*.xcodeproj 2>/dev/null | awk '/Schemes:/
 echo "scheme: $SCHEME"
 
 step "build (debug, device)"
+if [ "${SKIP_XCODE:-0}" = "1" ]; then echo "SKIP_XCODE=1: native project and pods ready; build/run from Xcode GUI"; exit 0; fi
 UDID=00008140-00126C420E40801C
 cd ios || exit 1
 DEVELOPMENT_TEAM=JTTR6TBH4U xcodebuild \

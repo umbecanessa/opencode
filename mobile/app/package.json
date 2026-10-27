@@ -8,6 +8,7 @@
     "@react-native-segmented-control/segmented-control": "^2.5.7",
     "expo": "~58.0.19",
     "expo-constants": "~58.0.13",
+    "expo-dev-client": "~58.0.16",
     "expo-font": "~58.0.10",
     "expo-linking": "~58.0.14",
     "expo-router": "~58.0.26",
