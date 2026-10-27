@@ -42,14 +42,19 @@ step "build (debug, device)"
 if [ "${SKIP_XCODE:-0}" = "1" ]; then echo "SKIP_XCODE=1: native project and pods ready; build/run from Xcode GUI"; exit 0; fi
 UDID=00008140-00126C420E40801C
 cd ios || exit 1
-DEVELOPMENT_TEAM=JTTR6TBH4U xcodebuild \
-  -project "${SCHEME}.xcodeproj" \
+if [ -d "${SCHEME}.xcworkspace" ]; then
+  PROJECT_ARGS=(-workspace "${SCHEME}.xcworkspace")
+else
+  PROJECT_ARGS=(-project "${SCHEME}.xcodeproj")
+fi
+xcodebuild \
+  "${PROJECT_ARGS[@]}" \
   -scheme "$SCHEME" \
   -configuration Debug \
   -destination "platform=iOS,id=$UDID" \
   -derivedDataPath ./dd \
   -allowProvisioningUpdates \
-  build CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=JTTR6TBH4U || exit 1
+  build DEVELOPMENT_TEAM=32G4S37Z7D || exit 1
 
 APP=$(find dd/Build/Products/Debug-iphoneos -maxdepth 1 -name "*.app" | head -1)
 echo "app: $APP"
