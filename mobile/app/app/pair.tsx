@@ -1,11 +1,13 @@
 import { useRouter } from "expo-router"
 import { useState } from "react"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
 import { useHosts } from "../src/state/hosts"
 import { useTheme } from "../src/theme"
 
 export default function Pair() {
   const t = useTheme()
+  const insets = useSafeAreaInsets()
   const router = useRouter()
   const { hosts, addHost } = useHosts()
   const [link, setLink] = useState("")
@@ -27,7 +29,7 @@ export default function Pair() {
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1, backgroundColor: t.background }}>
-      <View style={styles.wrap}>
+      <View style={[styles.wrap, { paddingTop: insets.top + 56 }]}>
         <Text style={[t.font.title2, { color: t.label, fontWeight: "700" }]}>
           {hosts.length === 0 ? "Connect your first machine" : "Add another machine"}
         </Text>

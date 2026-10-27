@@ -17,7 +17,7 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="pair" options={{ presentation: "modal", headerTitleAlign: "center", title: "Add host" }} />
+        <Stack.Screen name="pair" options={{ presentation: "modal", headerLargeTitle: false, headerTitleAlign: "center", title: "Add host" }} />
         <Stack.Screen
           name="file"
           options={{

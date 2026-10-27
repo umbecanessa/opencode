@@ -12,6 +12,9 @@
       "bundleIdentifier": "dev.umbecanessa.opencode-mobile",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true
+        },
         "UISupportedInterfaceOrientations": [
           "UIInterfaceOrientationPortrait"
         ]
