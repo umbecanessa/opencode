@@ -27,7 +27,11 @@ npm ci --no-fund --no-audit || npm install --no-fund --no-audit --legacy-peer-de
 
 step "prebuild ios"
 command -v pod > /dev/null 2>&1 || echo "WARN: cocoapods not on PATH; expo may fall back to bundled pod"
-npx expo prebuild --platform ios --clean || exit 1
+npx expo prebuild --platform ios --clean --no-install || exit 1
+if [ ! -f ios/Pods/Manifest.lock ]; then
+  step "pod install"
+  (cd ios && npx pod-install) || exit 1
+fi
 
 step "find scheme"
 SCHEME=$(xcodebuild -list -project ios/*.xcodeproj 2>/dev/null | awk '/Schemes:/{flag=1;next}flag&&NF{print $1;exit}')
@@ -41,7 +45,7 @@ DEVELOPMENT_TEAM=JTTR6TBH4U xcodebuild \
   -project "${SCHEME}.xcodeproj" \
   -scheme "$SCHEME" \
   -configuration Debug \
-  -destination "id=$UDID" \
+  -destination "platform=iOS,id=$UDID" \
   -derivedDataPath ./dd \
   -allowProvisioningUpdates \
   build CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=JTTR6TBH4U || exit 1
