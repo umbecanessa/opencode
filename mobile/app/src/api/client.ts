@@ -22,7 +22,7 @@ export class Client {
     const res = await fetch(`${this.host.origin}${path}`, {
       method: init?.method ?? "GET",
       body: init?.body,
-      headers: this.headers(),
+      headers: init?.body ? { ...this.headers(), "content-type": "application/json" } : this.headers(),
     })
     if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
     if (!res.ok) throw new Error(`${this.host.name}: ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300))
@@ -44,6 +44,15 @@ export class Client {
     this.request<{ data: Record<string, unknown>[]; cursor: MessagePage["cursor"] }>(
       `/api/session/${sessionID}/message?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     ).then((r) => ({ ...r, host: this.host.id, sessionID }))
+
+  prompt = (sessionID: string, text: string) =>
+    this.request<{ data: { id: string } }>(`/api/session/${sessionID}/prompt`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    })
+
+  interrupt = (sessionID: string) =>
+    this.request<{ interrupted: boolean }>(`/api/session/${sessionID}/interrupt`, { method: "POST" })
 
   fsList = (l: Location, path: string) =>
     this.request<{ data: FileEntry[] }>(`/api/fs/list?${loc(l)}&path=${encodeURIComponent(path)}`)

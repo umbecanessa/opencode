@@ -1,159 +1,310 @@
-import { useLocalSearchParams, useRouter } from "expo-router"
+import Ionicons from "@expo/vector-icons/Ionicons"
+import { Stack, useLocalSearchParams, useRouter } from "expo-router"
+import { useHeaderHeight } from "expo-router/react-navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { ActivityIndicator, FlatList, Pressable, StyleSheet, Text, View } from "react-native"
-import { extractFiles, joinPath } from "../src/api/files"
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from "react-native"
+import { joinPath } from "../src/api/files"
+import { Composer } from "../src/components/session/Composer"
+import {
+  AssistantText,
+  buildItems,
+  Note,
+  Thinking,
+  Thought,
+  ToolGroup,
+  TurnEnd,
+  UserBubble,
+  type Item,
+  type Message,
+} from "../src/components/session/Timeline"
 import { useHosts } from "../src/state/hosts"
+import { statusOf, useLive } from "../src/state/live"
 import { useTheme } from "../src/theme"
 
-type Msg = {
-  id: string
-  type: string
-  time?: { created?: number }
-  text?: string
-  content?: { type: string; text?: string; name?: string; state?: string }[]
-}
+const REFRESH_MS = 900
 
 export default function Session() {
   const t = useTheme()
   const router = useRouter()
-  const { host, id, title } = useLocalSearchParams<{ host: string; id: string; title: string }>()
-  const { client } = useHosts()
-  const c = client(host)
-  const [messages, setMessages] = useState<Msg[]>([])
+  const headerHeight = useHeaderHeight()
+  const params = useLocalSearchParams<{ host: string; id: string; title: string }>()
+  const { hosts, client } = useHosts()
+  const c = client(params.host)
+  const live = useLive(3000)
+  const [messages, setMessages] = useState<Message[]>([])
   const [cursor, setCursor] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
-  const [live, setLive] = useState(false)
   const [error, setError] = useState("")
+  const [title, setTitle] = useState(params.title)
+  const [atBottom, setAtBottom] = useState(true)
+  const [sending, setSending] = useState(false)
   const directory = useRef("")
-  const debounce = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const list = useRef<FlatList<Item>>(null)
+  const pinned = useRef(true)
+  const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
-  const first = useCallback(() => {
-    if (!c) return
-    c.session(id).then((s) => (directory.current = s.location?.directory ?? "")).catch(() => {})
-    c.messages(id)
+  const status = statusOf(live, params.host, params.id)
+  const running = status === "running" || sending
+  const hostName = hosts.find((h) => h.id === params.host)?.name ?? ""
+
+  const merge = useCallback((fresh: Message[]) => {
+    setMessages((current) => {
+      const ids = new Set(fresh.map((m) => m.id))
+      return [...fresh, ...current.filter((m) => !ids.has(m.id))]
+    })
+  }, [])
+
+  const refresh = useCallback(() => {
+    if (!c) return Promise.resolve()
+    return c
+      .messages(params.id)
       .then((page) => {
-        setMessages(page.data as Msg[])
+        merge(page.data as Message[])
+        setError("")
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+  }, [c, params.id, merge])
+
+  // Streams emit many events per second; refetch at most every REFRESH_MS, always catching the trailing edge.
+  const scheduleRefresh = useCallback(() => {
+    const state = throttle.current
+    if (state.timer) return
+    const wait = Math.max(0, REFRESH_MS - (Date.now() - state.last))
+    state.timer = setTimeout(() => {
+      state.timer = undefined
+      state.last = Date.now()
+      refresh()
+    }, wait)
+  }, [refresh])
+
+  useEffect(() => {
+    if (!c) return
+    c.session(params.id)
+      .then((s) => {
+        directory.current = s.location?.directory ?? ""
+        if (s.title) setTitle(s.title)
+      })
+      .catch(() => {})
+    c.messages(params.id)
+      .then((page) => {
+        setMessages(page.data as Message[])
         setCursor(page.cursor.next ?? undefined)
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
-  }, [c, id])
+    const abort = new AbortController()
+    const pending = throttle.current
+    c.events((e) => {
+      const data = e.data as { sessionID?: string }
+      if (e.type === "server.connected") return
+      if (data.sessionID && data.sessionID !== params.id) return
+      scheduleRefresh()
+    }, abort.signal)
+    return () => {
+      abort.abort()
+      clearTimeout(pending.timer)
+    }
+  }, [c, params.id, scheduleRefresh])
 
   const older = useCallback(() => {
     if (!c || !cursor) return
-    c.messages(id, cursor).then((page) => {
-      setMessages((m) => [...m, ...(page.data as Msg[])])
-      setCursor(page.cursor.next ?? undefined)
-    })
-  }, [c, id, cursor])
+    c.messages(params.id, cursor)
+      .then((page) => {
+        setMessages((m) => [...m, ...(page.data as Message[]).filter((x) => !m.some((y) => y.id === x.id))])
+        setCursor(page.cursor.next ?? undefined)
+      })
+      .catch(() => {})
+  }, [c, params.id, cursor])
 
-  useEffect(() => {
-    first()
+  const items = useMemo(() => buildItems(messages), [messages])
+
+  const openFile = useCallback(
+    (rel: string) => {
+      const path = joinPath(directory.current || "", rel)
+      router.push({
+        pathname: "/file",
+        params: { host: params.host, directory: directory.current, path, name: rel.split(/[\\/]/).pop() },
+      })
+    },
+    [router, params.host],
+  )
+
+  const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
+    const near = contentSize.height - (contentOffset.y + layoutMeasurement.height) < 96
+    pinned.current = near
+    if (near !== atBottom) setAtBottom(near)
+  }
+
+  const send = async (text: string) => {
     if (!c) return
-    const abort = new AbortController()
-    c.events((e) => {
-      const data = e.data as { sessionID?: string }
-      if (data.sessionID && data.sessionID !== id) return
-      if (e.type === "server.connected") return
-      clearTimeout(debounce.current)
-      debounce.current = setTimeout(() => c.messages(id).then((p) => setMessages(p.data as Msg[])).catch(() => {}), 1200)
-    }, abort.signal)
-    return () => {
-      setLive(true)
-      abort.abort()
+    setSending(true)
+    pinned.current = true
+    try {
+      await c.prompt(params.id, text)
+      await refresh()
+      live.refresh()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      throw e
+    } finally {
+      setSending(false)
     }
-  }, [c, id, first])
-
-  const openFile = (rel: string) => {
-    const path = joinPath(directory.current || "", rel)
-    router.push({
-      pathname: "/file",
-      params: { host, directory: directory.current, path, name: rel.split(/[\\/]/).pop() },
-    })
   }
 
-  const renderMsg = ({ item }: { item: Msg }) => {
-    if (item.type === "idle") return <View style={styles.gap} />
-    const isUser = item.type === "user"
-    const chunks: React.ReactNode[] = []
-    if (item.text) chunks.push(<FileText key="t" text={item.text} onFile={openFile} color={t.label} bg={isUser ? t.tint : undefined} />)
-    for (const [i, part] of (item.content ?? []).entries()) {
-      if (part.type === "text" && part.text)
-        chunks.push(<FileText key={`x${i}`} text={part.text} onFile={openFile} color={t.label} />)
-      if (part.type === "reasoning")
-        chunks.push(
-          <Text key={`r${i}`} style={[t.font.footnote, { color: t.tertiaryLabel, fontStyle: "italic" }]}>
-            reasoning…
-          </Text>,
-        )
-      if (part.type === "tool")
-        chunks.push(
-          <Text key={`o${i}`} style={[t.font.subhead, { color: part.state === "error" ? t.status.failed : t.secondaryLabel }]}>
-            ⚙ {part.name}
-            {part.state ? ` · ${part.state}` : ""}
-          </Text>,
-        )
-    }
-    return (
-      <View style={[styles.msg, isUser && { alignItems: "flex-end" }]}>
-        <View
-          style={{
-            maxWidth: "86%",
-            padding: 12,
-            borderRadius: 14,
-            backgroundColor: isUser ? t.tint : t.surface,
-          }}
-        >
-          {chunks}
-        </View>
-      </View>
-    )
+  const stop = async () => {
+    if (!c) return
+    await c.interrupt(params.id).catch((e) => setError(e instanceof Error ? e.message : String(e)))
+    live.refresh()
+    refresh()
   }
+
+  const renderItem = ({ item }: { item: Item }) => {
+    if (item.kind === "user") return <UserBubble item={item} />
+    if (item.kind === "text") return <AssistantText text={item.text} onFile={openFile} />
+    if (item.kind === "thought") return <Thought text={item.text} />
+    if (item.kind === "thinking") return <Thinking />
+    if (item.kind === "tools") return <ToolGroup tools={item.tools} />
+    if (item.kind === "end") return <TurnEnd outcome={item.outcome} time={item.time} />
+    return <Note text={item.text} />
+  }
+
+  const statusLine =
+    status === "waiting"
+      ? { text: "Needs your approval", color: t.status.waiting }
+      : running
+        ? { text: "Working…", color: t.status.running }
+        : { text: hostName ? `Idle · ${hostName}` : "Idle", color: t.tertiaryLabel }
 
   return (
-    <View style={{ flex: 1, backgroundColor: t.background }}>
-      {loading && <ActivityIndicator style={{ marginTop: 20 }} color={t.tint} />}
-      {error && <Text style={[t.font.footnote, { color: t.status.failed, padding: 16 }]}>{error}</Text>}
-      <FlatList
-        inverted
-        data={messages}
-        keyExtractor={(m) => m.id}
-        contentContainerStyle={{ paddingVertical: 16 }}
-        onEndReached={older}
-        onEndReachedThreshold={0.4}
-        renderItem={renderMsg}
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: t.background }}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      keyboardVerticalOffset={headerHeight}
+    >
+      <Stack.Screen
+        options={{
+          headerTitle: () => (
+            <View style={styles.headerTitle} accessible accessibilityRole="header">
+              <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]} numberOfLines={1}>
+                {title || "Session"}
+              </Text>
+              <View style={styles.statusRow}>
+                <View style={[styles.statusDot, { backgroundColor: statusLine.color }]} />
+                <Text style={[t.font.caption, { color: statusLine.color, fontWeight: "600" }]} numberOfLines={1}>
+                  {statusLine.text}
+                </Text>
+              </View>
+            </View>
+          ),
+        }}
       />
-      {live && <View style={styles.livePill}>{<Text style={[t.font.caption, { color: t.status.running, fontWeight: "700" }]}>● LIVE</Text>}</View>}
-    </View>
+
+      {error.length > 0 && (
+        <Pressable
+          onPress={() => {
+            setError("")
+            refresh()
+          }}
+          style={[styles.banner, { backgroundColor: t.fill.secondary }]}
+          accessibilityRole="button"
+          accessibilityHint="Retries loading the session"
+        >
+          <Ionicons name="warning-outline" size={16} color={t.status.failed} />
+          <Text style={[t.font.footnote, { color: t.label, flex: 1 }]} numberOfLines={2}>
+            {error}
+          </Text>
+          <Text style={[t.font.footnote, { color: t.tint, fontWeight: "600" }]}>Retry</Text>
+        </Pressable>
+      )}
+
+      {loading ? (
+        <View style={styles.center}>
+          <ActivityIndicator color={t.tint} />
+        </View>
+      ) : (
+        <FlatList
+          ref={list}
+          data={items}
+          keyExtractor={(i) => i.key}
+          renderItem={renderItem}
+          contentContainerStyle={styles.content}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          onScroll={onScroll}
+          scrollEventThrottle={64}
+          onStartReached={older}
+          onStartReachedThreshold={0.5}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          onContentSizeChange={() => {
+            if (pinned.current) list.current?.scrollToEnd({ animated: false })
+          }}
+          ListHeaderComponent={
+            cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
+          }
+          ListFooterComponent={running && items[items.length - 1]?.kind !== "thinking" ? <Thinking /> : undefined}
+          ListEmptyComponent={
+            <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
+              No messages yet. Send a prompt to get started.
+            </Text>
+          }
+        />
+      )}
+
+      {!atBottom && !loading && (
+        <Pressable
+          onPress={() => {
+            pinned.current = true
+            list.current?.scrollToEnd({ animated: true })
+          }}
+          style={({ pressed }) => [
+            styles.jump,
+            { backgroundColor: t.surfaceRaised, borderColor: t.separator, opacity: pressed ? 0.8 : 1 },
+          ]}
+          accessibilityRole="button"
+          accessibilityLabel="Jump to latest"
+        >
+          <Ionicons name="arrow-down" size={18} color={t.label} />
+        </Pressable>
+      )}
+
+      <Composer running={running} disabled={!c} onSend={send} onStop={stop} />
+    </KeyboardAvoidingView>
   )
 }
 
-const FileText = ({
-  text,
-  onFile,
-  color,
-  bg,
-}: {
-  text: string
-  onFile: (f: string) => void
-  color: string
-  bg?: string
-}) => (
-  <Text style={[{ fontSize: 16, lineHeight: 24, color: bg ? "#FFFFFF" : color }]}>
-    {extractFiles(text).map((seg, i) =>
-      seg.file ? (
-        <Text key={i} onPress={() => onFile(seg.text)} style={{ color: bg ? "#EAF3FF" : undefined, textDecorationLine: "underline" }}>
-          {seg.text}
-        </Text>
-      ) : (
-        <Text key={i}>{seg.text}</Text>
-      ),
-    )}
-  </Text>
-)
-
 const styles = StyleSheet.create({
-  msg: { paddingHorizontal: 14, paddingVertical: 5 },
-  gap: { height: 10 },
-  livePill: { position: "absolute", bottom: 14, alignSelf: "center", paddingHorizontal: 10, paddingVertical: 4, backgroundColor: "rgba(0,0,0,0.001)" },
+  headerTitle: { alignItems: "center", maxWidth: 240 },
+  statusRow: { flexDirection: "row", alignItems: "center", gap: 5, marginTop: 1 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  banner: { flexDirection: "row", alignItems: "center", gap: 8, marginHorizontal: 16, marginTop: 8, padding: 12, borderRadius: 12 },
+  center: { flex: 1, alignItems: "center", justifyContent: "center" },
+  content: { paddingBottom: 16 },
+  empty: { textAlign: "center", marginHorizontal: 32, marginTop: 60 },
+  jump: {
+    position: "absolute",
+    right: 16,
+    bottom: 96,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: StyleSheet.hairlineWidth,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
 })

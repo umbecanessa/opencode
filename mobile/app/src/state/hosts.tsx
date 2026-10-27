@@ -41,15 +41,17 @@ export const HostsProvider = ({ children }: { children: React.ReactNode }) => {
     await AsyncStorage.setItem(HOSTS_KEY, JSON.stringify(list))
   }
 
+  // One instance per host so screens can depend on a client without re-running effects every render.
+  const clients = useMemo(
+    () => new Map(hosts.flatMap((h) => (tokens[h.id] ? [[h.id, new Client(h, tokens[h.id])] as const] : []))),
+    [hosts, tokens],
+  )
+
   const value = useMemo<HostsState>(
     () => ({
       hosts,
       loading,
-      client: (id) => {
-        const host = hosts.find((h) => h.id === id)
-        const token = tokens[id]
-        return host && token ? new Client(host, token) : undefined
-      },
+      client: (id) => clients.get(id),
       addHost: async (name, link) => {
         const { origin, token } = await Client.redeem(link)
         const clash = hosts.find((h) => h.origin === origin)
@@ -72,7 +74,7 @@ export const HostsProvider = ({ children }: { children: React.ReactNode }) => {
         await persist(hosts.filter((h) => h.id !== id))
       },
     }),
-    [hosts, tokens, loading],
+    [hosts, clients, loading],
   )
 
   return <HostsContext.Provider value={value}>{children}</HostsContext.Provider>

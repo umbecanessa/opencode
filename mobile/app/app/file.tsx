@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from "expo-router"
 import { useEffect, useState } from "react"
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
-import Markdown from "react-native-markdown-display"
+import { Markdown } from "../src/components/Markdown"
 import SegmentedControl from "../src/components/Segmented"
 import { useHosts } from "../src/state/hosts"
 import { useTheme } from "../src/theme"
@@ -17,7 +17,6 @@ export default function FileView() {
   const [error, setError] = useState("")
 
   useEffect(() => {
-    setError("")
     client(host)
       ?.fsRead({ directory }, path)
       .then((r) => {
@@ -26,21 +25,6 @@ export default function FileView() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [host, directory, path, client])
-
-  const mdStyles = StyleSheet.create({
-    body: { color: t.label, fontSize: 16, lineHeight: 25 },
-    heading1: { color: t.label, fontSize: 26, fontWeight: "700", marginTop: 20, marginBottom: 8 },
-    heading2: { color: t.label, fontSize: 21, fontWeight: "700", marginTop: 18, marginBottom: 6 },
-    heading3: { color: t.label, fontSize: 18, fontWeight: "700", marginTop: 14, marginBottom: 4 },
-    code_block: { backgroundColor: t.codeBackground, color: t.label, padding: 12, borderRadius: 10, fontSize: 13, fontFamily: "Menlo" },
-    code_inline: { backgroundColor: t.codeBackground, color: t.label, fontFamily: "Menlo", fontSize: 14, borderRadius: 4 },
-    link: { color: t.tint },
-    blockquote: { borderLeftColor: t.separator, backgroundColor: "transparent" },
-    hr: { backgroundColor: t.separator },
-    table: { borderColor: t.separator },
-    th: { borderColor: t.separator },
-    td: { borderColor: t.separator },
-  })
 
   return (
     <View style={{ flex: 1, backgroundColor: t.background }}>
@@ -71,7 +55,7 @@ export default function FileView() {
       {text && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
           {mode === "rendered" ? (
-            <Markdown style={mdStyles}>{text}</Markdown>
+            <Markdown>{text}</Markdown>
           ) : (
             <Text style={[styles.source, { color: t.label }]} selectable>
               {text}
