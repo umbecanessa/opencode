@@ -5,7 +5,8 @@ import { Client } from "../api/client"
 import type { Host, HostID } from "../api/types"
 
 const HOSTS_KEY = "hosts"
-const tokenKey = (id: HostID) => `token:${id}`
+// SecureStore keys allow only [A-Za-z0-9.-_]; origins carry ":" as host:port separator.
+const tokenKey = (id: HostID) => `token_${id.replace(/[^a-zA-Z0-9._-]/g, "_")}`
 
 type HostsState = {
   hosts: Host[]
