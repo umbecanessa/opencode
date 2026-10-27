@@ -46,12 +46,16 @@ export const Row = ({
   status,
   hostName,
   detail,
+  first,
+  last,
   onPress,
 }: {
   title: string
   status?: SessionStatus
   hostName: string
   detail?: string
+  first?: boolean
+  last?: boolean
   onPress: () => void
 }) => {
   const t = useTheme()
@@ -61,10 +65,12 @@ export const Row = ({
       style={({ pressed }) => [
         styles.row,
         {
-          backgroundColor: t.surface,
-          borderBottomColor: t.separator,
-          opacity: pressed ? 0.75 : 1,
+          backgroundColor: pressed ? t.surfaceRaised : t.surface,
+          borderTopColor: t.separator,
+          borderTopWidth: first ? 0 : StyleSheet.hairlineWidth,
         },
+        first && styles.first,
+        last && styles.last,
       ]}
     >
       {status && <StatusDot status={status} />}
@@ -93,9 +99,11 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 13,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    marginHorizontal: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
   },
+  first: { borderTopLeftRadius: 14, borderTopRightRadius: 14 },
+  last: { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
   meta: { flexDirection: "row", alignItems: "center", gap: 8 },
 })

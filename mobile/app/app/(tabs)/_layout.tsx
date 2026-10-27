@@ -1,19 +1,20 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
-import { Link, Tabs } from "expo-router"
-import { Pressable } from "react-native"
+import { Tabs } from "expo-router"
 import { useTheme } from "../../src/theme"
 
 const iconColor = (color: unknown) => (typeof color === "string" ? color : undefined)
 
 export default function TabsLayout() {
   const t = useTheme()
-  const largeTitles = { headerLargeTitle: true, headerBlurEffect: "systemChromeMaterial" }
   return (
     <Tabs
       screenOptions={{
-        ...largeTitles,
-        headerTransparent: true,
-        tabBarStyle: { backgroundColor: "transparent" },
+        headerShown: false,
+        sceneStyle: { backgroundColor: t.background },
+        tabBarActiveTintColor: t.tint,
+        tabBarInactiveTintColor: t.tertiaryLabel,
+        tabBarStyle: { backgroundColor: t.surface, borderTopColor: t.separator },
+        tabBarLabelStyle: { fontWeight: "600" },
         tabBarItemStyle: { paddingTop: 6 },
       }}
     >
@@ -39,13 +40,6 @@ export default function TabsLayout() {
         name="hosts"
         options={{
           title: "Hosts",
-          headerRight: () => (
-            <Link href="/pair" asChild>
-              <Pressable hitSlop={12} style={{ paddingHorizontal: 8, paddingVertical: 6 }}>
-                <Ionicons name="add" size={28} color={t.tint} />
-              </Pressable>
-            </Link>
-          ),
           tabBarIcon: ({ color, focused }) => (
             <Ionicons name={focused ? "server" : "server-outline"} size={26} color={iconColor(color)} />
           ),

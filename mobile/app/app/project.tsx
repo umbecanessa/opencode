@@ -67,8 +67,10 @@ export default function Project() {
           data={sessions}
           keyExtractor={(s) => s.id}
           ListEmptyComponent={<Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>No sessions in this project.</Text>}
-          renderItem={({ item }) => (
+          renderItem={({ item, index }) => (
             <Row
+              first={index === 0}
+              last={index === sessions.length - 1}
               title={item.title}
               hostName={host}
               status={statusOf(live, hostID, item.id)}

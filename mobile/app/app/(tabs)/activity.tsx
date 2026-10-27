@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router"
 import { useCallback, useEffect, useState } from "react"
 import { FlatList, RefreshControl, StyleSheet, Text, View } from "react-native"
+import { LargeTitle } from "../../src/components/LargeTitle"
 import { Row } from "../../src/components/Rows"
 import type { Session } from "../../src/api/types"
 import { useHosts } from "../../src/state/hosts"
@@ -40,19 +41,22 @@ export default function Activity() {
 
   return (
     <FlatList
-      contentContainerStyle={{ paddingTop: 120, paddingBottom: 40 }}
+      contentContainerStyle={{ paddingBottom: 40 }}
       data={items}
       keyExtractor={(i) => `${i.session.host}/${i.session.id}`}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={t.tint} />}
+      ListHeaderComponent={<LargeTitle title="Activity" subtitle={items.length ? "Recent sessions across your machines" : undefined} />}
       ListEmptyComponent={
         refreshing ? undefined : (
           <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
-            No sessions yet on your paired hosts.
+            {hosts.length ? "No sessions yet on your paired hosts." : "Pair a machine from the Hosts tab to get started."}
           </Text>
         )
       }
-      renderItem={({ item }) => (
+      renderItem={({ item, index }) => (
         <Row
+          first={index === 0}
+          last={index === items.length - 1}
           title={item.session.title}
           hostName={item.hostName}
           status={statusOf(live, item.session.host, item.session.id)}
@@ -69,4 +73,4 @@ export default function Activity() {
   )
 }
 
-const styles = StyleSheet.create({ empty: { textAlign: "center", marginTop: 60 } })
+const styles = StyleSheet.create({ empty: { textAlign: "center", marginHorizontal: 32, marginTop: 40 } })

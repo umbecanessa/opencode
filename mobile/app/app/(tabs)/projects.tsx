@@ -1,7 +1,8 @@
+import Ionicons from "@expo/vector-icons/Ionicons"
 import { useRouter } from "expo-router"
 import { useCallback, useEffect, useState } from "react"
-import { SectionList, RefreshControl, StyleSheet, Text } from "react-native"
-import { HostTag } from "../../src/components/Rows"
+import { Pressable, RefreshControl, SectionList, StyleSheet, Text, View } from "react-native"
+import { LargeTitle } from "../../src/components/LargeTitle"
 import { useHosts } from "../../src/state/hosts"
 import { useLive } from "../../src/state/live"
 import { useTheme } from "../../src/theme"
@@ -39,32 +40,61 @@ export default function Projects() {
 
   return (
     <SectionList
-      contentContainerStyle={{ paddingTop: 120, paddingBottom: 40 }}
+      contentContainerStyle={{ paddingBottom: 40 }}
       sections={sections}
       keyExtractor={(p) => `${p.id}`}
+      stickySectionHeadersEnabled={false}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={t.tint} />}
+      ListHeaderComponent={<LargeTitle title="Projects" />}
       ListEmptyComponent={
         refreshing ? undefined : (
-          <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>No projects seen yet.</Text>
+          <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
+            {hosts.length ? "No projects seen yet." : "Pair a machine from the Hosts tab to get started."}
+          </Text>
         )
       }
       renderSectionHeader={({ section }) => (
         <Text style={[t.font.footnote, styles.section, { color: t.tertiaryLabel }]}>{section.host.toUpperCase()}</Text>
       )}
-      renderItem={({ item, section }) => (
-        <Text
+      renderItem={({ item, section, index }) => (
+        <Pressable
           onPress={() => router.push({ pathname: "/project", params: { host: section.host, id: item.id, name: item.name } })}
-          style={[t.font.title3, { color: t.label, fontWeight: "600", paddingHorizontal: 16, paddingVertical: 14 }]}
+          style={({ pressed }) => [
+            styles.row,
+            {
+              backgroundColor: pressed ? t.surfaceRaised : t.surface,
+              borderTopColor: t.separator,
+              borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth,
+            },
+            index === 0 && styles.first,
+            index === section.data.length - 1 && styles.last,
+          ]}
         >
-          {item.name}
-        </Text>
+          <View style={[styles.icon, { backgroundColor: t.fill.tertiary }]}>
+            <Ionicons name="folder" size={18} color={t.tint} />
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]} numberOfLines={1}>
+              {item.name}
+            </Text>
+            {item.dir && (
+              <Text style={[t.font.caption, { color: t.tertiaryLabel }]} numberOfLines={1} ellipsizeMode="middle">
+                {item.dir}
+              </Text>
+            )}
+          </View>
+          <Ionicons name="chevron-forward" size={18} color={t.tertiaryLabel} />
+        </Pressable>
       )}
-      ItemSeparatorComponent={() => <Text style={{ height: StyleSheet.hairlineWidth, backgroundColor: t.separator }} />}
     />
   )
 }
 
 const styles = StyleSheet.create({
-  empty: { textAlign: "center", marginTop: 60 },
-  section: { fontWeight: "700", letterSpacing: 0.5, paddingHorizontal: 16, paddingTop: 22, paddingBottom: 6 },
+  empty: { textAlign: "center", marginHorizontal: 32, marginTop: 40 },
+  section: { fontWeight: "600", letterSpacing: 0.5, paddingHorizontal: 32, paddingTop: 18, paddingBottom: 8 },
+  row: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 16, paddingHorizontal: 14, paddingVertical: 11 },
+  first: { borderTopLeftRadius: 14, borderTopRightRadius: 14 },
+  last: { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
+  icon: { width: 32, height: 32, borderRadius: 9, alignItems: "center", justifyContent: "center" },
 })
