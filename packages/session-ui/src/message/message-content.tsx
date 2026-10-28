@@ -15,6 +15,8 @@ import { useData } from "../context"
 import { useDialog } from "@opencode/ui/context/dialog"
 import { useI18n } from "@opencode/ui/context/i18n"
 import { Markdown } from "../components/markdown"
+import { splitArtifacts } from "../components/artifact-split"
+import { ArtifactCard } from "./artifact-card"
 import { ImagePreview } from "@opencode/ui/image-preview"
 import { getFilename } from "@opencode/util/path"
 import { AttachmentCard } from "./attachment-card"
@@ -733,11 +735,28 @@ export function AssistantTextContent(props: {
     setTimeout(() => setCopied(false), 2000)
   }
 
+  const streaming = () => props.message.time.completed === undefined
+  const segments = createMemo(() => splitArtifacts(props.text, streaming()))
+
   return (
     <Show when={props.text}>
       <div data-component="text-part" data-timeline-part-id={props.id}>
         <div data-slot="text-part-body">
-          <PacedMarkdown text={props.text} cacheKey={props.id} streaming={props.message.time.completed === undefined} />
+          <For each={segments()}>
+            {(segment, index) =>
+              segment.kind === "markdown" ? (
+                <Show when={segment.text.trim()}>
+                  <PacedMarkdown
+                    text={segment.text}
+                    cacheKey={`${props.id}:${index()}`}
+                    streaming={streaming()}
+                  />
+                </Show>
+              ) : (
+                <ArtifactCard artifact={segment} />
+              )
+            }
+          </For>
         </div>
         <Show when={props.showCopy}>
           <div data-slot="text-part-copy-wrapper" data-interrupted={interrupted() ? "" : undefined}>

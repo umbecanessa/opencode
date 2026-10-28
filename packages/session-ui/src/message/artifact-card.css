@@ -1,0 +1,130 @@
+[data-component="artifact-card"] {
+  margin: 8px 0;
+  border-radius: 8px;
+  background: var(--v2-background-bg-base);
+  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-base);
+  overflow: hidden;
+
+  [data-slot="artifact-card-header"] {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--v2-overlay-simple-overlay-hover);
+    box-shadow: inset 0 -0.5px 0 var(--v2-border-border-base);
+  }
+
+  [data-slot="artifact-card-title"] {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-family: var(--v2-font-family-sans, "Inter", sans-serif);
+    font-size: 13px;
+    line-height: var(--line-height-compact, 16px);
+    font-weight: 530;
+    color: var(--v2-text-text-base);
+
+    [data-slot="artifact-card-name"] {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  [data-slot="artifact-card-actions"] {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+
+  [data-slot="artifact-card-status"] {
+    font-family: var(--v2-font-family-sans, "Inter", sans-serif);
+    font-size: 13px;
+    line-height: var(--line-height-compact, 16px);
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="artifact-card-toggle"] {
+    display: flex;
+    align-items: center;
+    border-radius: 6px;
+    box-shadow: inset 0 0 0 0.5px var(--v2-border-border-base);
+    overflow: hidden;
+
+    button {
+      appearance: none;
+      border: none;
+      background: transparent;
+      padding: 3px 8px;
+      font-family: var(--v2-font-family-sans, "Inter", sans-serif);
+      font-size: 13px;
+      line-height: var(--line-height-compact, 16px);
+      color: var(--v2-text-text-muted);
+      cursor: pointer;
+
+      &[data-active="true"] {
+        background: var(--v2-background-bg-layer-2, var(--v2-overlay-simple-overlay-hover));
+        color: var(--v2-text-text-base);
+      }
+    }
+  }
+
+  [data-slot="artifact-card-copy"] {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    border: none;
+    background: transparent;
+    padding: 2px;
+    color: var(--v2-text-text-muted);
+    cursor: pointer;
+
+    &:hover {
+      color: var(--v2-text-text-base);
+    }
+  }
+
+  [data-slot="artifact-card-note"] {
+    padding: 6px 10px;
+    font-family: var(--v2-font-family-sans, "Inter", sans-serif);
+    font-size: 13px;
+    line-height: var(--line-height-compact, 16px);
+    color: var(--v2-text-text-muted);
+  }
+
+  [data-slot="artifact-card-body"] {
+    position: relative;
+  }
+
+  [data-slot="artifact-card-frame"] {
+    display: block;
+    width: 100%;
+    height: 480px;
+    border: none;
+    background: #fff;
+  }
+
+  [data-slot="artifact-card-code"] {
+    margin: 0;
+    max-height: 320px;
+    overflow: auto;
+    padding: 10px;
+    background: var(--v2-background-bg-base);
+
+    code {
+      font-family: var(--v2-font-family-mono, "JetBrains Mono", ui-monospace, monospace);
+      font-size: 12px;
+      line-height: 18px;
+      color: var(--v2-text-text-base);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+
+  &[data-state="streaming"] [data-slot="artifact-card-code"] {
+    max-height: 240px;
+  }
+}
