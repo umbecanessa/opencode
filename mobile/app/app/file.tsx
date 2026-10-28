@@ -51,8 +51,8 @@ export default function FileView() {
       {error && (
         <Text style={[t.font.callout, styles.banner, { color: t.status.failed, backgroundColor: t.fill.secondary }]}>{error}</Text>
       )}
-      {!text && !error && <ActivityIndicator style={{ marginTop: 30 }} color={t.tint} />}
-      {text && (
+      {text === undefined && !error && <ActivityIndicator style={{ marginTop: 30 }} color={t.tint} />}
+      {text !== undefined && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
           {mode === "rendered" ? (
             <Markdown>{text}</Markdown>

@@ -46,7 +46,10 @@ export default function Project() {
   const openFiles = useCallback(() => {
     if (!c || !dir) return
     c.fsList({ directory: dir }, path)
-      .then((r) => setEntries(r.data.sort((a, b) => (a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1))))
+      .then((r) => {
+        setError("")
+        setEntries(r.data.sort((a, b) => (a.type === b.type ? a.path.localeCompare(b.path) : a.type === "directory" ? -1 : 1)))
+      })
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
   }, [c, dir, path])
 

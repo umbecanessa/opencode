@@ -12,7 +12,7 @@ import type {
 
 export type Location = { directory: string }
 
-const loc = (l: Location) => `location[directory]=${encodeURIComponent(l.directory)}`
+const loc = (l: Location) => new URLSearchParams({ "location[directory]": l.directory }).toString()
 
 export class Client {
   constructor(
@@ -92,7 +92,8 @@ export class Client {
     this.request<{ data: FileEntry[] }>(`/api/fs/list?${loc(l)}&path=${encodeURIComponent(path)}`)
 
   fsRead = async (l: Location, path: string, limit = 2_000_000): Promise<FileContent> => {
-    const url = `${this.host.origin}/api/fs/read/${encodeURIComponent(path)}?${loc(l)}`
+    const encodedPath = path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")
+    const url = `${this.host.origin}/api/fs/read/${encodedPath}?${loc(l)}`
     const res = await fetch(url, { headers: this.headers("application/octet-stream") })
     if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
     if (!res.ok) throw new Error(`Cannot read ${path} on ${this.host.name} (${res.status})`)

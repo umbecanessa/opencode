@@ -199,9 +199,11 @@ const clip = (s: string, lines = 40) => {
   return all.length > lines ? `${all.slice(0, lines).join("\n")}\n… ${all.length - lines} more lines` : s
 }
 
-const ToolRow = ({ tool, first }: { tool: ToolPart; first: boolean }) => {
+const ToolRow = ({ tool, first, onBackground }: { tool: ToolPart; first: boolean; onBackground?: () => Promise<void> }) => {
   const t = useTheme()
   const [open, setOpen] = useState(false)
+  const [backgrounding, setBackgrounding] = useState(false)
+  const [backgroundError, setBackgroundError] = useState("")
   const meta = TOOLS[tool.name] ?? { icon: "construct-outline" as const, verb: tool.name }
   const status = tool.state.status
   const failed = status === "error" || status === "failed"
@@ -230,6 +232,21 @@ const ToolRow = ({ tool, first }: { tool: ToolPart; first: boolean }) => {
         {running && <ActivityIndicator size="small" color={t.tertiaryLabel} />}
         {failed && <Ionicons name="alert-circle" size={17} color={t.status.failed} />}
       </Pressable>
+      {running && (tool.name === "shell" || tool.name === "bash") && onBackground && (
+        <View style={{ paddingHorizontal: 12, paddingBottom: 10 }}>
+          <Pressable disabled={backgrounding} accessibilityRole="button" accessibilityLabel="Send running tools to background"
+            onPress={async () => {
+              setBackgrounding(true)
+              setBackgroundError("")
+              await onBackground().catch((e) => setBackgroundError(e instanceof Error ? e.message : String(e)))
+              setBackgrounding(false)
+            }} style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44 }}>
+            {backgrounding ? <ActivityIndicator size="small" color={t.tint} /> : <Ionicons name="layers-outline" size={15} color={t.tint} />}
+            <Text style={[t.font.footnote, { color: t.tint }]}>{backgrounding ? "Sending to background…" : "Send to background"}</Text>
+          </Pressable>
+          {!!backgroundError && <Text style={[t.font.caption, { color: t.status.failed }]}>{backgroundError}</Text>}
+        </View>
+      )}
       {open && (
         <View style={styles.toolDetail}>
           <Text style={[t.font.caption, styles.toolLabel, { color: t.tertiaryLabel }]}>INPUT</Text>
@@ -258,7 +275,7 @@ const ToolRow = ({ tool, first }: { tool: ToolPart; first: boolean }) => {
 
 const COLLAPSE_AFTER = 4
 
-export const ToolGroup = ({ tools }: { tools: ToolPart[] }) => {
+export const ToolGroup = ({ tools, onBackground }: { tools: ToolPart[]; onBackground?: () => Promise<void> }) => {
   const t = useTheme()
   const [expanded, setExpanded] = useState(false)
   const hidden = expanded ? 0 : Math.max(0, tools.length - COLLAPSE_AFTER)
@@ -282,7 +299,7 @@ export const ToolGroup = ({ tools }: { tools: ToolPart[] }) => {
         </Pressable>
       )}
       {visible.map((tool, i) => (
-        <ToolRow key={tool.id} tool={tool} first={i === 0 && hidden === 0} />
+        <ToolRow key={tool.id} tool={tool} first={i === 0 && hidden === 0} onBackground={onBackground} />
       ))}
     </View>
   )

@@ -3,7 +3,6 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
-  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -239,7 +238,7 @@ export default function Session() {
     if (item.kind === "text") return <AssistantText text={item.text} onFile={openFile} />
     if (item.kind === "thought") return <Thought text={item.text} />
     if (item.kind === "thinking") return <Thinking />
-    if (item.kind === "tools") return <ToolGroup tools={item.tools} />
+    if (item.kind === "tools") return <ToolGroup tools={item.tools} onBackground={c ? () => c.background(params.id) : undefined} />
     if (item.kind === "end") return <TurnEnd outcome={item.outcome} time={item.time} />
     return <Note text={item.text} />
   }
@@ -272,19 +271,6 @@ export default function Session() {
               </View>
             </View>
           ),
-          headerRight: () => running ? (
-            <Pressable
-              onPress={() => Alert.alert("Send tools to background?", "Running shells and other blocking tools will keep working in the background so the agent can continue. This does not stop them.", [
-                { text: "Cancel", style: "cancel" },
-                { text: "Background tools", onPress: () => { c?.background(params.id).catch((e) => setError(String(e))) } },
-              ])}
-              accessibilityRole="button"
-              accessibilityLabel="Send running tools to background"
-              style={{ padding: 10 }}
-            >
-              <Ionicons name="layers-outline" size={22} color={t.tint} />
-            </Pressable>
-          ) : null,
         }}
       />
 
