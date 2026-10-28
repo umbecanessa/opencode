@@ -9,6 +9,10 @@ type SpeechModule = {
   abort(): void
   requestPermissionsAsync(): Promise<{ granted: boolean }>
   supportsOnDeviceRecognition(): boolean
+  getSupportedLocales(options: { androidRecognitionServicePackage?: string }): Promise<{
+    locales: string[]
+    installedLocales: string[]
+  }>
   addListener<K extends keyof ExpoSpeechRecognitionNativeEventMap>(
     event: K,
     listener: (event: ExpoSpeechRecognitionNativeEventMap[K]) => void,
@@ -21,6 +25,26 @@ const speech = requireOptionalNativeModule<SpeechModule>("ExpoSpeechRecognition"
 const LANG_KEY = "voice.lang"
 const deviceLocale = Intl.DateTimeFormat().resolvedOptions().locale || "en-US"
 export const voiceLanguages = [...new Set([deviceLocale, "en-US"])]
+
+// The recognizer only accepts locales it ships. Regional variants like it-IT or en-IT are frequently absent
+// even when the base language is installed, so fall back to a supported variant rather than fail.
+let supportedLocales: Promise<string[]> = Promise.resolve([])
+const loadLocales = () => {
+  supportedLocales = speech
+    ? speech
+        .getSupportedLocales({})
+        .then((r) => [...r.installedLocales, ...r.locales])
+        .catch(() => [])
+    : Promise.resolve([])
+  return supportedLocales
+}
+
+const pickLocale = (preferred: string, supported: string[]) => {
+  if (supported.length === 0) return preferred
+  if (supported.includes(preferred)) return preferred
+  const base = preferred.split("-")[0].toLowerCase()
+  return supported.find((l) => l.split("-")[0].toLowerCase() === base) ?? (supported.includes("en-US") ? "en-US" : supported[0])
+}
 
 export const useDictation = (onText: (text: string) => void) => {
   const [listening, setListening] = useState(false)
@@ -36,6 +60,7 @@ export const useDictation = (onText: (text: string) => void) => {
 
   useEffect(() => {
     AsyncStorage.getItem(LANG_KEY).then((v) => v && voiceLanguages.includes(v) && setLang(v))
+    loadLocales()
     return () => {
       subs.current.forEach((s) => s.remove())
       speech?.abort()
@@ -51,6 +76,7 @@ export const useDictation = (onText: (text: string) => void) => {
         setError("Allow Microphone and Speech Recognition for OpenCode Mobile in Settings.")
         return
       }
+      const locale = pickLocale(language, await supportedLocales)
       base.current = current.trim() ? `${current.trimEnd()} ` : ""
       subs.current.forEach((s) => s.remove())
       subs.current = [
@@ -63,16 +89,22 @@ export const useDictation = (onText: (text: string) => void) => {
         }),
         speech.addListener("error", (e) => {
           if (e.error === "aborted" || e.error === "no-speech") return
+          if (e.error === "language-not-supported" || e.error === "service-not-allowed") {
+            setError(`Dictation is not available for ${locale}. Try English from the language chip.`)
+            return
+          }
           setError(e.message || e.error)
         }),
       ]
+      // Forcing on-device limits locales to the installed offline subset, which rejects many valid
+      // regional locales; Apple's recognizer stays local for the dictation hint regardless.
       speech.start({
-        lang: language,
+        lang: locale,
         interimResults: true,
         continuous: true,
         addsPunctuation: true,
         iosTaskHint: "dictation",
-        requiresOnDeviceRecognition: speech.supportsOnDeviceRecognition(),
+        requiresOnDeviceRecognition: false,
       })
     },
     [lang],

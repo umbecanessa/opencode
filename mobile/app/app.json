@@ -29,7 +29,14 @@
         "expo-speech-recognition",
         {
           "microphonePermission": "OpenCode Mobile uses the microphone so you can dictate prompts to your agents.",
-          "speechRecognitionPermission": "OpenCode Mobile turns your dictation into text on this iPhone before sending it as a prompt."
+          "speechRecognitionPermission": "OpenCode Mobile turns your dictation into text before sending it as a prompt."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "OpenCode Mobile reads photos and screenshots so you can attach them to prompts.",
+          "cameraPermission": "OpenCode Mobile uses the camera so you can attach a photo to a prompt."
         }
       ]
     ],

@@ -16,9 +16,9 @@ export default function Projects() {
   const live = useLive()
   const [sections, setSections] = useState<Section[]>([])
   const [refreshing, setRefreshing] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
-  const load = useCallback(async () => {
-    setRefreshing(true)
+  const fetchAll = useCallback(async () => {
     const results = await Promise.allSettled(
       hosts.map(async (h) => ({
         host: h.name,
@@ -29,14 +29,26 @@ export default function Projects() {
         })),
       })),
     )
-    setSections(results.flatMap((r) => (r.status === "fulfilled" && r.value.data.length ? [r.value] : [])))
-    live.refresh()
-    setRefreshing(false)
+    return results.flatMap((r) => (r.status === "fulfilled" && r.value.data.length ? [r.value] : []))
   }, [hosts, client])
 
+  const load = () =>
+    fetchAll().then((next) => {
+      setSections(next)
+      live.refresh()
+    })
+
   useEffect(() => {
-    load()
-  }, [load])
+    let cancelled = false
+    fetchAll().then((next) => {
+      if (cancelled) return
+      setSections(next)
+      setLoaded(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [fetchAll])
 
   return (
     <SectionList
@@ -44,10 +56,19 @@ export default function Projects() {
       sections={sections}
       keyExtractor={(p) => `${p.id}`}
       stickySectionHeadersEnabled={false}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={t.tint} />}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true)
+            load().finally(() => setRefreshing(false))
+          }}
+          tintColor={t.tint}
+        />
+      }
       ListHeaderComponent={<LargeTitle title="Projects" />}
       ListEmptyComponent={
-        refreshing ? undefined : (
+        !loaded ? undefined : (
           <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
             {hosts.length ? "No projects seen yet." : "Pair a machine from the Hosts tab to get started."}
           </Text>

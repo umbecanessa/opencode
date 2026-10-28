@@ -1,6 +1,6 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { useColorScheme } from "react-native"
+import { View, useColorScheme } from "react-native"
 import { HostsProvider } from "../src/state/hosts"
 import { useTheme } from "../src/theme"
 
@@ -29,6 +29,9 @@ export default function RootLayout() {
             contentStyle: { backgroundColor: t.background },
             headerTitleStyle: { fontWeight: "700" },
             headerBackButtonDisplayMode: "minimal",
+            // Opaque header: the iOS default blur can render transparent behind custom two-line titles.
+            headerBackground: () => <View style={{ flex: 1, backgroundColor: t.background }} />,
+            headerShadowVisible: false,
           }}
         >
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />

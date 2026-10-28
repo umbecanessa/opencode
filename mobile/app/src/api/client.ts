@@ -54,11 +54,11 @@ export class Client {
       `/api/session/${sessionID}/message?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
     ).then((r) => ({ ...r, host: this.host.id, sessionID }))
 
-  prompt = (sessionID: string, text: string) =>
-    this.request<{ data: { id: string } }>(`/api/session/${sessionID}/prompt`, {
-      method: "POST",
-      body: JSON.stringify({ text }),
-    })
+  prompt = (sessionID: string, text: string, files?: { uri: string; name?: string }[]) =>
+    this.request<{ data: { id: string; time?: { created?: number }; type?: string; payload?: { text?: string } } }>(
+      `/api/session/${sessionID}/prompt`,
+      { method: "POST", body: JSON.stringify(files?.length ? { text, files } : { text }) },
+    )
 
   interrupt = (sessionID: string) =>
     this.request<{ interrupted: boolean }>(`/api/session/${sessionID}/interrupt`, { method: "POST" })

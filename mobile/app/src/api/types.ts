@@ -59,6 +59,9 @@ export type PermissionRequest = {
 
 export type PermissionDecision = "once" | "always" | "reject"
 
+// Attachment handed to POST prompt; uri is a data: URL with the base64 payload.
+export type PromptFile = { uri: string; name?: string }
+
 export type SessionEvent = {
   host: HostID
   type: string

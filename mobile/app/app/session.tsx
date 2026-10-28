@@ -15,7 +15,7 @@ import {
   type NativeSyntheticEvent,
 } from "react-native"
 import { joinPath } from "../src/api/files"
-import type { PermissionDecision, PermissionRequest, Session as SessionInfo } from "../src/api/types"
+import type { PermissionDecision, PermissionRequest, PromptFile, Session as SessionInfo } from "../src/api/types"
 import { ApprovalCard } from "../src/components/session/Approval"
 import { Composer } from "../src/components/session/Composer"
 import {
@@ -182,12 +182,24 @@ export default function Session() {
     if (near !== atBottom) setAtBottom(near)
   }
 
-  const send = async (text: string) => {
+  const send = async (text: string, files: PromptFile[] = []) => {
     if (!c) return
     setSending(true)
     pinned.current = true
     try {
-      await c.prompt(params.id, text)
+      const res = await c.prompt(params.id, text, files)
+      // The list view exposes the user message with top-level text/files; echo the sent prompt from the
+      // response itself so the bubble appears even if the very next list fetch races delivery.
+      setMessages((m) => [
+        {
+          id: res.data.id,
+          type: "user",
+          text,
+          files: files.map((f) => ({ data: f.uri.slice(f.uri.indexOf(",") + 1), mime: f.uri.slice(5, f.uri.indexOf(";")), name: f.name })),
+          time: res.data.time ?? { created: Date.now() },
+        },
+        ...m.filter((x) => x.id !== res.data.id),
+      ])
       await refresh()
       live.refresh()
     } catch (e) {
