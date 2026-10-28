@@ -1,21 +1,11 @@
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router"
 import { StatusBar } from "expo-status-bar"
-import { useEffect } from "react"
 import { View, useColorScheme } from "react-native"
 import { HostsProvider } from "../src/state/hosts"
 import { useTheme } from "../src/theme"
-import { initializeNotifications } from "../src/notifications"
+import { NotificationRouting } from "../src/components/NotificationRouting"
 
 export default function RootLayout() {
-  useEffect(() => {
-    let disposed = false
-    let cleanup: (() => void) | undefined
-    initializeNotifications().then((stop) => {
-      if (disposed) stop()
-      else cleanup = stop
-    }).catch(() => {})
-    return () => { disposed = true; cleanup?.() }
-  }, [])
   const t = useTheme()
   const dark = useColorScheme() === "dark"
   const base = dark ? DarkTheme : DefaultTheme
@@ -35,6 +25,7 @@ export default function RootLayout() {
     >
       <StatusBar style={dark ? "light" : "dark"} />
       <HostsProvider>
+        <NotificationRouting />
         <Stack
           screenOptions={{
             contentStyle: { backgroundColor: t.background },

@@ -5,11 +5,16 @@ export const ONESIGNAL_APP_ID = "198438f5-2341-421a-adcf-1891a4e0ba39"
 const VERIFIED = "notifications.registration-dialog-shown"
 
 // All SDK access stays here. Old development clients must remain usable before the native rebuild.
-export async function initializeNotifications(): Promise<() => void> {
+export async function initializeNotifications(onOpen?: (host: string, sessionID: string) => void): Promise<() => void> {
   if (Platform.OS !== "ios" || !TurboModuleRegistry.get("OneSignal")) return () => {}
   const { OneSignal, LogLevel } = await import("react-native-onesignal")
   OneSignal.Debug.setLogLevel(LogLevel.Warn)
   OneSignal.initialize(ONESIGNAL_APP_ID)
+  const clicked = (event: { notification: { additionalData?: object } }) => {
+    const data = event.notification.additionalData as { host?: unknown; sessionID?: unknown } | undefined
+    if (typeof data?.host === "string" && typeof data.sessionID === "string" && /^ses_[A-Za-z0-9]+$/.test(data.sessionID)) onOpen?.(data.host, data.sessionID)
+  }
+  OneSignal.Notifications.addEventListener("click", clicked)
   let disposed = false
   let shown = await AsyncStorage.getItem(VERIFIED) === "true"
   const registered = async (id: string | null | undefined) => {
@@ -27,5 +32,6 @@ export async function initializeNotifications(): Promise<() => void> {
   return () => {
     disposed = true
     OneSignal.User.pushSubscription.removeEventListener("change", observer)
+    OneSignal.Notifications.removeEventListener("click", clicked)
   }
 }

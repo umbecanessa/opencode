@@ -1,0 +1,20 @@
+[Unit]
+Description=OpenCode mobile notification observer
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/services/opencode-mobile-bridge
+EnvironmentFile=%h/.config/opencode-mobile-bridge/bridge.env
+Environment=BRIDGE_CONFIG=%h/.config/opencode-mobile-bridge/config.json
+Environment=BRIDGE_DB=%h/.local/state/opencode-mobile-bridge/bridge.sqlite
+ExecStart=%h/.bun/bin/bun src/index.ts
+Restart=on-failure
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+MemoryMax=256M
+CPUQuota=20%
+
+[Install]
+WantedBy=default.target

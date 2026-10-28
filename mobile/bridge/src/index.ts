@@ -42,7 +42,12 @@ async function observe(host: Host) {
   }
   for (const session of page.data.filter((s) => !s.parentID && !active.data[s.id] && s.outcome)) {
     const outcome = typeof session.outcome === "string" ? session.outcome : (session.outcome as { type?: string }).type
-    if (outcome === "succeeded" || outcome === "failed") notify(outcome === "failed" ? "failed" : "completed", session.id, `${session.id}/${session.time.updated}`)
+    if (outcome !== "succeeded" && outcome !== "failed") continue
+    // Use the durable idle marker rather than session.updated: renaming/archiving a
+    // finished session must not create a new completion alert.
+    const messages = await request<{ data: { id: string; type: string; outcome?: string }[] }>(host, `/api/session/${session.id}/message?limit=50`)
+    const idle = messages.data.find((m) => m.type === "idle")
+    if (idle && (idle.outcome === "succeeded" || idle.outcome === "failed")) notify(idle.outcome === "failed" ? "failed" : "completed", session.id, idle.id)
   }
   for (const sessionID of Object.keys(active.data)) {
     const [permissions, forms] = await Promise.all([

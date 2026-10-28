@@ -1,6 +1,7 @@
 import { useRouter } from "expo-router"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native"
+import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native"
+import Ionicons from "@expo/vector-icons/Ionicons"
 import type { PermissionDecision, PermissionRequest, Session } from "../../src/api/types"
 import { LargeTitle } from "../../src/components/LargeTitle"
 import { flattenFamilies, TreeRow } from "../../src/components/SessionTree"
@@ -22,6 +23,7 @@ export default function Activity() {
   const [loaded, setLoaded] = useState(false)
   const [hostFilter, setHostFilter] = useState<string>()
   const [statusFilter, setStatusFilter] = useState("All")
+  const [filterMenu, setFilterMenu] = useState<"host" | "status">()
 
   const fetchAll = useCallback(async () => {
     const pages = await Promise.allSettled(
@@ -104,16 +106,40 @@ export default function Activity() {
       ListHeaderComponent={
         <>
           <LargeTitle title="Activity" />
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ height: 48, flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: "center" }}>
-            {[{ id: undefined, name: "All hosts" }, ...hosts].map((h) => <Pressable key={h.id ?? "all"} onPress={() => setHostFilter(h.id)} style={{ paddingHorizontal: 14, minHeight: 40, justifyContent: "center", borderRadius: 20, backgroundColor: hostFilter === h.id ? t.tint : t.surface }}>
-              <Text style={{ color: hostFilter === h.id ? "#FFFFFF" : t.label }}>{h.name}</Text>
+          <View style={{ flexDirection: "row", paddingHorizontal: 22, marginBottom: 8, gap: 18 }}>
+            {(["host", "status"] as const).map((kind) => <Pressable key={kind} onPress={() => setFilterMenu(kind)} accessibilityRole="button"
+              accessibilityLabel={`Filter by ${kind}`} style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44, flexShrink: 1 }}>
+              <Text numberOfLines={1} style={[t.font.subhead, { color: (kind === "host" ? !!hostFilter : statusFilter !== "All") ? t.tint : t.secondaryLabel }]}>
+                {kind === "host" ? hosts.find((h) => h.id === hostFilter)?.name ?? "All hosts" : statusFilter === "All" ? "All activity" : statusFilter}
+              </Text>
+              <Ionicons name="chevron-down" size={12} color={t.secondaryLabel} />
             </Pressable>)}
-          </ScrollView>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ height: 48, flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: "center" }}>
-            {["All", "Running", "Needs you", "Completed", "Failed"].map((status) => <Pressable key={status} onPress={() => setStatusFilter(status)} style={{ paddingHorizontal: 14, minHeight: 40, justifyContent: "center", borderRadius: 20, backgroundColor: statusFilter === status ? t.tint : t.surface }}>
-              <Text style={{ color: statusFilter === status ? "#FFFFFF" : t.label }}>{status}</Text>
-            </Pressable>)}
-          </ScrollView>
+          </View>
+          <Modal visible={!!filterMenu} transparent animationType="slide" onRequestClose={() => setFilterMenu(undefined)}>
+            <View style={{ flex: 1, justifyContent: "flex-end" }}>
+              <Pressable onPress={() => setFilterMenu(undefined)} accessibilityLabel="Close filters" style={{ position: "absolute", inset: 0, backgroundColor: "rgba(0,0,0,0.4)" }} />
+              <View style={{ backgroundColor: t.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 20, paddingBottom: 36, maxHeight: "70%" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                  <Text style={[t.font.headline, { color: t.label }]}>{filterMenu === "host" ? "Host" : "Activity"}</Text>
+                  <Pressable onPress={() => setFilterMenu(undefined)} accessibilityRole="button" style={{ padding: 12 }}><Text style={{ color: t.tint }}>Done</Text></Pressable>
+                </View>
+                <ScrollView>
+                  {(filterMenu === "host" ? [{ id: undefined, name: "All hosts" }, ...hosts].map((h) => ({ value: h.id, label: h.name }))
+                    : ["All", "Running", "Needs you", "Completed", "Failed"].map((s) => ({ value: s, label: s === "All" ? "All activity" : s }))).map((option) => {
+                    const selected = filterMenu === "host" ? hostFilter === option.value : statusFilter === option.value
+                    return <Pressable key={option.value ?? "all"} onPress={() => {
+                      if (filterMenu === "host") setHostFilter(option.value)
+                      else setStatusFilter(option.value ?? "All")
+                      setFilterMenu(undefined)
+                    }} accessibilityRole="button" accessibilityState={{ selected }} style={{ minHeight: 50, flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 8 }}>
+                      <Text style={[t.font.body, { color: t.label }]}>{option.label}</Text>
+                      {selected && <Ionicons name="checkmark" size={21} color={t.tint} />}
+                    </Pressable>
+                  })}
+                </ScrollView>
+              </View>
+            </View>
+          </Modal>
           {hosts.filter((h) => live.online[h.id] === false).map((h) => <Text key={h.id} style={[t.font.footnote, { color: t.status.waiting, margin: 16 }]}>{h.name} is offline. Session information may be out of date.</Text>)}
           {live.forms.filter((f) => !hostFilter || f.host === hostFilter).map((form) => <Question key={`${form.host}/${form.id}`} form={form} onAnswer={async (answer) => {
             const c = client(form.host)
@@ -135,7 +161,7 @@ export default function Activity() {
       ListEmptyComponent={
         !loaded ? undefined : (
           <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
-            {hosts.length ? "No sessions yet on your paired hosts." : "Pair a machine from the Hosts tab to get started."}
+            {hosts.length ? hostFilter || statusFilter !== "All" ? "No sessions match these filters." : "No sessions yet on your paired hosts." : "Pair a machine from the Hosts tab to get started."}
           </Text>
         )
       }
