@@ -20,6 +20,7 @@ export default {
   "view.exportActions": "More export actions",
   "view.edit.saved": "Saved to file",
   "view.edit.failed": "Could not save the file",
+  "view.edit": "Edit preview",
   "view.fullscreen": "Enter full screen",
   "view.exitFullscreen": "Exit full screen",
   "view.binary": "Binary file · {{size}}",

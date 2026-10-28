@@ -15,6 +15,7 @@ import { Dynamic } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { Button } from "@opencode/ui/button"
+import { IconButton } from "@opencode/ui/icon-button"
 import { Icon } from "@opencode/ui/icon"
 import { Menu } from "@opencode/ui/menu"
 import { FileIcon } from "@opencode/ui/file-icon"
@@ -184,6 +185,8 @@ export default function ArtifactView(props: {
     return value && value.source === props.content ? value.html : props.content.content
   }
 
+  const [pageEditing, setEditing] = createSignal(false)
+
   const applyEdit = (html: string) => {
     setPatch({ source: props.content, html })
 
@@ -225,35 +228,40 @@ export default function ArtifactView(props: {
                 <SegmentedControlItem value="tablet">{ctx.t("view.viewport.tablet")}</SegmentedControlItem>
                 <SegmentedControlItem value="mobile">{ctx.t("view.viewport.mobile")}</SegmentedControlItem>
               </SegmentedControl>
-              <Button
-                size="small"
-                variant="ghost"
-                onClick={() => void saveArtifactPdf(pageText(), getFilename(props.path), frame)}
-              >
-                {ctx.t("view.savePdf")}
-              </Button>
-              <Show when={artifactNativeExport()}>
-                <Menu gutter={4} modal={false} placement="bottom-end">
-                  <Menu.Trigger
-                    as={Button}
-                    size="small"
-                    variant="ghost"
-                    aria-label={ctx.t("view.exportActions")}
-                  >
-                    <Icon name="outline-dots" size="small" />
-                  </Menu.Trigger>
-                  <Menu.Portal>
-                    <Menu.Content style={{ "min-width": "180px" }}>
+              <Show when={!pageEditing()}>
+                <IconButton
+                  icon={<Icon name="edit" size="small" />}
+                  size="small"
+                  variant="ghost"
+                  aria-label={ctx.t("view.edit")}
+                  title={ctx.t("view.edit")}
+                  onClick={() => setEditing(true)}
+                />
+              </Show>
+              <Menu gutter={4} modal={false} placement="bottom-end">
+                <Menu.Trigger
+                  as={IconButton}
+                  icon={<Icon name="outline-dots" size="small" />}
+                  size="small"
+                  variant="ghost"
+                  aria-label={ctx.t("view.exportActions")}
+                />
+                <Menu.Portal>
+                  <Menu.Content style={{ "min-width": "180px" }}>
+                    <Menu.Item onSelect={() => void saveArtifactPdf(pageText(), getFilename(props.path), frame)}>
+                      {ctx.t("view.savePdf")}
+                    </Menu.Item>
+                    <Show when={artifactNativeExport()}>
                       <Menu.Item onSelect={() => void saveArtifactPng(pageText(), getFilename(props.path), viewport())}>
                         {ctx.t("view.savePng")}
                       </Menu.Item>
                       <Menu.Item onSelect={() => void saveArtifactZip(pageText(), getFilename(props.path))}>
                         {ctx.t("view.exportZip")}
                       </Menu.Item>
-                    </Menu.Content>
-                  </Menu.Portal>
-                </Menu>
-              </Show>
+                    </Show>
+                  </Menu.Content>
+                </Menu.Portal>
+              </Menu>
             </Show>
             <Show when={kind() === "html"}>
               <OpenInBrowserButton session={props.session} path={props.path} />
@@ -279,6 +287,9 @@ export default function ArtifactView(props: {
                 title={getFilename(props.path)}
                 viewport={viewport()}
                 editable={page()}
+                floatingToggle={false}
+                editing={pageEditing}
+                onEditingChange={setEditing}
                 onPatch={applyEdit}
                 ref={(element) => (frame = element)}
               />

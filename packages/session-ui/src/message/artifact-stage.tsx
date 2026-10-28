@@ -1,5 +1,6 @@
-import { createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
 import { useI18n } from "@opencode/ui/context/i18n"
+import { Icon } from "@opencode/ui/icon"
 import "./artifact-stage.css"
 
 export type ArtifactViewport = "desktop" | "tablet" | "mobile"
@@ -175,12 +176,18 @@ export function ArtifactStage(props: {
   height?: number
   ref?: (frame: HTMLIFrameElement) => void
   editable?: boolean
+  /** Show the floating edit pill over the preview. False when the host places the toggle in its own toolbar. */
+  floatingToggle?: boolean
+  /** Host-owned edit mode; pairs with onEditingChange. Internal state is used when absent. */
+  editing?: () => boolean
+  onEditingChange?: (editing: boolean) => void
   onPatch?: (html: string) => void
 }) {
   const i18n = useI18n()
   let stage: HTMLDivElement | undefined
   const [box, setBox] = createSignal({ width: 0, height: 0 })
-  const [editing, setEditing] = createSignal(false)
+  const [editingState, setEditingState] = createSignal(false)
+  const editing = () => props.editing?.() ?? editingState()
   const [selection, setSelection] = createSignal<ArtifactEditSelection | null>(null)
   const [nonce, setNonce] = createSignal(0)
   let stageFrame: HTMLIFrameElement | undefined
@@ -191,12 +198,19 @@ export function ArtifactStage(props: {
     stageFrame?.contentWindow?.postMessage({ type: EDIT_MESSAGE, ...message }, "*")
 
   const setEditMode = (next: boolean) => {
-    setEditing(next)
-
-    if (!next) setSelection(null)
-
-    sendFrame({ cmd: next ? "on" : "off" })
+    if (props.onEditingChange) props.onEditingChange(next)
+    else setEditingState(next)
   }
+
+  // Editing turns the frame bridge on and off, whichever side changed the state: the stage's
+  // own buttons or a host toolbar. The off command also clears a stale selection.
+  createEffect(() => {
+    const on = editing()
+
+    sendFrame({ cmd: on ? "on" : "off" })
+
+    if (!on) setSelection(null)
+  })
 
   onMount(() => {
     if (!stage) return
@@ -311,9 +325,15 @@ export function ArtifactStage(props: {
         />
       </div>
       <Show when={props.editable}>
-        <Show when={!editing()}>
-          <button type="button" data-slot="artifact-edit-toggle" onClick={() => setEditMode(true)}>
-            {i18n.t("ui.artifact.edit")}
+        <Show when={!editing() && (props.floatingToggle ?? true)}>
+          <button
+            type="button"
+            data-slot="artifact-edit-toggle"
+            aria-label={i18n.t("ui.artifact.edit")}
+            title={i18n.t("ui.artifact.edit")}
+            onClick={() => setEditMode(true)}
+          >
+            <Icon name="edit" size="small" />
           </button>
         </Show>
         <Show when={editing()}>
