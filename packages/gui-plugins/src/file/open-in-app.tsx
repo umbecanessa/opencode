@@ -7,6 +7,7 @@ import { Loader } from "@opencode/ui/loader"
 import { SplitButton, SplitButtonAction, SplitButtonMenuTrigger } from "@opencode/ui/split-button"
 import { showToast } from "@opencode/ui/toast"
 import { Tooltip } from "@opencode/ui/tooltip"
+import { getDirectory, getFilename } from "@opencode/util/path"
 import {
   createLatest,
   usePlugin,
@@ -178,6 +179,19 @@ export function useOpenInApp(input: { session: MountedSession; path: () => strin
       .catch((err) => showRequestError(ctx, err))
   }
 
+  // Downloads a file from the session's own server: the read travels over that host's connection, so files sitting
+  // on another machine (a paired host) save locally byte-for-byte. Absolute paths are scoped to their parent.
+  const download = (target = input.path()) => {
+    if (!target) return
+
+    const absolute = /^[a-z]:[\\/]/i.test(target) || target.startsWith("/") || target.startsWith("\\\\")
+
+    input.session.server.client.file
+      .read(absolute ? { path: getFilename(target), location: { directory: getDirectory(target) } } : { path: target })
+      .then((bytes) => ctx.system.save({ name: getFilename(target), content: bytes }))
+      .catch((err) => showRequestError(ctx, err))
+  }
+
   return {
     canOpen,
     opening,
@@ -188,6 +202,7 @@ export function useOpenInApp(input: { session: MountedSession; path: () => strin
     openPath,
     selectApp,
     copyPath,
+    download,
   }
 }
 
@@ -260,7 +275,7 @@ export default function OpenInAppButton(props: { session: MountedSession; screen
           </Menu.Trigger>
           <Menu.Portal>
             <Menu.Content class="open-in-app-v2-menu">
-              <OpenInAppMenuItemsV2 state={state} close={() => state.setMenu("open", false)} />
+              <OpenInAppMenuItemsV2 state={state} download={false} close={() => state.setMenu("open", false)} />
             </Menu.Content>
           </Menu.Portal>
         </Menu>
@@ -274,6 +289,8 @@ export function OpenInAppMenuItemsV2(props: {
   path?: () => string
   reveal?: boolean
   selection?: boolean
+  /** False for menus aimed at the project root, where downloading a directory makes no sense. */
+  download?: boolean
   copyPath?: boolean
   close?: () => void
 }) {
@@ -332,6 +349,18 @@ export function OpenInAppMenuItemsV2(props: {
           </Menu.RadioGroup>
         </Show>
       </Menu.Group>
+      <Show when={props.download !== false}>
+        <Menu.Separator />
+        <Menu.Item
+          onSelect={() => {
+            props.close?.()
+            props.state.download(path())
+          }}
+        >
+          <Icon name="download" size="small" class="text-icon-weak" />
+          {ctx.t("open.download")}
+        </Menu.Item>
+      </Show>
       <Show when={props.copyPath !== false}>
         <Menu.Separator />
         <Menu.Item

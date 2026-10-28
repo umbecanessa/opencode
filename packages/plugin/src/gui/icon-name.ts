@@ -82,6 +82,8 @@ export type IconName =
   | "magnifying-glass-menu"
   | "mcp"
   | "menu"
+  | "mic"
+  | "mic-active"
   | "minus"
   | "models"
   | "monitor"
