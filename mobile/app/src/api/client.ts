@@ -183,7 +183,11 @@ export class Client {
   static redeem = (link: string) =>
     fetch(link, { headers: { accept: "application/json" } })
       .then(async (res) => {
-        if (!res.ok) throw new Error(`Pairing link failed (${res.status}). Is the host awake and on Tailscale?`)
+        if (!res.ok) {
+          // The server explains 401s ("Pairing link expired or already used"); show it instead of guessing.
+          const message: string | undefined = (await res.json().catch(() => undefined))?.message
+          throw new Error(message ?? `Pairing link failed (${res.status}). Is the host awake and on Tailscale?`)
+        }
         return (await res.json()) as { token: string }
       })
       .then((r) => {
