@@ -33,6 +33,7 @@
     "./message-file": "./src/components/message-file.ts",
     "./attachment-card": "./src/message/attachment-card.tsx",
     "./comment-card": "./src/message/comment-card.tsx",
+    "./artifact-stage": "./src/message/artifact-stage.tsx",
     "./markdown-stream": "./src/components/markdown-stream.ts",
     "./markdown-cache": "./src/components/markdown-cache.tsx",
     "./line-comment-styles": "./src/components/line-comment-styles.ts",

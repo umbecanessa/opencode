@@ -1,5 +1,6 @@
 import { createMemo, createSignal, For, onCleanup, onMount } from "solid-js"
 import { useI18n } from "@opencode/ui/context/i18n"
+import "./artifact-stage.css"
 
 export type ArtifactViewport = "desktop" | "tablet" | "mobile"
 
@@ -16,7 +17,7 @@ const PRINT_MESSAGE = "opencode:artifact-print"
 // message is the only way in; print() itself needs the frame's allow-modals.
 const BRIDGE = `<script>addEventListener("message",function(e){if(e.source===parent&&e.data&&e.data.type===${JSON.stringify(PRINT_MESSAGE)})print()})</script>`
 
-export const ARTIFACT_SANDBOX = "allow-scripts allow-downloads allow-modals"
+export const ARTIFACT_SANDBOX = "allow-scripts allow-downloads allow-modals allow-popups allow-forms"
 
 /** Appends the print bridge; browsers move trailing content after `</html>` into the body. */
 export function artifactSrcdoc(content: string) {
@@ -44,17 +45,20 @@ export function ArtifactStage(props: {
   content: string
   title: string
   viewport: ArtifactViewport
-  height: number
+  /** Fixed stage height in pixels; omitted, the stage fills its container. */
+  height?: number
   ref?: (frame: HTMLIFrameElement) => void
 }) {
   let stage: HTMLDivElement | undefined
-  const [width, setWidth] = createSignal(0)
+  const [box, setBox] = createSignal({ width: 0, height: 0 })
 
   onMount(() => {
     if (!stage) return
-    const observer = new ResizeObserver(() => setWidth(stage?.clientWidth ?? 0))
+
+    const measure = () => setBox({ width: stage?.clientWidth ?? 0, height: stage?.clientHeight ?? 0 })
+    const observer = new ResizeObserver(measure)
     observer.observe(stage)
-    setWidth(stage.clientWidth)
+    measure()
     onCleanup(() => observer.disconnect())
   })
 
@@ -62,10 +66,11 @@ export function ArtifactStage(props: {
 
   const scale = createMemo(() => {
     const size = device()
+    const height = props.height ?? box().height
 
-    if (!size || width() === 0) return 1
+    if (!size || box().width === 0 || height === 0) return 1
 
-    return Math.min(1, (width() - 32) / size.width, (props.height - 32) / size.height)
+    return Math.min(1, (box().width - 32) / size.width, (height - 32) / size.height)
   })
 
   const srcdoc = createMemo(() => artifactSrcdoc(props.content))
@@ -75,7 +80,7 @@ export function ArtifactStage(props: {
       ref={stage}
       data-component="artifact-stage"
       data-viewport={props.viewport}
-      style={{ height: `${props.height}px` }}
+      style={{ height: props.height === undefined ? "100%" : `${props.height}px` }}
     >
       <div
         data-slot="artifact-stage-device"

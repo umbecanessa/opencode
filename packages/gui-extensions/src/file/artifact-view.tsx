@@ -19,6 +19,7 @@ import { FileIcon } from "@opencode/ui/file-icon"
 import { SegmentedControl, SegmentedControlItem } from "@opencode/ui/segmented-control"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { Markdown } from "@opencode/session-ui/markdown"
+import { ArtifactStage, printArtifact, type ArtifactViewport } from "@opencode/session-ui/artifact-stage"
 import { MarkdownProvider, useMarkdown } from "@opencode/session-ui/context/markdown"
 import { artifactKind, type ArtifactKind } from "@opencode/util/artifact"
 import { getDirectory, getFilename } from "@opencode/util/path"
@@ -150,6 +151,11 @@ export default function ArtifactView(props: {
     </ScrollView>
   )
 
+  // Text HTML renders on the shared artifact stage, which adds device viewports and printing.
+  const page = () => kind() === "html" && props.content.type === "text"
+  const [viewport, setViewport] = createSignal<ArtifactViewport>("desktop")
+  let frame: HTMLIFrameElement | undefined
+
   return (
     <>
       <ArtifactToolbar
@@ -157,9 +163,26 @@ export default function ArtifactView(props: {
         onModeChange={previewable() ? (mode) => change({ mode }) : undefined}
         meta={meta()}
         actions={
-          <Show when={kind() === "html"}>
-            <OpenInBrowserButton session={props.session} path={props.path} />
-          </Show>
+          <>
+            <Show when={page() && state().mode === "preview"}>
+              <SegmentedControl
+                value={viewport()}
+                onChange={(value) => {
+                  if (value === "desktop" || value === "tablet" || value === "mobile") setViewport(value)
+                }}
+              >
+                <SegmentedControlItem value="desktop">{ctx.t("view.viewport.desktop")}</SegmentedControlItem>
+                <SegmentedControlItem value="tablet">{ctx.t("view.viewport.tablet")}</SegmentedControlItem>
+                <SegmentedControlItem value="mobile">{ctx.t("view.viewport.mobile")}</SegmentedControlItem>
+              </SegmentedControl>
+              <Button size="small" variant="ghost" onClick={() => printArtifact(frame)}>
+                {ctx.t("view.print")}
+              </Button>
+            </Show>
+            <Show when={kind() === "html"}>
+              <OpenInBrowserButton session={props.session} path={props.path} />
+            </Show>
+          </>
         }
       />
       <Show when={!previewable() || state().mode === "preview"} fallback={props.source}>
@@ -172,6 +195,16 @@ export default function ArtifactView(props: {
           </Match>
           <Match when={kind() === "audio"}>
             <ArtifactAudio path={props.path} content={props.content} {...media} />
+          </Match>
+          <Match when={page()}>
+            <div class="relative min-h-0 flex-1">
+              <ArtifactStage
+                content={props.content.content}
+                title={getFilename(props.path)}
+                viewport={viewport()}
+                ref={(element) => (frame = element)}
+              />
+            </div>
           </Match>
           <Match when={kind() === "pdf" || kind() === "html"}>
             <ArtifactFrame path={props.path} content={props.content} kind={kind() === "pdf" ? "pdf" : "html"} />

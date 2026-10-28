@@ -1,0 +1,76 @@
+/* Shared by the card header and the full viewer, which renders in a dialog portal. */
+[data-slot="artifact-segmented"] {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-base);
+  overflow: hidden;
+
+  button {
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 3px 8px;
+    font-family: var(--v2-font-family-sans, "Inter", sans-serif);
+    font-size: 13px;
+    line-height: var(--line-height-compact, 16px);
+    color: var(--v2-text-text-muted);
+    cursor: pointer;
+
+    &[data-active="true"] {
+      background: var(--v2-background-bg-layer-2, var(--v2-overlay-simple-overlay-hover));
+      color: var(--v2-text-text-base);
+    }
+  }
+}
+
+[data-component="artifact-stage"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: hidden;
+  background: var(--v2-background-bg-base);
+
+  [data-slot="artifact-stage-device"] {
+    display: contents;
+  }
+
+  [data-slot="artifact-stage-frame"] {
+    display: block;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #fff;
+  }
+
+  &:not([data-viewport="desktop"]) {
+    background: var(--v2-overlay-simple-overlay-hover);
+
+    [data-slot="artifact-stage-device"] {
+      display: block;
+      position: relative;
+      flex: none;
+      overflow: hidden;
+      border-radius: 14px;
+      box-shadow:
+        0 0 0 0.5px var(--v2-border-border-strong),
+        0 8px 24px rgb(0 0 0 / 0.18);
+    }
+
+    [data-slot="artifact-stage-frame"] {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform-origin: 0 0;
+    }
+  }
+
+  &[data-viewport="mobile"] [data-slot="artifact-stage-device"] {
+    border-radius: 28px;
+    box-shadow:
+      0 0 0 6px #111,
+      0 0 0 6.5px var(--v2-border-border-strong),
+      0 12px 32px rgb(0 0 0 / 0.25);
+  }
+}
