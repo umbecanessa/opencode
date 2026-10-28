@@ -14,7 +14,8 @@ import {
   type NativeSyntheticEvent,
 } from "react-native"
 import { joinPath } from "../src/api/files"
-import type { PermissionDecision, PermissionRequest, PromptFile, Session as SessionInfo } from "../src/api/types"
+import type { PermissionDecision, PermissionRequest, PromptFile, SessionForm, Session as SessionInfo } from "../src/api/types"
+import { Question } from "../src/components/session/Question"
 import { ApprovalCard } from "../src/components/session/Approval"
 import { Composer } from "../src/components/session/Composer"
 import { SessionControls } from "../src/components/session/SessionControls"
@@ -62,6 +63,7 @@ export default function Session() {
 
   const [subagents, setSubagents] = useState<SessionInfo[]>([])
   const [requests, setRequests] = useState<PermissionRequest[]>([])
+  const [forms, setForms] = useState<SessionForm[]>([])
   const [changes, setChanges] = useState<Awaited<ReturnType<NonNullable<typeof c>["diff"]>>["data"]>([])
 
   useEffect(() => {
@@ -82,8 +84,10 @@ export default function Session() {
     let cancelled = false
     const ids = [params.id, ...runningChildren.split(",").filter(Boolean)]
     const poll = () =>
-      Promise.allSettled(ids.map((s) => c.sessionPermissions(s))).then((r) => {
-        if (!cancelled) setRequests(r.flatMap((x) => (x.status === "fulfilled" ? x.value : [])))
+      Promise.allSettled(ids.map(async (s) => ({ permissions: await c.sessionPermissions(s), forms: await c.forms(s) }))).then((r) => {
+        if (cancelled) return
+        setRequests(r.flatMap((x) => x.status === "fulfilled" ? x.value.permissions : []))
+        setForms(r.flatMap((x) => x.status === "fulfilled" ? x.value.forms : []))
       })
     poll()
     const timer = setInterval(poll, 2500)
@@ -410,6 +414,12 @@ export default function Session() {
           onDecide={decide}
         />
       ))}
+      {forms.map((form) => <Question key={form.id} form={form} onAnswer={async (answer) => {
+        if (!c) throw new Error("Host unavailable")
+        await c.answerForm(form.sessionID, form.id, answer)
+        setForms((all) => all.filter((f) => f.id !== form.id))
+        live.refresh()
+      }} />)}
 
       {c && <SessionControls client={c} sessionID={params.id} directory={controlDirectory} panel={panel} onClose={() => {
         setPanel(undefined)

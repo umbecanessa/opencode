@@ -1,5 +1,5 @@
 import { useMemo } from "react"
-import { Linking, StyleSheet, Text } from "react-native"
+import { Alert, Linking, StyleSheet, Text } from "react-native"
 import MarkdownDisplay, { type RenderRules } from "react-native-markdown-display"
 import { extractFiles } from "../api/files"
 import { useTheme } from "../theme"
@@ -61,14 +61,14 @@ export const Markdown = ({ children, onFile, compact }: { children: string; onFi
   )
 
   const rules = useMemo<RenderRules | undefined>(() => {
-    if (!onFile) return undefined
     const fileStyle = { color: t.tint }
     return {
+      image: () => null,
       text: (node, _children, _parent, s, inherited = {}) => (
         <Text key={node.key} style={[inherited, s.text]}>
           {extractFiles(node.content).map((seg, i) =>
             seg.file ? (
-              <Text key={i} style={fileStyle} onPress={() => onFile(seg.text)} suppressHighlighting={false}>
+                <Text key={i} style={fileStyle} onPress={() => onFile?.(seg.text)} suppressHighlighting={false}>
                 {seg.text}
               </Text>
             ) : (
@@ -83,7 +83,7 @@ export const Markdown = ({ children, onFile, compact }: { children: string; onFi
           <Text
             key={node.key}
             style={[inherited, s.code_inline, isFile && fileStyle]}
-            onPress={isFile ? () => onFile(node.content.trim()) : undefined}
+            onPress={isFile ? () => onFile?.(node.content.trim()) : undefined}
           >
             {node.content}
           </Text>
@@ -97,7 +97,13 @@ export const Markdown = ({ children, onFile, compact }: { children: string; onFi
       style={styles}
       rules={rules}
       onLinkPress={(url) => {
-        Linking.openURL(url).catch(() => {})
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(url) || /^[A-Za-z]:[\\/]/.test(url)) {
+          if (!url.startsWith("#")) onFile?.(url)
+          return false
+        }
+        if (/^https?:\/\//i.test(url)) Alert.alert("Open external link?", url, [
+          { text: "Cancel", style: "cancel" }, { text: "Open", onPress: () => { Linking.openURL(url).catch(() => {}) } },
+        ])
         return false
       }}
     >

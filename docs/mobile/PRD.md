@@ -1,6 +1,13 @@
 # OpenCode Mobile — Product Requirements
 
-Status: agreed direction; implementation not started.
+Status: mobile app implemented and in physical-iPhone testing; notification bridge scaffold implemented, not deployed or delivery-validated.
+
+## Implementation status (2026-10-28)
+
+- Implemented: pairing, projects/sessions, file reader, prompt/stop/background controls, approvals, structured session forms, host/status Activity filters, dictation, attachments and native paste integration, model/reasoning selection, context statistics, and foreground live-status refresh.
+- Bridge scaffold: standalone Bun observer with SQLite seen/outbox ledger, host-specific event preferences and enrolled subscription targeting. No deployment or provider delivery has been performed.
+- Pending: OneSignal iOS enrollment and click routing, APNs/signing configuration, GX10 deployment, locked-phone push checks, bridge restart/dedupe integration checks, two-host recovery checks, syntax highlighting/referenced-line navigation, and accessibility/distribution acceptance.
+- Implementation is not acceptance: structured forms, recovery behavior and newer reader changes still require physical-device validation.
 
 ## Repository and scope
 

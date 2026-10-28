@@ -62,6 +62,16 @@ export type PermissionDecision = "once" | "always" | "reject"
 // Attachment handed to POST prompt; uri is a data: URL with the base64 payload.
 export type PromptFile = { uri: string; name?: string }
 
+export type FormValue = string | number | boolean | string[]
+export type FormField = {
+  key: string; type: "string" | "number" | "integer" | "boolean" | "multiselect" | "external"
+  title?: string; description?: string; required?: boolean; hidden?: boolean; placeholder?: string; url?: string
+  default?: FormValue; custom?: boolean
+  options?: { value: string; label: string; description?: string }[]
+  when?: { key: string; op: "eq" | "neq"; value: string | number | boolean }[]
+}
+export type SessionForm = { id: string; sessionID: string; title: string; fields: FormField[]; host: HostID }
+
 export type SessionEvent = {
   host: HostID
   type: string

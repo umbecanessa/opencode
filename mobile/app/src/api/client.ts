@@ -8,6 +8,8 @@ import type {
   PermissionRequest,
   Session,
   SessionEvent,
+  SessionForm,
+  FormValue,
 } from "./types"
 
 export type Location = { directory: string }
@@ -86,6 +88,16 @@ export class Client {
       headers: this.headers(),
     })
     if (!res.ok) throw new Error(`Could not background tools (${res.status})`)
+  }
+
+  forms = (sessionID: string) => this.request<{ data: Omit<SessionForm, "host">[] }>(`/api/session/${sessionID}/form`)
+    .then((r) => r.data.map((form) => ({ ...form, host: this.host.id })))
+
+  answerForm = async (sessionID: string, formID: string, answer: Record<string, FormValue>) => {
+    const res = await fetch(`${this.host.origin}/api/session/${sessionID}/form/${formID}/reply`, {
+      method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify({ answer }),
+    })
+    if (!res.ok) throw new Error(`Could not submit answers (${res.status}): ${await res.text()}`.slice(0, 300))
   }
 
   fsList = (l: Location, path: string) =>

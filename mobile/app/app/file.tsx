@@ -5,6 +5,7 @@ import { Markdown } from "../src/components/Markdown"
 import SegmentedControl from "../src/components/Segmented"
 import { useHosts } from "../src/state/hosts"
 import { useTheme } from "../src/theme"
+import { joinPath } from "../src/api/files"
 
 export default function FileView() {
   const t = useTheme()
@@ -55,7 +56,10 @@ export default function FileView() {
       {text !== undefined && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
           {mode === "rendered" ? (
-            <Markdown>{text}</Markdown>
+            <Markdown onFile={(target) => {
+              const base = path.replace(/[\\/][^\\/]*$/, "")
+              router.push({ pathname: "/file", params: { host, directory, path: joinPath(base, target), name: target.split(/[\\/]/).pop() } })
+            }}>{text}</Markdown>
           ) : (
             <Text style={[styles.source, { color: t.label }]} selectable>
               {text}

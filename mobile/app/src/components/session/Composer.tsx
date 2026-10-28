@@ -191,9 +191,9 @@ export const Composer = ({
           { backgroundColor: t.surface, borderColor: voice.listening ? t.status.failed : t.separator },
         ]}
       >
-        {running && activeModelLabel && <View style={{ alignSelf: "flex-start", marginLeft: 12, marginTop: 8, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: t.fill.secondary }}>
-          <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel }]}>{activeModelLabel}</Text>
-        </View>}
+        <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel="Select model and reasoning" style={{ alignSelf: "flex-start", marginLeft: 12, marginTop: 8, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: t.fill.secondary }}>
+          <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel }]}>{modelLabel ?? activeModelLabel ?? "Default model"}</Text>
+        </Pressable>
         <PasteInput onImages={(uris) => { pasteImages(uris).catch((e) => setNote(String(e))) }} onError={() => setNote("This clipboard content could not be attached. Try Photos or Files from +.")}>
         <TextInput
           value={text}
@@ -214,7 +214,6 @@ export const Composer = ({
           </Pressable>
           <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel={`Select model and reasoning. ${modelLabel ?? "Default model"}`} style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minHeight: 44, paddingHorizontal: 6 }}>
             <MaterialCommunityIcons name="brain" size={23} color={t.secondaryLabel} />
-            <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel, maxWidth: 140 }]}>{modelLabel ?? "Default"}</Text>
           </Pressable>
           <View style={{ flex: 1 }} />
           <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel="View session context" style={styles.mic}>

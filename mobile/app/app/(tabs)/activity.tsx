@@ -1,12 +1,13 @@
 import { useRouter } from "expo-router"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { FlatList, RefreshControl, StyleSheet, Text, View } from "react-native"
+import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native"
 import type { PermissionDecision, PermissionRequest, Session } from "../../src/api/types"
 import { LargeTitle } from "../../src/components/LargeTitle"
 import { flattenFamilies, TreeRow } from "../../src/components/SessionTree"
 import { ApprovalCard } from "../../src/components/session/Approval"
+import { Question } from "../../src/components/session/Question"
 import { useHosts } from "../../src/state/hosts"
-import { useLive } from "../../src/state/live"
+import { familyStatus, useLive } from "../../src/state/live"
 import { nestSessions } from "../../src/state/tree"
 import { useTheme } from "../../src/theme"
 
@@ -19,6 +20,8 @@ export default function Activity() {
   const [open, setOpen] = useState<Set<string>>(new Set())
   const [refreshing, setRefreshing] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  const [hostFilter, setHostFilter] = useState<string>()
+  const [statusFilter, setStatusFilter] = useState("All")
 
   const fetchAll = useCallback(async () => {
     const pages = await Promise.allSettled(
@@ -48,7 +51,15 @@ export default function Activity() {
     }
   }, [fetchAll])
 
-  const items = useMemo(() => flattenFamilies(nestSessions(sessions), open), [sessions, open])
+  const items = useMemo(() => flattenFamilies(nestSessions(sessions.filter((s) => !hostFilter || s.host === hostFilter)).filter((family) => {
+    if (statusFilter === "All") return true
+    const status = familyStatus(live, family.session.host, [family.session.id, ...family.children.map((s) => s.id)])
+    if (statusFilter === "Running") return status === "running"
+    if (statusFilter === "Needs you") return status === "waiting"
+    const outcome = family.session.outcome
+    const failed = outcome === "failed" || (typeof outcome === "object" && outcome !== null && "type" in outcome && outcome.type === "failed")
+    return status === "done" && (statusFilter === "Failed" ? failed : !failed)
+  }), open), [sessions, open, hostFilter, statusFilter, live])
   const titles = useMemo(() => new Map(sessions.map((s) => [`${s.host}/${s.id}`, s])), [sessions])
   const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? ""
 
@@ -93,10 +104,27 @@ export default function Activity() {
       ListHeaderComponent={
         <>
           <LargeTitle title="Activity" />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ height: 48, flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: "center" }}>
+            {[{ id: undefined, name: "All hosts" }, ...hosts].map((h) => <Pressable key={h.id ?? "all"} onPress={() => setHostFilter(h.id)} style={{ paddingHorizontal: 14, minHeight: 40, justifyContent: "center", borderRadius: 20, backgroundColor: hostFilter === h.id ? t.tint : t.surface }}>
+              <Text style={{ color: hostFilter === h.id ? "#FFFFFF" : t.label }}>{h.name}</Text>
+            </Pressable>)}
+          </ScrollView>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ height: 48, flexGrow: 0 }} contentContainerStyle={{ paddingHorizontal: 16, gap: 8, alignItems: "center" }}>
+            {["All", "Running", "Needs you", "Completed", "Failed"].map((status) => <Pressable key={status} onPress={() => setStatusFilter(status)} style={{ paddingHorizontal: 14, minHeight: 40, justifyContent: "center", borderRadius: 20, backgroundColor: statusFilter === status ? t.tint : t.surface }}>
+              <Text style={{ color: statusFilter === status ? "#FFFFFF" : t.label }}>{status}</Text>
+            </Pressable>)}
+          </ScrollView>
+          {hosts.filter((h) => live.online[h.id] === false).map((h) => <Text key={h.id} style={[t.font.footnote, { color: t.status.waiting, margin: 16 }]}>{h.name} is offline. Session information may be out of date.</Text>)}
+          {live.forms.filter((f) => !hostFilter || f.host === hostFilter).map((form) => <Question key={`${form.host}/${form.id}`} form={form} onAnswer={async (answer) => {
+            const c = client(form.host)
+            if (!c) throw new Error("Host unavailable")
+            await c.answerForm(form.sessionID, form.id, answer)
+            live.refresh()
+          }} />)}
           {live.requests.length > 0 && (
             <View style={{ marginBottom: 8 }}>
               <Text style={[t.font.footnote, styles.section, { color: t.status.waiting }]}>NEEDS YOU</Text>
-              {live.requests.map((r) => (
+              {live.requests.filter((r) => !hostFilter || r.host === hostFilter).map((r) => (
                 <ApprovalCard key={r.id} request={r} context={describe(r)} onDecide={decide} />
               ))}
             </View>
