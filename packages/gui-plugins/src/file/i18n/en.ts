@@ -20,6 +20,8 @@ export default {
   "view.savePdf": "Save as PDF",
   "view.savePng": "Save as PNG",
   "view.exportZip": "Export ZIP",
+  "view.addToClips": "Add to clips",
+  "view.addedToClips": "Added to clips",
   "view.exportActions": "More export actions",
   "view.edit.saved": "Saved to file",
   "view.edit.failed": "Could not save the file",

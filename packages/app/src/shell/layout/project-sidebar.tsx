@@ -1,5 +1,6 @@
-import { For, Show, createEffect, createMemo, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
+import { ContextMenu } from "@opencode/ui/context-menu"
 import { skipToken, useQuery, useQueryClient } from "@tanstack/solid-query"
 import { Schema } from "effect"
 import { Icon } from "@opencode/ui/icon"
@@ -25,6 +26,7 @@ import "./project-sidebar.css"
 const LIST_LIMIT = 5
 
 type Host = { connection: ServerConnection.Any; key: ReturnType<typeof ServerConnection.key>; ctx: ReturnType<ReturnType<typeof createHomeController>["server"]["context"]> }
+
 type Entry = { host: Host; session: SessionInfo }
 
 export function ProjectSidebar() {
@@ -38,29 +40,48 @@ export function ProjectSidebar() {
   const [pinned, setPinned] = persisted(Persist.window("navigation.projects.pinned"), Schema.Record(Schema.String, Schema.Boolean), initial)
   const [collapsed, setCollapsed] = persisted(Persist.window("navigation.projects.collapsed"), Schema.Record(Schema.String, Schema.Boolean), initial)
   const [collapsedHosts, setCollapsedHosts] = persisted(Persist.window("navigation.hosts.collapsed"), Schema.Record(Schema.String, Schema.Boolean), initial)
-  const [state, setState] = createStore({
+  // Local display names for projects the registry does not list (sessions' own directories): the server rename
+  // applies when the project is known by id, and this keeps the label correct for the rest.
+  const initialNames: Record<string, string> = {}
+  const [projectNames, setProjectNames] = persisted(Persist.window("navigation.projects.names"), Schema.Record(Schema.String, Schema.String), initialNames)
+
+  const [state, setState] = createStore<{
+    search: string
+    recentExpanded: boolean
+    removed: string[]
+    failed: string[]
+    busy: string | undefined
+    byHost: Record<string, SessionInfo[]>
+    expandedProjects: Record<string, boolean>
+    expandedHosts: Record<string, boolean>
+  }>({
     search: "",
     recentExpanded: false,
-    removed: [] as string[],
-    failed: [] as string[],
-    busy: undefined as string | undefined,
-    byHost: {} as Record<string, SessionInfo[]>,
-    expandedProjects: {} as Record<string, boolean>,
-    expandedHosts: {} as Record<string, boolean>,
+    removed: [],
+    failed: [],
+    busy: undefined,
+    byHost: {},
+    expandedProjects: {},
+    expandedHosts: {},
   })
+
   const hosts = createMemo(() => home.server.list().map((connection) => ({ connection, key: ServerConnection.key(connection), ctx: home.server.context(connection) })))
   const search = () => state.search.trim().toLowerCase()
+
   const entries = createMemo(() => hosts().flatMap((host) => (state.byHost[host.key] ?? [])
     .filter((session) => !session.parentID && !state.removed.includes(session.id) && !session.time.archived && (!search() || session.title?.toLowerCase().includes(search())))
     .map((session) => ({ host, session }))))
+
   const sorted = createMemo(() => [...entries()].sort((a, b) => Number(!!pinned[b.session.id]) - Number(!!pinned[a.session.id]) || b.session.time.updated - a.session.time.updated))
   const recent = createMemo(() => (state.recentExpanded ? sorted() : sorted().slice(0, LIST_LIMIT)))
   const failure = (error: Error) => showToast({ title: language.t("common.requestFailed"), description: error.message })
+
   const settle = (host: Host, session: SessionInfo, ids: string[]) => {
     setState("removed", (current) => [...current, ...ids])
     notifySessionTabsRemoved({ server: host.key, directory: session.location.directory, sessionIDs: ids })
     queryClient.invalidateQueries({ queryKey: ["home-sessions", host.connection], exact: true })
   }
+
   const archive = async (host: Host, session: SessionInfo) => {
     setState("busy", session.id)
     await host.ctx.sdk.api.session.update({ sessionID: session.id, archived: true }).then(() => {
@@ -70,6 +91,7 @@ export function ProjectSidebar() {
     }).catch(failure)
     setState("busy", undefined)
   }
+
   const fork = async (host: Host, session: SessionInfo) => {
     setState("busy", session.id)
     await host.ctx.sdk.api.session.fork({ sessionID: session.id }).then((forked) => {
@@ -78,13 +100,17 @@ export function ProjectSidebar() {
     }).catch(failure)
     setState("busy", undefined)
   }
+
   const rename = (host: Host, session: SessionInfo) => {
     const save = async (title: string) => {
       const next = title.trim()
+
       if (!next || next === session.title) {
         dialog.close()
+
         return
       }
+
       setState("busy", session.id)
       await host.ctx.sdk.api.session.update({ sessionID: session.id, title: next }).then(() => {
         // Rename advances time.updated server-side; patch the cache, then re-fetch so
@@ -97,8 +123,27 @@ export function ProjectSidebar() {
       }).catch(failure)
       setState("busy", undefined)
     }
+
     void dialog.show(() => <RenameDialog initial={session.title ?? ""} busy={() => !!state.busy} onCancel={() => dialog.close()} onSave={save} />)
   }
+
+  const renameProject = (host: Host, project: { id?: string; worktree: string; name?: string }) => {
+    const save = async (name: string) => {
+      const next = name.trim()
+
+      if (!next) return
+      setProjectNames((current) => ({ ...current, [project.worktree]: next }))
+      setState("busy", project.worktree)
+      await (project.id !== undefined ? host.ctx.sdk.api.project.update({ projectID: project.id, name: next }) : Promise.resolve())
+        .then(() => dialog.close())
+        .catch(failure)
+      setState("busy", undefined)
+    }
+
+    const initial = project.name?.trim() || projectNames[project.worktree]?.trim() || folderName(project.worktree)
+    void dialog.show(() => <RenameDialog initial={initial} busy={() => !!state.busy} onCancel={() => dialog.close()} onSave={save} />)
+  }
+
   const remove = (host: Host, session: SessionInfo) => {
     const confirm = async () => {
       setState("busy", session.id)
@@ -109,23 +154,34 @@ export function ProjectSidebar() {
       }).catch(failure)
       setState("busy", undefined)
     }
+
     void dialog.show(() => <Dialog fit><DialogHeader hideClose><DialogTitleGroup title={language.t("session.delete.title")} description={language.t("session.delete.confirm", { name: session.title ?? language.t("command.session.new") })} /></DialogHeader>
       <DialogFooter><Button variant="ghost" onClick={() => dialog.close()}>{language.t("common.cancel")}</Button><Button variant="danger" disabled={!!state.busy} onClick={confirm}>{language.t("session.delete.button")}</Button></DialogFooter></Dialog>)
   }
+
   const status = (host: Host, session: SessionInfo) => {
     const all = host.ctx.data.session.list()
+
     if (sessionPermissionRequest(all, host.ctx.data.session.permission.list, session.id) || sessionFormRequest(all, host.ctx.data.session.form.list, session.id)) return "waiting"
+
     if (sessionTreeIDs(all, session.id).some((id) => host.ctx.data.session.status(id) === "running")) return "running"
+
     if (session.outcome === "failed") return "failed"
+
     // Finished turns the user has not opened yet read as a distinct blue dot.
     if (host.ctx.notification.session.unread(session.id, session)) return "unread"
+
     return "done"
   }
+
   const active = (host: Host, session: SessionInfo) => {
     const route = layout.route()
+
     return route.type === "session" && route.server === host.key && route.sessionId === session.id
   }
+
   const open = (entry: Entry) => home.project.openProjectSession(entry.host.connection, entry.session.location.directory, entry.session)
+
   const row = (entry: Entry, showHost = false) => <div class="sidebar-row flex min-w-0 items-center" classList={{ "sidebar-row-active": active(entry.host, entry.session) }}>
     <button type="button" class="flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-start text-13-regular" onClick={() => open(entry)}>
       <span class="sidebar-status" data-status={status(entry.host, entry.session)} title={language.t(`sidebar.status.${status(entry.host, entry.session)}`)} />
@@ -144,11 +200,14 @@ export function ProjectSidebar() {
       </Menu.Content></Menu.Portal>
     </Menu>
   </div>
+
   const showMore = (expanded: boolean, toggle: () => void) => <button type="button" onClick={toggle} class="min-h-8 w-full rounded-md px-3 text-start text-12-regular text-v2-text-text-faint hover:text-v2-text-text-base">
     {language.t(expanded ? "sidebar.showLess" : "sidebar.showMore")}
   </button>
+
   const add = (connection: ServerConnection.Any) => pickDirectory({ server: connection, title: language.t("command.project.open"), multiple: true,
     onSelect: (result) => { if (result) home.project.add(connection, Array.isArray(result) ? result : [result]) } })
+
   return <nav aria-label={language.t("sidebar.projectNavigation")} class="project-navigation flex min-h-0 flex-1 flex-col gap-1 text-v2-text-text-base">
     <div class="flex items-center gap-1 px-2 pt-1">
       <input value={state.search} onInput={(event) => setState("search", event.currentTarget.value)} placeholder={language.t("sidebar.searchConversations")}
@@ -167,7 +226,8 @@ export function ProjectSidebar() {
         hostCollapsed={!!collapsedHosts[host.key]} toggleHost={() => setCollapsedHosts((current) => ({ ...current, [host.key]: !current[host.key] }))}
         projectsExpanded={!!state.expandedHosts[host.key]} toggleHostProjects={() => setState("expandedHosts", host.key, (current) => !current)}
         expandedProjects={state.expandedProjects} toggleProject={(id) => setState("expandedProjects", id, (current) => !current)}
-        failed={state.failed.includes(host.key)} openNewSession={(worktree) => home.project.openProjectNewSession(host.connection, worktree)} row={row} />}</For>
+        failed={state.failed.includes(host.key)} openNewSession={(worktree) => home.project.openProjectNewSession(host.connection, worktree)} row={row}
+        projectNames={projectNames} renameProject={(project) => renameProject(host, project)} />}</For>
     </div>
     <For each={hosts()}>{(host) => <HostSessions connection={host.connection} onData={(list, failed) => {
       setState("byHost", host.key, list)
@@ -191,20 +251,28 @@ function HostProjects(props: {
   failed: boolean
   openNewSession: (worktree: string) => void
   row: (entry: Entry) => JSX.Element
+  projectNames: Record<string, string>
+  renameProject: (project: { id?: string; worktree: string; name?: string }) => void
 }) {
   const language = useLanguage()
+  const [menuProject, setMenuProject] = createSignal<{ id?: string; worktree: string; name?: string }>()
+  const projectLabel = (project: { worktree: string; name?: string }) => project.name?.trim() || props.projectNames[project.worktree]?.trim() || folderName(project.worktree)
   const hostEntries = createMemo(() => props.entries.filter((entry) => entry.host.key === props.host.key))
+
   // Projects come from this host's own registry plus the directories its own sessions live in.
   // Sessions from other hosts never contribute projects here, even when the path is identical.
   const projects = createMemo(() => {
     const known = props.host.ctx.projects.list()
+
     return [...known, ...hostEntries().flatMap((entry) => known.some((project) => project.id === entry.session.projectID || project.worktree === entry.session.location.directory) ? [] : [{ id: entry.session.projectID, worktree: entry.session.location.directory }])]
       .filter((project, index, all) => all.findIndex((item) => item.worktree === project.worktree) === index)
       .sort((a, b) => lastUsed(b, hostEntries()) - lastUsed(a, hostEntries()))
   })
+
   const shownProjects = createMemo(() => (props.projectsExpanded ? projects() : projects().slice(0, LIST_LIMIT)))
   const projectEntries = (project: { id?: string; worktree: string }) => hostEntries().filter((entry) => entry.session.projectID === project.id || entry.session.location.directory === project.worktree)
   const hostOpen = () => !props.hostCollapsed
+
   return <section class="pb-2">
     <div class="flex items-center">
       <button type="button" aria-expanded={hostOpen()} onClick={props.toggleHost} class="sidebar-row sidebar-host-label flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-md px-2 pb-1 pt-4 text-start text-12-regular">
@@ -214,21 +282,32 @@ function HostProjects(props: {
     </div>
     <Show when={props.failed}><p class="px-2 py-1 text-12-regular text-v2-text-text-faint">{language.t("sidebar.sessionsUnavailable")}</p></Show>
     <Show when={hostOpen()}>
-    <For each={shownProjects()}>{(project) => {
-      const sessions = () => projectEntries(project)
-      const expanded = () => !!props.expandedProjects[`${props.host.key}\u0000${project.worktree}`]
-      const shown = () => (expanded() ? sessions() : sessions().slice(0, LIST_LIMIT))
-      const open = () => !props.collapsed[props.collapsedKey(project.worktree)]
-      return <section class="mb-1">
-        <div class="flex items-center">
-          <button type="button" aria-expanded={open()} onClick={() => props.toggleCollapsed(project.worktree)} class="sidebar-row flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-start text-13-regular">
-            <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" /><Icon name="folder" size="small" />
-            <span class="truncate" title={project.worktree}>{project.worktree.replace(/[\\/]+$/, "").split(/[\\/]/).pop()}</span>
-          </button>
-          <Menu placement="bottom-end" modal={false}><Menu.Trigger aria-label={language.t("common.moreOptions")} class="sidebar-menu flex size-7 shrink-0 items-center justify-center rounded-md"><Icon name="outline-dots" size="small" /></Menu.Trigger>
-            <Menu.Portal><Menu.Content><Menu.Item onSelect={() => props.openNewSession(project.worktree)}>{language.t("command.session.new")}</Menu.Item></Menu.Content></Menu.Portal>
-          </Menu>
-        </div>
+    <ContextMenu>
+      <ContextMenu.Trigger disabled={!menuProject()} as="div" class="contents" onPointerDown={(event: PointerEvent) => {
+        if (event.button !== 2) return
+        const element = event.target instanceof Element ? event.target.closest("[data-project-worktree]") : undefined
+        const worktree = element?.getAttribute("data-project-worktree")
+        setMenuProject(worktree === null || worktree === undefined ? undefined : projects().find((item) => item.worktree === worktree))
+      }}>
+      <For each={shownProjects()}>{(project) => {
+        const sessions = () => projectEntries(project)
+        const expanded = () => !!props.expandedProjects[`${props.host.key}\u0000${project.worktree}`]
+        const shown = () => (expanded() ? sessions() : sessions().slice(0, LIST_LIMIT))
+        const open = () => !props.collapsed[props.collapsedKey(project.worktree)]
+
+        return <section class="mb-1">
+          <div class="flex items-center">
+            <button type="button" data-project-worktree={project.worktree} aria-expanded={open()} onClick={() => props.toggleCollapsed(project.worktree)} class="sidebar-row flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-start text-13-regular">
+              <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" /><Icon name="folder" size="small" />
+              <span class="truncate" title={project.worktree}>{projectLabel(project)}</span>
+            </button>
+            <Menu placement="bottom-end" modal={false}><Menu.Trigger aria-label={language.t("common.moreOptions")} class="sidebar-menu flex size-7 shrink-0 items-center justify-center rounded-md"><Icon name="outline-dots" size="small" /></Menu.Trigger>
+              <Menu.Portal><Menu.Content>
+                <Menu.Item onSelect={() => props.openNewSession(project.worktree)}>{language.t("command.session.new")}</Menu.Item>
+                <Menu.Item onSelect={() => props.renameProject(project)}>{language.t("common.rename")}</Menu.Item>
+              </Menu.Content></Menu.Portal>
+            </Menu>
+          </div>
         <Show when={open()}><div class="ps-3">
           <For each={shown()}>{(entry) => props.row(entry)}</For>
           <Show when={sessions().length > LIST_LIMIT}><button type="button" onClick={() => props.toggleProject(`${props.host.key}\u0000${project.worktree}`)} class="min-h-8 w-full rounded-md px-3 text-start text-12-regular text-v2-text-text-faint hover:text-v2-text-text-base">{language.t(expanded() ? "sidebar.showLess" : "sidebar.showMore")}</button></Show>
@@ -236,21 +315,37 @@ function HostProjects(props: {
       </section>
     }}</For>
     <Show when={projects().length > LIST_LIMIT}><button type="button" onClick={props.toggleHostProjects} class="min-h-8 w-full rounded-md px-3 text-start text-12-regular text-v2-text-text-faint hover:text-v2-text-text-base">{language.t(props.projectsExpanded ? "sidebar.showLess" : "sidebar.showMore")}</button></Show>
+      </ContextMenu.Trigger>
+      <ContextMenu.Portal><ContextMenu.Content>
+        <ContextMenu.Item onSelect={() => { const target = menuProject();
+
+ if (target) props.openNewSession(target.worktree) }}>{language.t("command.session.new")}</ContextMenu.Item>
+        <ContextMenu.Item onSelect={() => { const target = menuProject();
+
+ if (target) props.renameProject(target) }}>{language.t("common.rename")}</ContextMenu.Item>
+      </ContextMenu.Content></ContextMenu.Portal>
+    </ContextMenu>
     </Show>
   </section>
 }
 
 function lastUsed(project: { id?: string; worktree: string }, entries: Entry[]) {
-  return Math.max(0, ...entries.filter((entry) => entry.session.projectID === project.id || entry.session.location.directory === project.worktree).map((entry) => entry.session.time.updated))
+  return Math.max(0, ...entries.flatMap((entry) => entry.session.projectID === project.id || entry.session.location.directory === project.worktree ? [entry.session.time.updated] : []))
+}
+
+function folderName(worktree: string) {
+  return worktree.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || worktree
 }
 
 function RenameDialog(props: { initial: string; busy: () => boolean; onCancel: () => void; onSave: (title: string) => void }) {
   const language = useLanguage()
   const [draft, setDraft] = createStore({ title: props.initial })
+
   const submit = () => {
     if (props.busy() || !draft.title.trim()) return
     props.onSave(draft.title)
   }
+
   return <Dialog fit><DialogHeader hideClose><DialogTitleGroup title={language.t("common.rename")} /></DialogHeader>
     <div class="px-1 pb-1"><TextInput appearance="large" autofocus value={draft.title} aria-label={language.t("common.rename")}
       onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit() } }}
@@ -261,6 +356,7 @@ function RenameDialog(props: { initial: string; busy: () => boolean; onCancel: (
 function HostSessions(props: { connection: ServerConnection.Any; onData: (sessions: SessionInfo[], failed: boolean) => void }) {
   const home = createHomeController()
   const ctx = () => home.server.context(props.connection)
+
   const query = useQuery(() => ({
     queryKey: ["home-sessions", props.connection] as const,
     enabled: ctx().sdk.connection.status() === "connected",
@@ -268,6 +364,8 @@ function HostSessions(props: { connection: ServerConnection.Any; onData: (sessio
     select: (sessions: Awaited<ReturnType<typeof loadHomeSessionIndex>>) => () => sessions,
     staleTime: 30_000, refetchInterval: 30_000, retry: false,
   }))
+
   createEffect(() => props.onData(mergeHomeSessionIndex(query.data?.() ?? [], ctx().data.session.list()), query.isError))
+
   return null
 }

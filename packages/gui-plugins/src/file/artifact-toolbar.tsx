@@ -10,6 +10,7 @@ import { artifactKind } from "@opencode/util/artifact"
 import { getFilename } from "@opencode/util/path"
 import type { ArtifactViewport } from "@opencode/session-ui/artifact-stage"
 import { usePlugin, type MountedSession, type SessionScreen } from "@opencode/plugin/gui"
+import { ClipsTray } from "../clips/contract"
 import { current, useShared } from "./context"
 import { OpenInAppMenuItemsV2, useOpenInApp } from "./open-in-app"
 import { resolveOpenInAppPath, workspaceFileUrl } from "./path"
@@ -37,6 +38,8 @@ export function ArtifactToolbar(props: {
   const [store, setStore] = createStore({ open: false })
   const path = () => resolveOpenInAppPath(props.screen.file.root, props.path)
   const kind = () => artifactKind(props.path)
+
+  const clips = ctx.use(ClipsTray)
 
   const apps = useOpenInApp({
     get session() {
@@ -155,6 +158,16 @@ export function ArtifactToolbar(props: {
                 </Show>
                 <Show when={props.onSaveZip}>
                   <Menu.Item onSelect={() => props.onSaveZip?.()}>{ctx.t("view.exportZip")}</Menu.Item>
+                </Show>
+                <Show when={current(clips())}>
+                  <Menu.Item
+                    onSelect={() => {
+                      current(clips())?.add({ server: props.session.server.id, directory: props.session.directory, path: props.path })
+                      showToast({ title: ctx.t("view.addedToClips") })
+                    }}
+                  >
+                    {ctx.t("view.addToClips")}
+                  </Menu.Item>
                 </Show>
                 <Show when={props.text !== undefined}>
                   <Menu.Item

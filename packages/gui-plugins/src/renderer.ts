@@ -9,6 +9,8 @@ import terminal from "./terminal"
 import terminalRenderer from "./terminal/renderer"
 import file from "./file"
 import fileRenderer from "./file/renderer"
+import clips from "./clips"
+import clipsRenderer from "./clips/renderer"
 import review from "./review"
 import reviewRenderer from "./review/renderer"
 import details from "./details"
@@ -40,6 +42,7 @@ export const builtins = compose({
   debug: { ...debug, windowEntry: eager(debugRenderer) },
   terminal: { ...terminal, windowEntry: eager(terminalRenderer) },
   file: { ...file, windowEntry: eager(fileRenderer) },
+  clips: { ...clips, windowEntry: eager(clipsRenderer) },
   review: { ...review, windowEntry: eager(reviewRenderer) },
   details: { ...details, windowEntry: eager(detailsRenderer) },
   browser: { ...browser, windowEntry: eager(browserRenderer) },

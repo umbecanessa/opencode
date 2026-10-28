@@ -130,3 +130,19 @@ export interface FileViewer {
 
 /** Viewers for file kinds the file view does not render itself. Contribute one with `ctx.add(FileViewer, viewer)`. */
 export const FileViewer = Registry.define<FileViewer>("file.viewer")
+
+/** Opens a file in the file panel's tabs. */
+export interface FileOpen {
+  /**
+   * Opens `path` in the session's file panel as a preview tab and syncs its content. The path is read from the
+   * session's own server, so an absolute path resolves against the host that runs the session. When the side region
+   * is closed it opens; on narrow screens the file shows in the mobile view.
+   *
+   * @param session - The routed session whose workspace serves the file.
+   * @param path - A workspace-relative or absolute file path.
+   */
+  open(session: MountedSession, path: string): void
+}
+
+/** The file plugin provides this. */
+export const FileOpen = Contract.define<FileOpen, "file.open">("file.open")

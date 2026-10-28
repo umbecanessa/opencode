@@ -36,6 +36,7 @@ import { resolveArtifactPath } from "./artifact"
 import { FileContext, type FileShared } from "./context"
 import type { OpenApp } from "./apps"
 import {
+  FileOpen,
   FileTree,
   OpenInApp,
   type FileListProps,
@@ -481,6 +482,10 @@ const setup: Plugin.Setup<typeof File> = (ctx) => {
         </Show>
       )
     }),
+  })
+
+  ctx.provide(FileOpen, {
+    open: (session, path) => open(session, path),
   })
 
   // The review panel lists its changed files with the browser's tree; it renders under this plugin, on the

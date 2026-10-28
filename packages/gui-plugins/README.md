@@ -693,6 +693,7 @@ export const builtins = compose({
   debug: { ...debug, windowEntry: eager(debugRenderer) },
   terminal: { ...terminal, windowEntry: eager(terminalRenderer) },
   file: { ...file, windowEntry: eager(fileRenderer) },
+  clips: { ...clips, windowEntry: eager(clipsRenderer) },
   review: { ...review, windowEntry: eager(reviewRenderer) },
   details: { ...details, windowEntry: eager(detailsRenderer) },
   browser: { ...browser, windowEntry: eager(browserRenderer) },
