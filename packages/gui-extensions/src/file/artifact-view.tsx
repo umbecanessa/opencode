@@ -113,7 +113,10 @@ export default function ArtifactView(props: {
     const parsed = table()
     const info: ArtifactInfo = parsed ? { rows: parsed.total, columns: parsed.columns } : state().info
 
+    const shown = notice()
+
     return [
+      shown ? ctx.t(shown === "saved" ? "view.edit.saved" : "view.edit.failed") : undefined,
       info.width && info.height ? `${info.width} × ${info.height}` : undefined,
       info.duration ? formatDuration(info.duration) : undefined,
       info.rows !== undefined ? ctx.plural("view.table.rows", Math.max(0, info.rows - 1)) : undefined,
@@ -158,6 +161,48 @@ export default function ArtifactView(props: {
   const [viewport, setViewport] = createSignal<ArtifactViewport>("desktop")
   let frame: HTMLIFrameElement | undefined
 
+  // Click-to-edit: a saved patch goes straight back to the file. The patch belongs to one
+  // loaded content, so the reload this save triggers (or any other) drops it.
+  const [patch, setPatch] = createSignal<{ source: FileContent; html: string }>()
+  const [notice, setNotice] = createSignal<"saved" | "failed">()
+  let noticeTimer: ReturnType<typeof setTimeout>
+
+  const show = (value: "saved" | "failed") => {
+    clearTimeout(noticeTimer)
+    setNotice(value)
+    noticeTimer = setTimeout(() => setNotice(undefined), 2500)
+  }
+
+  onCleanup(() => clearTimeout(noticeTimer))
+
+  const pageText = () => {
+    const value = patch()
+
+    return value && value.source === props.content ? value.html : props.content.content
+  }
+
+  const applyEdit = (html: string) => {
+    setPatch({ source: props.content, html })
+
+    // Absolute paths are scoped to their parent directory, as elsewhere in the file views.
+    const absolute = /^[a-z]:[\\/]/i.test(props.path) || props.path.startsWith("/") || props.path.startsWith("\\\\")
+
+    const target = absolute
+      ? { path: getFilename(props.path), location: { directory: getDirectory(props.path) } }
+      : { path: props.path }
+
+    props.session.server.client.file
+      .write({ ...target, payload: new TextEncoder().encode(html) })
+      .then(() => {
+        show("saved")
+        ctx.screen.current()?.file.sync(props.path)
+      })
+      .catch(() => {
+        setPatch(undefined)
+        show("failed")
+      })
+  }
+
   return (
     <>
       <ArtifactToolbar
@@ -180,7 +225,7 @@ export default function ArtifactView(props: {
               <Button
                 size="small"
                 variant="ghost"
-                onClick={() => void saveArtifactPdf(props.content.content, getFilename(props.path), frame)}
+                onClick={() => void saveArtifactPdf(pageText(), getFilename(props.path), frame)}
               >
                 {ctx.t("view.savePdf")}
               </Button>
@@ -196,10 +241,10 @@ export default function ArtifactView(props: {
                   </Menu.Trigger>
                   <Menu.Portal>
                     <Menu.Content style={{ "min-width": "180px" }}>
-                      <Menu.Item onSelect={() => void saveArtifactPng(props.content.content, getFilename(props.path), viewport())}>
+                      <Menu.Item onSelect={() => void saveArtifactPng(pageText(), getFilename(props.path), viewport())}>
                         {ctx.t("view.savePng")}
                       </Menu.Item>
-                      <Menu.Item onSelect={() => void saveArtifactZip(props.content.content, getFilename(props.path))}>
+                      <Menu.Item onSelect={() => void saveArtifactZip(pageText(), getFilename(props.path))}>
                         {ctx.t("view.exportZip")}
                       </Menu.Item>
                     </Menu.Content>
@@ -227,9 +272,11 @@ export default function ArtifactView(props: {
           <Match when={page()}>
             <div class="relative min-h-0 flex-1">
               <ArtifactStage
-                content={props.content.content}
+                content={pageText()}
                 title={getFilename(props.path)}
                 viewport={viewport()}
+                editable={page()}
+                onPatch={applyEdit}
                 ref={(element) => (frame = element)}
               />
             </div>

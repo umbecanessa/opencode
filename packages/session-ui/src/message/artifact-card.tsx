@@ -40,6 +40,7 @@ export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; c
   const [mode, setMode] = createSignal<"code" | "preview">("code")
   const [viewport, setViewport] = createSignal<ArtifactViewport>("desktop")
   const [mountPreview, setMountPreview] = createSignal(false)
+  const [edited, setEdited] = createSignal<string>()
   let frame: HTMLIFrameElement | undefined
 
   createEffect(() => {
@@ -47,13 +48,14 @@ export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; c
   })
 
   const title = () => artifact().title || artifact().identifier || i18n.t("ui.artifact.untitled")
+  const content = () => edited() ?? artifact().content
 
   const entry = createMemo<RegisteredArtifact>(() => ({
     key: props.artifactKey,
     identifier: artifact().identifier,
     title: artifact().title,
     type: artifact().type,
-    content: artifact().content,
+    content: content(),
     created: props.created,
     index: props.index,
   }))
@@ -62,14 +64,18 @@ export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; c
     if (artifact().state === "done" && previewable()) registerArtifact(session(), entry())
   })
 
+  // A saved edit becomes the card's artifact: the entry effect above re-registers it, so the
+  // card, the viewer opened from it, and every export all show the patched document.
+  const applyEdit = (html: string) => setEdited(html)
+
   const [copied, setCopied] = createSignal(false)
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(artifact().content)
+      await navigator.clipboard.writeText(content())
     } catch {
       const textarea = document.createElement("textarea")
-      textarea.value = artifact().content
+      textarea.value = content()
       textarea.setAttribute("readonly", "")
       textarea.style.position = "fixed"
       textarea.style.opacity = "0"
@@ -156,17 +162,17 @@ export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; c
               />
               <Menu.Portal>
                 <Menu.Content style={{ "min-width": "180px" }}>
-                  <Menu.Item onSelect={() => saveArtifact(artifact().content, title())}>
+                  <Menu.Item onSelect={() => saveArtifact(content(), title())}>
                     {i18n.t("ui.artifact.save")}
                   </Menu.Item>
-                  <Menu.Item onSelect={() => void saveArtifactPdf(artifact().content, title(), frame)}>
+                  <Menu.Item onSelect={() => void saveArtifactPdf(content(), title(), frame)}>
                     {i18n.t("ui.artifact.savePdf")}
                   </Menu.Item>
                   <Show when={artifactNativeExport()}>
-                    <Menu.Item onSelect={() => void saveArtifactPng(artifact().content, title(), viewport())}>
+                    <Menu.Item onSelect={() => void saveArtifactPng(content(), title(), viewport())}>
                       {i18n.t("ui.artifact.savePng")}
                     </Menu.Item>
-                    <Menu.Item onSelect={() => void saveArtifactZip(artifact().content, title())}>
+                    <Menu.Item onSelect={() => void saveArtifactZip(content(), title())}>
                       {i18n.t("ui.artifact.exportZip")}
                     </Menu.Item>
                   </Show>
@@ -185,17 +191,19 @@ export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; c
         <Show when={mountPreview()}>
           <div hidden={mode() !== "preview"}>
             <ArtifactStage
-              content={artifact().content}
+              content={content()}
               title={title()}
               viewport={viewport()}
               height={viewport() === "desktop" ? 480 : 560}
+              editable={previewable()}
+              onPatch={applyEdit}
               ref={(element) => (frame = element)}
             />
           </div>
         </Show>
         <Show when={!(mode() === "preview" && mountPreview())}>
           <pre data-slot="artifact-card-code">
-            <code>{artifact().content}</code>
+            <code>{content()}</code>
           </pre>
         </Show>
       </div>

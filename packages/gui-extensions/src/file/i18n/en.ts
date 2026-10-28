@@ -18,6 +18,8 @@ export default {
   "view.savePng": "Save as PNG",
   "view.exportZip": "Export ZIP",
   "view.exportActions": "More export actions",
+  "view.edit.saved": "Saved to file",
+  "view.edit.failed": "Could not save the file",
   "view.fullscreen": "Enter full screen",
   "view.exitFullscreen": "Exit full screen",
   "view.binary": "Binary file · {{size}}",

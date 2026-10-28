@@ -1,7 +1,7 @@
 import { createMemo, createSignal, For, Show } from "solid-js"
 import { Dialog, DialogBody, DialogHeader, DialogTitleGroup } from "@opencode/ui/dialog"
 import { useI18n } from "@opencode/ui/context/i18n"
-import { artifactVersion, sessionArtifacts, type RegisteredArtifact } from "./artifact-registry"
+import { artifactVersion, registerArtifact, sessionArtifacts, type RegisteredArtifact } from "./artifact-registry"
 import {
   ArtifactStage,
   artifactNativeExport,
@@ -28,6 +28,14 @@ export function ArtifactViewer(props: { session: string; initial: RegisteredArti
     const version = artifactVersion(list(), entry)
 
     return version === undefined ? title : `${title} · ${i18n.t("ui.artifact.version", { version })}`
+  }
+
+  // Saving an edit registers a later version; the gallery is reactive, so it appears and is
+  // selected straight away while the original stays in the list.
+  const applyEdit = (html: string) => {
+    const key = `${current().key}#edit-${Date.now()}`
+    registerArtifact(props.session, { ...current(), key, content: html, created: Date.now() })
+    setSelected(key)
   }
 
   return (
@@ -79,6 +87,8 @@ export function ArtifactViewer(props: { session: string; initial: RegisteredArti
               title={name(current())}
               viewport={viewport()}
               height={height}
+              editable
+              onPatch={applyEdit}
               ref={(element) => (frame = element)}
             />
           </div>
