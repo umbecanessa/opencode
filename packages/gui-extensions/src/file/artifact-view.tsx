@@ -109,6 +109,19 @@ export default function ArtifactView(props: {
       : undefined,
   )
 
+  // Click-to-edit notices ride the toolbar meta line; the signal is declared ahead of the
+  // meta memo because createMemo evaluates eagerly at creation.
+  const [notice, setNotice] = createSignal<"saved" | "failed">()
+  let noticeTimer: ReturnType<typeof setTimeout>
+
+  const show = (value: "saved" | "failed") => {
+    clearTimeout(noticeTimer)
+    setNotice(value)
+    noticeTimer = setTimeout(() => setNotice(undefined), 2500)
+  }
+
+  onCleanup(() => clearTimeout(noticeTimer))
+
   const meta = createMemo(() => {
     const parsed = table()
     const info: ArtifactInfo = parsed ? { rows: parsed.total, columns: parsed.columns } : state().info
@@ -164,16 +177,6 @@ export default function ArtifactView(props: {
   // Click-to-edit: a saved patch goes straight back to the file. The patch belongs to one
   // loaded content, so the reload this save triggers (or any other) drops it.
   const [patch, setPatch] = createSignal<{ source: FileContent; html: string }>()
-  const [notice, setNotice] = createSignal<"saved" | "failed">()
-  let noticeTimer: ReturnType<typeof setTimeout>
-
-  const show = (value: "saved" | "failed") => {
-    clearTimeout(noticeTimer)
-    setNotice(value)
-    noticeTimer = setTimeout(() => setNotice(undefined), 2500)
-  }
-
-  onCleanup(() => clearTimeout(noticeTimer))
 
   const pageText = () => {
     const value = patch()
