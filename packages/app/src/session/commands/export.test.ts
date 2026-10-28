@@ -51,7 +51,7 @@ describe("saveSessionExport", () => {
 
     const platform: Pick<Platform, "saveFile"> = {
       saveFile: async (options, content) => {
-        writes.push([options.defaultPath ?? "", content])
+        writes.push([options.defaultPath ?? "", content instanceof Uint8Array ? new TextDecoder().decode(content) : content])
 
         return saved
       },

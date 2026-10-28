@@ -1,6 +1,7 @@
 import { Show, type ParentProps } from "solid-js"
 import { createStore } from "solid-js/store"
 import { ContextMenu } from "@opencode/ui/context-menu"
+import { getDirectory, getFilename } from "@opencode/util/path"
 import { usePlatform } from "@/runtime/platform/platform"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useLayout } from "@/shell/state/layout"
@@ -16,23 +17,52 @@ export function FilePathMenu(props: ParentProps) {
   const language = useLanguage()
   const layout = useLayout()
   const global = useGlobal()
+
   const [state, setState] = createStore({ path: "" })
+
   const local = () => {
     const route = layout.route()
+
     if (route.type !== "session") return false
+
     const connection = global.servers.list().find((item) => ServerConnection.key(item) === route.server)
+
     return !!connection && ServerConnection.local(connection)
   }
+
   const fail = () => showToast({ title: language.t("common.requestFailed"), description: language.t("sidebar.fileActionFailed") })
+
+  // The file is read from the host that owns the session, so paths on paired machines download too; the bytes go to
+  // the local save dialog untouched. Absolute paths are scoped to their parent, like images in chat.
+  const download = () => {
+    const route = layout.route()
+    const server = route.type === "session" ? global.serverCtx(route.server) : undefined
+
+    if (!server) return fail()
+
+    const absolute = /^[A-Za-z]:[\\/]/.test(state.path) || state.path.startsWith("/") || state.path.startsWith("\\\\")
+
+    server.sdk.api.file
+      .read(absolute ? { path: getFilename(state.path), location: { directory: getDirectory(state.path) } } : { path: state.path })
+      .then((bytes) => platform.saveFile?.({ defaultPath: getFilename(state.path) }, bytes))
+      .catch(fail)
+  }
+
   return <ContextMenu>
     <ContextMenu.Trigger disabled={!state.path} as="div" class="flex min-h-0 min-w-0 flex-1 flex-col self-stretch" onPointerDown={(event: PointerEvent) => {
       if (event.button !== 2) return
+
       const target = event.target
+
       if (!(target instanceof Element)) return setState("path", "")
+
       const element = target.closest("a, code, [data-file-path]")
+
       if (!element) return setState("path", "")
+
       const raw = element.getAttribute("data-file-path") ?? element.getAttribute("href") ?? element.textContent?.trim() ?? ""
       const path = raw.replace(/^file:\/\/\//, "").replace(/^\/([A-Za-z]:[\\/])/, "$1")
+
       setState("path", /^(?:[A-Za-z]:[\\/]|\/[^/])/.test(path) && !/[\r\n]/.test(path) ? path : "")
     }}>
       {props.children}
@@ -41,6 +71,7 @@ export function FilePathMenu(props: ParentProps) {
       <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(state.path).catch(fail) }}>{language.t("sidebar.copyPath")}</ContextMenu.Item>
       <Show when={local() && platform.openPath}><ContextMenu.Item onSelect={() => { platform.openPath?.(state.path).catch(fail) }}>{language.t("sidebar.openFile")}</ContextMenu.Item></Show>
       <Show when={local() && platform.revealPath}><ContextMenu.Item onSelect={() => { platform.revealPath?.(state.path).then((found) => { if (!found) fail() }).catch(fail) }}>{language.t("sidebar.revealFile")}</ContextMenu.Item></Show>
+      <Show when={platform.saveFile}><ContextMenu.Item onSelect={download}>{language.t("sidebar.downloadFile")}</ContextMenu.Item></Show>
     </ContextMenu.Content></ContextMenu.Portal>
   </ContextMenu>
 }

@@ -220,7 +220,9 @@ export function createHostApis() {
       copy: (text) => platform.writeClipboardText?.(text) ?? navigator.clipboard.writeText(text),
       async save(file) {
         if (platform.saveFile) return platform.saveFile({ defaultPath: file.name }, file.content)
-        const url = URL.createObjectURL(new Blob([file.content], { type: "application/octet-stream" }))
+        // The web fallback only: a byte array is copied into an ArrayBuffer-backed view, which is what Blob wants.
+        const blob = file.content instanceof Uint8Array ? new Uint8Array(file.content) : file.content
+        const url = URL.createObjectURL(new Blob([blob], { type: "application/octet-stream" }))
         const link = document.createElement("a")
         link.href = url
         link.download = file.name

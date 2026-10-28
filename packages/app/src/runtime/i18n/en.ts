@@ -5,6 +5,7 @@ export const dict = {
   "sidebar.copyPath": "Copy path",
   "sidebar.openFile": "Open file",
   "sidebar.revealFile": "Show in parent folder",
+  "sidebar.downloadFile": "Download file",
   "sidebar.fileActionFailed": "The file action could not be completed on this computer.",
   "sidebar.pin": "Pin",
   "sidebar.unpin": "Unpin",

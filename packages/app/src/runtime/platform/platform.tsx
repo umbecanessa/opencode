@@ -69,7 +69,7 @@ type PlatformBase = {
   onDragCancel?(callback: () => void): () => void
 
   /** Open a native save file dialog and write content to the selected path (desktop only) */
-  saveFile?(opts: SaveFilePickerOptions, content: string): Promise<boolean>
+  saveFile?(opts: SaveFilePickerOptions, content: string | Uint8Array): Promise<boolean>
 
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
