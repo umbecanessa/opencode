@@ -1091,6 +1091,84 @@ describe("SessionRestart background recovery", () => {
   )
 })
 
+describe("SessionExecution steer release", () => {
+  it.effect("a wake with a pending steer backgrounds the blocking work the drain is parked on", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const jobs = yield* Job.Service
+      const sessionID = Session.ID.make("ses_steer_release_parked")
+      yield* seedSessions(database, [sessionID])
+      yield* seedInbox(database, sessionID, ["steer"])
+
+      const draining = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, () =>
+        Deferred.succeed(draining, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+      yield* execution.resume(sessionID).pipe(Effect.forkScoped)
+      yield* Deferred.await(draining)
+
+      // Exactly what a foreground shell tool call does: a running Job parks this Session
+      // in a blocking wait that a mid-turn steer cannot otherwise cut through.
+      yield* jobs.start({ id: "sh_parked", type: "shell", run: Effect.never })
+      const results: unknown[] = []
+      const settled = yield* Deferred.make<void>()
+      yield* jobs
+        .block({ id: "sh_parked", sessionID })
+        .pipe(
+          Effect.tap((result) => Effect.sync(() => void results.push(result))),
+          Effect.asVoid,
+          Effect.ensuring(Deferred.succeed(settled, undefined)),
+          Effect.forkIn(scope),
+        )
+
+      // The block registration races with the wake landing, so the wake repeats until the
+      // parked call resumes with its backgrounded result.
+      for (let attempt = 0; attempt < 2_000 && !(yield* Deferred.isDone(settled)); attempt++) {
+        yield* execution.wake(sessionID)
+        yield* Effect.yieldNow
+      }
+      expect(results).toMatchObject([
+        { type: "backgrounded", info: { id: "sh_parked", type: "shell", status: "running" } },
+      ])
+    }),
+  )
+
+  it.effect("a wake without a pending steer leaves parked blocking work alone", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const jobs = yield* Job.Service
+      const sessionID = Session.ID.make("ses_steer_release_quiet")
+      yield* seedSessions(database, [sessionID])
+      // Queued next-turn work delivers at an idle boundary; it must not evict running work.
+      yield* seedInbox(database, sessionID, ["queue"])
+
+      const draining = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, () =>
+        Deferred.succeed(draining, undefined).pipe(Effect.andThen(Effect.never)),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+      yield* execution.resume(sessionID).pipe(Effect.forkScoped)
+      yield* Deferred.await(draining)
+
+      yield* jobs.start({ id: "sh_parked_quiet", type: "shell", run: Effect.never })
+      const settled = yield* Deferred.make<void>()
+      yield* jobs
+        .block({ id: "sh_parked_quiet", sessionID })
+        .pipe(Effect.asVoid, Effect.ensuring(Deferred.succeed(settled, undefined)), Effect.forkIn(scope))
+      for (let attempt = 0; attempt < 10; attempt++) {
+        yield* execution.wake(sessionID)
+        yield* Effect.yieldNow
+      }
+      expect(yield* Deferred.isDone(settled)).toBe(false)
+    }),
+  )
+})
+
 describe("SessionExecution interrupt continuation", () => {
   it.effect("resumes only steering input after an interrupt with continue", () =>
     Effect.gen(function* () {

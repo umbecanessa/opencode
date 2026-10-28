@@ -144,6 +144,23 @@ export const layer = Layer.effect(
         ),
     })
 
+    // Cursor-style steering: a drain parked in a foreground blocking call (a shell tool
+    // waiting on Job.block) cannot observe a steer that arrives while it waits, because
+    // the runner only promotes input at step boundaries and the doorbell is only read
+    // after the drain returns. When a wake lands on an active drain with a pending steer,
+    // release the park by moving that session's blocking work to the background: the
+    // blocked call resumes with a backgrounded result that names the shell to the model,
+    // and the steer is then promoted at the next safe boundary like any other steer.
+    // If the blocking call starts after this check (a narrow admission-to-park race), the
+    // steer waits out that call like it did before this release existed.
+    const releaseSteerBlock = (sessionID: SessionSchema.ID) =>
+      Effect.gen(function* () {
+        if (!(yield* coordinator.isActive(sessionID))) return
+        if (!(yield* SessionInbox.has(db, sessionID, "steer"))) return
+        yield* jobs.backgroundAll({ sessionID })
+      })
+    const wake = (sessionID: SessionSchema.ID) =>
+      coordinator.wake(sessionID).pipe(Effect.andThen(releaseSteerBlock(sessionID)))
     return Service.of({
       active: coordinator.active,
       isActive: coordinator.isActive,
@@ -166,7 +183,7 @@ export const layer = Layer.effect(
           return interrupted
         }),
       resume: coordinator.run,
-      wake: coordinator.wake,
+      wake,
       awaitIdle: coordinator.awaitIdle,
     })
   }),
