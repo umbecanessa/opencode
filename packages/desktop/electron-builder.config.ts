@@ -110,6 +110,8 @@ const getBase = (appId: string): Configuration => {
       "out/**/*",
       "resources/**/*",
       "!resources/opencode-cli*",
+      // Seeded into the opencode config directory from plain files, see extraResources.
+      "!resources/design-content{,/**/*}",
       // Keep only the target platform's node-pty prebuild when cross-packaging with --cpu=*.
       ...CLI_BINARIES.filter((item) => item.os !== target.os || item.cpu !== target.cpu).map(
         (item) => `!**/node_modules/@lydell/node-pty-${item.os}-${item.cpu}{,/**/*}`,
@@ -135,6 +137,7 @@ const getBase = (appId: string): Configuration => {
         to: "",
         filter: ["opencode-cli", "opencode-cli.exe", "opencode-cli.version"],
       },
+      { from: "resources/design-content", to: "design-content" },
     ],
     afterPack: async (context) => {
       const arch = Arch[context.arch]
