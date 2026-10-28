@@ -2,7 +2,8 @@ import { DataProvider } from "@opencode/session-ui/context"
 import { registerArtifactSavers } from "@opencode/session-ui/artifact-stage"
 import { MarkdownProvider, type ReadMarkdownImage } from "@opencode/session-ui/context/markdown"
 import { useNavigate, useParams } from "@solidjs/router"
-import { createMemo, type ParentProps } from "solid-js"
+import { useQuery } from "@tanstack/solid-query"
+import { createMemo, onCleanup, type ParentProps } from "solid-js"
 import { useProviders } from "@/providers/catalog/providers"
 import { LocalProvider } from "@/providers/models/selection"
 import type { ServerConnection } from "@/runtime/server/registry"
@@ -15,6 +16,7 @@ import { useLanguage } from "@/runtime/i18n/language"
 import { usePlatform } from "@/runtime/platform/platform"
 import { showToast } from "@/shell/notifications/toast"
 import { createTurnDiffCache } from "@/session/timeline/turn-diffs"
+import { useSettings } from "@/settings/model"
 
 export function SessionUIProvider(
   props: ParentProps<{
@@ -29,6 +31,7 @@ export function SessionUIProvider(
   const tabs = useTabs()
   const language = useLanguage()
   const platform = usePlatform()
+  const settings = useSettings()
   // Artifacts export natively (PDF, PNG, ZIP) where the platform renders offscreen; PDF
   // falls back to the browser print sheet elsewhere. Re-registration on remount is a no-op.
   const printPdf = platform.printPdf
@@ -77,7 +80,32 @@ export function SessionUIProvider(
     tabs.select(tabs.addSessionTab({ server: props.server, sessionId: session.id }))
   }
 
+  const sessionTitle = (id: string) => {
+    const session = data.session.get(id)
+
+    return session && !session.time.archived ? session.title || language.t("command.session.new") : undefined
+  }
+
   const providers = useProviders(directory)
+
+  const config = useQuery(() => ({
+    queryKey: [serverSDK.scope, "session-ui-config", directory()],
+    enabled: serverSDK.connection.status() === "connected",
+    queryFn: () => serverSDK.api.config.get({ location: { directory: directory() } }),
+  }))
+
+  onCleanup(
+    serverSDK.event.on("config.updated", (event) => {
+      if (event.location && event.location.directory !== directory()) return
+      void config.refetch()
+    }),
+  )
+
+  // Matches the server: the highest-priority document that sets `experimental` decides.
+  const backgroundCompaction = () =>
+    config.data
+      ?.flatMap((entry) => (entry.type === "document" && entry.info.experimental ? [entry.info.experimental] : []))
+      .at(-1)?.background_compaction === true
 
   // Turn diffs live in the tab's in-memory state, so they outlast timeline remounts and go when the tab closes.
   const turnDiffs = () => {
@@ -113,22 +141,28 @@ export function SessionUIProvider(
   }))
 
   return (
-    <DataProvider
-      data={sessionUIData()}
-      directory={directory()}
-      sessionID={params.id}
-      shellRunning={(id) => !!data.shell.get(id)}
-      shellOutput={(input) => serverSDK.api.shell.output(input)}
-      turnDiff={{
-        get: (input) => turnDiffs()?.get(input),
-        load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),
-      }}
-      onNavigateToSession={navigateToSession}
-      onSessionHref={href}
-    >
-      <MarkdownProvider readImage={readImage()} openSession={openReferencedSession}>
-        <LocalProvider>{props.children}</LocalProvider>
-      </MarkdownProvider>
-    </DataProvider>
+    <LocalProvider>
+      <DataProvider
+        data={sessionUIData()}
+        directory={directory()}
+        sessionID={params.id}
+        agents={settings.visibility.customAgents()}
+        shellRunning={(id) => !!data.shell.get(id)}
+        shellOutput={(input) => serverSDK.api.shell.output(input)}
+        readMedia={(uri, mime, signal) => serverSDK.media.load(uri, mime, signal)}
+        peekMedia={(uri, mime) => serverSDK.media.peek(uri, mime)}
+        turnDiff={{
+          get: (input) => turnDiffs()?.get(input),
+          load: (input) => turnDiffs()?.load(input, () => serverSDK.api.session.diff(input)),
+        }}
+        onNavigateToSession={navigateToSession}
+        onSessionHref={href}
+        backgroundCompaction={backgroundCompaction()}
+      >
+        <MarkdownProvider readImage={readImage()} openSession={openReferencedSession} sessionTitle={sessionTitle}>
+          {props.children}
+        </MarkdownProvider>
+      </DataProvider>
+    </LocalProvider>
   )
 }

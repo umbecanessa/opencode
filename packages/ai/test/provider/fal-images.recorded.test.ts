@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { Image } from "../../src/index.js"
+import { Image } from "../../src/effect.js"
 import { Fal } from "../../src/providers.js"
 import { dimensions } from "../lib/image.js"
 import { recordedTests } from "../recorded-test.js"
@@ -28,7 +28,7 @@ describe("fal Images recorded", () => {
             prompt: "A simple flat black circle centered on a plain white background.",
             aspect: "1:1",
             resolution: "0.5K",
-            providerOptions: { output_format: "jpeg" },
+            providerOptions: { output_format: "jpeg", sync_mode: false },
           },
           { poll: queuedPoll },
         )
