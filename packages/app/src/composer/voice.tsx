@@ -54,6 +54,53 @@ function whisperModel() {
   return localStorage.getItem("opencode.voice.model") || "onnx-community/whisper-large-v3-turbo"
 }
 
+// One Whisper pipeline lives for the whole renderer, not the button that loaded it. Composer
+// buttons unmount when sessions switch or the composer enters shell mode, and disposing the
+// graph on unmount would make the next dictation rebuild the WebGPU session from the cached
+// weights. The pipeline therefore stays warm across sessions; only choosing a different model
+// in the dialog replaces it. Weights themselves persist in the browser cache (transformers.js
+// `useBrowserCache`), so a full app restart never re-downloads them.
+const whisperCache: { model: string; pipeline?: Transcriber; loading?: Promise<Transcriber> } = { model: "" }
+
+function loadWhisper(model: string, onProgress?: (percent: number) => void): Promise<Transcriber> {
+  if (whisperCache.model === model && (whisperCache.pipeline || whisperCache.loading))
+    return whisperCache.pipeline ? Promise.resolve(whisperCache.pipeline) : whisperCache.loading!
+  whisperCache.model = model
+  const loading = startWhisperLoad(model, onProgress)
+  whisperCache.loading = loading
+  // A failed load must not poison the cache; the next attempt retries from scratch.
+  loading.catch(() => {
+    if (whisperCache.loading !== loading) return
+    whisperCache.loading = undefined
+    whisperCache.model = ""
+  })
+  return loading
+}
+
+async function startWhisperLoad(model: string, onProgress?: (percent: number) => void): Promise<Transcriber> {
+  const previous = whisperCache.pipeline
+  whisperCache.pipeline = undefined
+  // A model chosen in the dialog replaces the cached one; the old graph must be released first.
+  await previous?.dispose?.()
+  const { pipeline, env } = await import("@huggingface/transformers")
+  env.allowLocalModels = false
+  const loaded = (await pipeline("automatic-speech-recognition", model, {
+    // Put the whole model (encoder AND the sequential decoder) on the GPU. Left on its own,
+    // transformers.js runs the decoder on the main thread via WASM, which freezes the entire
+    // window for the length of generation (seen in the desktop logs as "renderer unresponsive").
+    device: "webgpu",
+    // fp32 is the WebGPU default and its ~2.5 GB encoder buffer kills the renderer
+    // ("Array buffer allocation failed"). Encoders are quantization-sensitive (per
+    // transformers.js docs), and this GPU has shader-f16, so fp16 encoder + q4f16 decoder.
+    dtype: { encoder_model: "fp16", decoder_model_merged: "q4f16" },
+    progress_callback: (progress: { status?: string; progress?: number }) => {
+      if (progress.status === "progress" && typeof progress.progress === "number") onProgress?.(progress.progress)
+    },
+  })) as unknown as Transcriber
+  whisperCache.pipeline = loaded
+  return loaded
+}
+
 // transformers.js cannot auto-detect spoken language (it is a TODO in the library) and silently
 // forces English instead, so detection is implemented below as a single-token generation from a
 // bare <|startoftranscript|>: the model's first output token is its language choice.
@@ -263,7 +310,6 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
   let recorder: MediaRecorder | undefined
   let chunks: Blob[] = []
   let transcriber: Transcriber | undefined
-  let loadedModel = ""
   let disposed = false
   // The interim text the button owns inside the editor; each new interim replaces it in place.
   let owned = ""
@@ -359,31 +405,10 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
   // --- Local Whisper backend (Electron; any browser without a speech service) ---
 
   const loadTranscriber = async () => {
-    const model = whisperModel()
-    if (transcriber && loadedModel === model) return transcriber
-    // A model chosen in the dialog replaces the cached one; the old graph must be released first.
-    await transcriber?.dispose?.()
-    const { pipeline, env } = await import("@huggingface/transformers")
-    env.allowLocalModels = false
-    const loaded = (await pipeline("automatic-speech-recognition", model, {
-      // Put the whole model (encoder AND the sequential decoder) on the GPU. Left on its own,
-      // transformers.js runs the decoder on the main thread via WASM, which freezes the entire
-      // window for the length of generation (seen in the desktop logs as "renderer unresponsive").
-      device: "webgpu",
-      // fp32 is the WebGPU default and its ~2.5 GB encoder buffer kills the renderer
-      // ("Array buffer allocation failed"). Encoders are quantization-sensitive (per
-      // transformers.js docs), and this GPU has shader-f16, so fp16 encoder + q4f16 decoder.
-      dtype: { encoder_model: "fp16", decoder_model_merged: "q4f16" },
-      progress_callback: (progress: { status?: string; progress?: number }) => {
-        if (progress.status === "progress" && typeof progress.progress === "number")
-          setState("note", `${i18n.t("ui.promptInput.voiceModelLoading")} ${Math.round(progress.progress)}%`)
-      },
-    })) as unknown as Transcriber
-    if (disposed) void loaded.dispose?.()
-    transcriber = loaded
-    loadedModel = model
-
-    return loaded
+    transcriber = await loadWhisper(whisperModel(), (percent) =>
+      setState("note", `${i18n.t("ui.promptInput.voiceModelLoading")} ${Math.round(percent)}%`),
+    )
+    return transcriber
   }
 
   const startWhisper = async () => {
@@ -548,7 +573,8 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
     clearTimeout(restart)
     recognition?.abort()
     recorder?.stream.getTracks().forEach((track) => track.stop())
-    void transcriber?.dispose?.()
+    // The shared Whisper pipeline intentionally survives this unmount (see whisperCache);
+    // only the microphone and any live recognition belong to this button.
   })
 
   const tooltip = () => {
