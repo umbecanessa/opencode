@@ -4,7 +4,7 @@
 // .../releases/latest/download/, so every publish is a new release and the newest
 // build is always what clients resolve. Requires authenticated gh for the feed repo.
 //
-// Usage: bun scripts/publish-feed.ts [--dir <dist>] [--repo <owner/name>] [--dry-run]
+// Usage: bun script/publish-feed.ts [--dir <dist>] [--repo <owner/name>] [--dry-run]
 
 const repo = process.env.OPENCODE_FEED_REPO ?? "umbecanessa/opencode-updates"
 
@@ -20,7 +20,7 @@ const version = await manifestVersion(`${dist}/latest.yml`)
 if (version === undefined) throw new Error(`${dist}/latest.yml not found; build the Windows installer first`)
 
 if (version.includes("-"))
-  throw new Error(`version ${version} is a semver prerelease, which the updater ignores; build with OPENCODE_BUILD_VERSION`)
+  throw new Error(`version ${version} is a semver prerelease, which the updater ignores; build with OPENCODE_VERSION`)
 
 // Windows and macOS installers are built on different machines; if their builds ran on
 // different days the CalVer versions diverge and one manifest would clobber the other's.
@@ -75,7 +75,9 @@ if (publish !== 0) throw new Error(`failed to publish ${repo} ${tag}`)
 console.log(`published ${repo} ${tag} -> https://github.com/${repo}/releases/latest/download/`)
 
 async function manifestVersion(file: string) {
-  const text = await Bun.file(file).text()
+  const manifest = Bun.file(file)
+  if (!(await manifest.exists())) return undefined
+  const text = await manifest.text()
 
   return text
     .split("\n")
