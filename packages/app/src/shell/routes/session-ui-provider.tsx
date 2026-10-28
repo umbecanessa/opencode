@@ -1,4 +1,5 @@
 import { DataProvider } from "@opencode/session-ui/context"
+import { registerArtifactPdfSaver } from "@opencode/session-ui/artifact-stage"
 import { MarkdownProvider, type ReadMarkdownImage } from "@opencode/session-ui/context/markdown"
 import { useNavigate, useParams } from "@solidjs/router"
 import { createMemo, type ParentProps } from "solid-js"
@@ -11,6 +12,7 @@ import { useServerSDK } from "@/runtime/server/client"
 import { useTabs, type Tab } from "@/shell/tabs/tabs"
 import { readLocalImage } from "@/runtime/server/image"
 import { useLanguage } from "@/runtime/i18n/language"
+import { usePlatform } from "@/runtime/platform/platform"
 import { showToast } from "@/shell/notifications/toast"
 import { createTurnDiffCache } from "@/session/timeline/turn-diffs"
 
@@ -26,6 +28,11 @@ export function SessionUIProvider(
   const serverSDK = useServerSDK()
   const tabs = useTabs()
   const language = useLanguage()
+  const platform = usePlatform()
+  // Artifacts save PDFs natively where the platform can render offscreen; elsewhere the
+  // stage falls back to the browser print sheet. Re-registration on remount is a no-op.
+  const printPdf = platform.printPdf
+  registerArtifactPdfSaver(printPdf ? (html, defaultPath) => printPdf(html, defaultPath) : undefined)
   const directory = () => props.directory
 
   const readImage = createMemo<ReadMarkdownImage>(() => {

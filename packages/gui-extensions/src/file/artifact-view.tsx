@@ -19,7 +19,7 @@ import { FileIcon } from "@opencode/ui/file-icon"
 import { SegmentedControl, SegmentedControlItem } from "@opencode/ui/segmented-control"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { Markdown } from "@opencode/session-ui/markdown"
-import { ArtifactStage, printArtifact, type ArtifactViewport } from "@opencode/session-ui/artifact-stage"
+import { ArtifactStage, saveArtifactPdf, type ArtifactViewport } from "@opencode/session-ui/artifact-stage"
 import { MarkdownProvider, useMarkdown } from "@opencode/session-ui/context/markdown"
 import { artifactKind, type ArtifactKind } from "@opencode/util/artifact"
 import { getDirectory, getFilename } from "@opencode/util/path"
@@ -175,8 +175,12 @@ export default function ArtifactView(props: {
                 <SegmentedControlItem value="tablet">{ctx.t("view.viewport.tablet")}</SegmentedControlItem>
                 <SegmentedControlItem value="mobile">{ctx.t("view.viewport.mobile")}</SegmentedControlItem>
               </SegmentedControl>
-              <Button size="small" variant="ghost" onClick={() => printArtifact(frame)}>
-                {ctx.t("view.print")}
+              <Button
+                size="small"
+                variant="ghost"
+                onClick={() => void saveArtifactPdf(props.content.content, getFilename(props.path), frame)}
+              >
+                {ctx.t("view.savePdf")}
               </Button>
             </Show>
             <Show when={kind() === "html"}>

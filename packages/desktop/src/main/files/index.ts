@@ -1,7 +1,8 @@
 export * as DesktopFiles from "./index"
 
 import { execFile, spawn } from "node:child_process"
-import { clipboard, dialog, nativeImage, shell } from "electron"
+import { tmpdir } from "node:os"
+import { BrowserWindow, clipboard, dialog, nativeImage, shell } from "electron"
 import { Context, Effect, FileSystem, Layer, Path } from "effect"
 import type { DirectoryPickerOptions, FilePickerOptions, SaveFilePickerOptions } from "../../shared/ipc-contract"
 import { scoped } from "../native/logging"
@@ -82,6 +83,52 @@ function make(fs: FileSystem.FileSystem, path: Path.Path) {
 
       if (!result.filePath) return false
       yield* fs.writeFile(result.filePath, content instanceof Uint8Array ? content : new TextEncoder().encode(content))
+
+      return true
+    }),
+    printPdf: Effect.fn("DesktopFiles.printPdf")(function* (html: string, defaultPath: string) {
+      const result = yield* Effect.promise(() =>
+        dialog.showSaveDialog({
+          title: nativeT("desktop.dialog.saveFile"),
+          defaultPath,
+          filters: [{ name: "PDF", extensions: ["pdf"] }],
+        }),
+      )
+
+      if (result.canceled || !result.filePath) return false
+
+      // The page loads from a temp file: loadURL on a data: url caps out around 2MB,
+      // and artifacts with inline assets comfortably pass that.
+      const source = path.join(tmpdir(), `opencode-artifact-${Date.now().toString(36)}.html`)
+      yield* fs.writeFileString(source, html)
+
+      try {
+        const bytes = yield* Effect.promise(async () => {
+          const window = new BrowserWindow({
+            show: false,
+            width: 1280,
+            height: 900,
+            skipTaskbar: true,
+            focusable: false,
+            paintWhenInitiallyHidden: true,
+            webPreferences: { sandbox: true, backgroundThrottling: false },
+          })
+
+          try {
+            await window.webContents.loadFile(source)
+            // Webfont <link>s resolve after load; printToPDF would otherwise capture fallbacks.
+            await window.webContents.executeJavaScript("document.fonts.ready.then(() => true)").catch(() => true)
+
+            return await window.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true })
+          } finally {
+            window.destroy()
+          }
+        })
+
+        yield* fs.writeFile(result.filePath, new Uint8Array(bytes))
+      } finally {
+        yield* fs.remove(source).pipe(Effect.ignore)
+      }
 
       return true
     }),

@@ -37,6 +37,40 @@ export function saveArtifact(content: string, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
+// Set by the app host when the platform can render HTML offscreen into a PDF (desktop).
+let pdfSaver: ((html: string, defaultPath: string) => Promise<boolean>) | undefined
+
+export function registerArtifactPdfSaver(saver: typeof pdfSaver) {
+  pdfSaver = saver
+}
+
+/**
+ * Saves the artifact as a PDF: the native save dialog on desktop, the browser print sheet
+ * (which offers "Save as PDF") elsewhere. False only when the desktop user cancelled.
+ */
+export async function saveArtifactPdf(content: string, name: string, frame?: HTMLIFrameElement) {
+  if (pdfSaver) return pdfSaver(content, `${slug(name) || "artifact"}.pdf`)
+
+  if (frame) {
+    printArtifact(frame)
+
+    return true
+  }
+
+  // No mounted preview (code mode): print through a throwaway frame with the same sandbox.
+  // window.print stays callable cross-origin, and the sandbox's allow-modals lets it through.
+  const clone = document.createElement("iframe")
+  clone.setAttribute("sandbox", ARTIFACT_SANDBOX)
+  clone.setAttribute("aria-hidden", "true")
+  clone.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none"
+  clone.srcdoc = artifactSrcdoc(content)
+  document.body.append(clone)
+  clone.contentWindow?.print()
+  setTimeout(() => clone.remove(), 60_000)
+
+  return true
+}
+
 /**
  * Sandboxed preview frame. Desktop fills the stage; tablet and mobile render at device size and
  * scale down to fit both the stage width and `maxHeight`.

@@ -71,6 +71,9 @@ type PlatformBase = {
   /** Open a native save file dialog and write content to the selected path (desktop only) */
   saveFile?(opts: SaveFilePickerOptions, content: string | Uint8Array): Promise<boolean>
 
+  /** Render HTML offscreen and save it as a PDF through the native save dialog (desktop only) */
+  printPdf?(html: string, defaultPath: string): Promise<boolean>
+
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
 

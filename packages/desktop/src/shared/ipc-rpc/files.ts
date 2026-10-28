@@ -51,6 +51,12 @@ export const FilesSaveFile = Rpc.make("FilesSaveFile", {
   success: Schema.Boolean,
 })
 
+// Renders HTML offscreen and writes it out as a PDF through the native save dialog.
+export const FilesPrintPdf = Rpc.make("FilesPrintPdf", {
+  payload: { html: Schema.String, defaultPath: Schema.String },
+  success: Schema.Boolean,
+})
+
 export const FilesOpenExternal = Rpc.make("FilesOpenExternal", {
   payload: { url: Schema.String },
 })
@@ -88,6 +94,7 @@ export const FileRpcs = RpcGroup.make(
   FilesReadPickedFile,
   FilesReleasePickedFiles,
   FilesSaveFile,
+  FilesPrintPdf,
   FilesOpenExternal,
   FilesOpenBrowser,
   FilesOpenLocalFile,

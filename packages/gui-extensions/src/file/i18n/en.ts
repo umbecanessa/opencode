@@ -14,6 +14,7 @@ export default {
   "view.viewport.tablet": "Tablet",
   "view.viewport.mobile": "Mobile",
   "view.print": "Print / PDF",
+  "view.savePdf": "Save as PDF",
   "view.fullscreen": "Enter full screen",
   "view.exitFullscreen": "Exit full screen",
   "view.binary": "Binary file · {{size}}",
