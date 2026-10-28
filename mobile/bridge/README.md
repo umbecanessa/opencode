@@ -12,6 +12,8 @@ Create `config.json` (ignored by git) with:
 
 Host IDs must match the phone's paired registry. Enroll only your phone's exact OneSignal subscription ID; there is no public enrollment endpoint or all-subscribers broadcast. Each host's `events` list controls preferences. Use separate bridge pairing credentials, not the phone credential. These credentials grant broad server access, not enforced read-only access.
 
+Optional per-host `"previews": true` enables session titles, agent/status subtitles, and up to 220 characters of the final assistant text for completion/failure alerts. Default is generic. Previews go through OneSignal/APNs and may appear on the lock screen; they may contain sensitive assistant text despite code blocks and link targets being omitted. Tool output, reasoning, and file contents are not read for previews. Set `previews` to false and restart to restore generic alerts. Existing queued notifications retain their original content.
+
 Set `ONESIGNAL_APP_ID`, `ONESIGNAL_API_KEY`, and each host's credential variable in a private `.env` file; protect directory and files with owner-only permissions. Never commit or paste credentials into chat. Run `bun install`, then `bun start`. Persist `bridge.sqlite` and its WAL beside the config. Run one supervised process only. Do not expose this directory through a web server.
 
 ## Delivery guarantees and limits
