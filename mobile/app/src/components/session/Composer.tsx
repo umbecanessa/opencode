@@ -191,7 +191,9 @@ export const Composer = ({
           { backgroundColor: t.surface, borderColor: voice.listening ? t.status.failed : t.separator },
         ]}
       >
-        {running && activeModelLabel && <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel, paddingHorizontal: 12, paddingTop: 6 }]}>Responding with {activeModelLabel}</Text>}
+        {running && activeModelLabel && <View style={{ alignSelf: "flex-start", marginLeft: 12, marginTop: 8, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: t.fill.secondary }}>
+          <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel }]}>{activeModelLabel}</Text>
+        </View>}
         <PasteInput onImages={(uris) => { pasteImages(uris).catch((e) => setNote(String(e))) }} onError={() => setNote("This clipboard content could not be attached. Try Photos or Files from +.")}>
         <TextInput
           value={text}

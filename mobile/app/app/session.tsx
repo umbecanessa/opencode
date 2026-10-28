@@ -44,6 +44,7 @@ export default function Session() {
   const c = client(params.host)
   const live = useLive(3000)
   const [messages, setMessages] = useState<Message[]>([])
+  const [streamText, setStreamText] = useState<Record<string, { messageID: string; ordinal: number; text: string; created: number }>>({})
   const [cursor, setCursor] = useState<string | undefined>()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState("")
@@ -154,9 +155,19 @@ export default function Session() {
     const abort = new AbortController()
     const pending = throttle.current
     c.events((e) => {
-      const data = e.data as { sessionID?: string }
+      const data = e.data as { sessionID?: string; assistantMessageID?: string; ordinal?: number; delta?: string; text?: string }
       if (e.type === "server.connected") return
       if (data.sessionID && data.sessionID !== params.id) return
+      if ((e.type === "session.text.delta" || e.type === "session.text.ended") && data.assistantMessageID && data.ordinal !== undefined) {
+        const messageID = data.assistantMessageID
+        const ordinal = data.ordinal
+        const key = `${messageID}/${ordinal}`
+        setStreamText((current) => ({ ...current, [key]: {
+          messageID, ordinal,
+          text: e.type === "session.text.ended" ? data.text ?? current[key]?.text ?? "" : (current[key]?.text ?? "") + (data.delta ?? ""),
+          created: current[key]?.created ?? Date.now(),
+        } }))
+      }
       scheduleRefresh()
     }, abort.signal)
     return () => {
@@ -175,7 +186,22 @@ export default function Session() {
       .catch(() => {})
   }, [c, params.id, cursor])
 
-  const items = useMemo(() => buildItems(messages), [messages])
+  const items = useMemo(() => {
+    const live = [...messages]
+    Object.values(streamText).forEach((fragment) => {
+      const index = live.findIndex((m) => m.id === fragment.messageID)
+      const message = index >= 0 ? live[index] : { id: fragment.messageID, type: "assistant", time: { created: fragment.created }, content: [] }
+      // Ordinals identify content parts, including tools and reasoning, in the assistant step.
+      const content = [...(message.content ?? [])]
+      const persisted = content[fragment.ordinal]
+      if (persisted?.type === "text" && persisted.text.length >= fragment.text.length) return
+      content[fragment.ordinal] = { type: "text", text: fragment.text }
+      const updated = { ...message, content }
+      if (index >= 0) live[index] = updated
+      else live.unshift(updated)
+    })
+    return buildItems(live.sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0)))
+  }, [messages, streamText])
 
   const openFile = useCallback(
     (rel: string) => {
