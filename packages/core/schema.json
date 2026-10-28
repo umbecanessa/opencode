@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "76109fbf-f324-4af0-934c-3ae695275099",
-  "prevIds": ["ff2efc22-36c2-4af5-8f24-2288090b0ba6"],
+  "id": "9a38f801-ca0a-4bf8-b782-6116685e360f",
+  "prevIds": ["76109fbf-f324-4af0-934c-3ae695275099"],
   "ddl": [
     {
       "name": "account_state",
@@ -30,6 +30,10 @@
     },
     {
       "name": "kv",
+      "entityType": "tables"
+    },
+    {
+      "name": "pairing_code",
       "entityType": "tables"
     },
     {
@@ -489,6 +493,36 @@
       "name": "time_updated",
       "entityType": "columns",
       "table": "kv"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "code",
+      "entityType": "columns",
+      "table": "pairing_code"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_created",
+      "entityType": "columns",
+      "table": "pairing_code"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "time_updated",
+      "entityType": "columns",
+      "table": "pairing_code"
     },
     {
       "type": "text",
@@ -1719,6 +1753,13 @@
       "nameExplicit": false,
       "name": "kv_pk",
       "table": "kv",
+      "entityType": "pks"
+    },
+    {
+      "columns": ["code"],
+      "nameExplicit": false,
+      "name": "pairing_code_pk",
+      "table": "pairing_code",
       "entityType": "pks"
     },
     {

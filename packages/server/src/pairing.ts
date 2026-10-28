@@ -1,6 +1,9 @@
 export * as ServerPairing from "./pairing"
 
-import { Cache, Context, Duration, Effect, Layer } from "effect"
+import { and, eq, gte, lt } from "drizzle-orm"
+import { Context, Duration, Effect, Layer } from "effect"
+import { Database } from "@opencode/core/database/database"
+import { PairingCodeTable } from "@opencode/core/pairing/sql"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { randomBytes } from "node:crypto"
 
@@ -13,24 +16,33 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/ServerPairing") {}
 
-// Codes are inserted via Cache.set and removed via invalidateWhen, so the lookup never runs.
-const noLookup = () => Effect.die(new Error("ServerPairing cache must be used via set/invalidateWhen, never get"))
-
+// Codes live in the shared database rather than process memory so redemption finds codes minted by any process
+// over the same data directory: a Tailscale serve proxy landing on another server instance, a service versus
+// embedded-app split, or an app restart between minting and redeeming the link.
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
-    const cache = yield* Cache.make<string, true>({ capacity: 1_000, lookup: noLookup, timeToLive: TTL })
+    const db = (yield* Database.Service).db
+    const cutoff = () => Date.now() - Duration.toMillis(TTL)
     return Service.of({
       issue: Effect.fn("ServerPairing.issue")(function* () {
         const code = randomBytes(16).toString("base64url")
-        yield* Cache.set(cache, code, true)
+        yield* db.delete(PairingCodeTable).where(lt(PairingCodeTable.time_created, cutoff())).run().pipe(Effect.orDie)
+        yield* db.insert(PairingCodeTable).values({ code }).run().pipe(Effect.orDie)
         return { code, expires_in: Duration.toSeconds(TTL) }
       }),
+      // The conditional delete is the single-use guarantee: concurrent redeemers race, and only one sees a row.
       consume: Effect.fn("ServerPairing.consume")(function* (code) {
-        return yield* Cache.invalidateWhen(cache, code, () => true)
+        const redeemed = yield* db
+          .delete(PairingCodeTable)
+          .where(and(eq(PairingCodeTable.code, code), gte(PairingCodeTable.time_created, cutoff())))
+          .returning({ code: PairingCodeTable.code })
+          .get()
+          .pipe(Effect.orDie)
+        return redeemed !== undefined
       }),
     })
   }),
 )
 
-export const node = makeGlobalNode({ service: Service, layer, deps: [] })
+export const node = makeGlobalNode({ service: Service, layer, deps: [Database.node] })

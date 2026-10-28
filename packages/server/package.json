@@ -33,7 +33,8 @@
     "@opencode/schema": "workspace:*",
     "@opencode/simulation": "workspace:*",
     "@opencode/util": "workspace:*",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "drizzle-orm": "catalog:"
   },
   "devDependencies": {
     "@opencode-ai/pty": "0.3.1",
