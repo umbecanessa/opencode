@@ -1,6 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import { Stack, useLocalSearchParams, useRouter } from "expo-router"
-import { useHeaderHeight } from "expo-router/react-navigation"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
@@ -18,6 +17,7 @@ import { joinPath } from "../src/api/files"
 import type { PermissionDecision, PermissionRequest, PromptFile, Session as SessionInfo } from "../src/api/types"
 import { ApprovalCard } from "../src/components/session/Approval"
 import { Composer } from "../src/components/session/Composer"
+import { SessionControls } from "../src/components/session/SessionControls"
 import {
   AssistantText,
   buildItems,
@@ -39,7 +39,6 @@ const REFRESH_MS = 900
 export default function Session() {
   const t = useTheme()
   const router = useRouter()
-  const headerHeight = useHeaderHeight()
   const params = useLocalSearchParams<{ host: string; id: string; title: string }>()
   const { hosts, client } = useHosts()
   const c = client(params.host)
@@ -51,13 +50,24 @@ export default function Session() {
   const [title, setTitle] = useState(params.title)
   const [atBottom, setAtBottom] = useState(true)
   const [sending, setSending] = useState(false)
+  const [panel, setPanel] = useState<"model" | "context" | "permissions">()
+  const [controlDirectory, setControlDirectory] = useState("")
   const directory = useRef("")
   const list = useRef<FlatList<Item>>(null)
   const pinned = useRef(true)
+  const scrolling = useRef(false)
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   const [subagents, setSubagents] = useState<SessionInfo[]>([])
   const [requests, setRequests] = useState<PermissionRequest[]>([])
+  const [changes, setChanges] = useState<Awaited<ReturnType<NonNullable<typeof c>["diff"]>>["data"]>([])
+
+  useEffect(() => {
+    if (!c) return
+    let cancelled = false
+    c.diff(params.id).then((page) => { if (!cancelled) setChanges(page.data) }).catch(() => {})
+    return () => { cancelled = true }
+  }, [c, params.id, messages])
 
   const status = requests.length ? "waiting" : familyStatus(live, params.host, [params.id, ...subagents.map((s) => s.id)])
   const running = status === "running" || sending
@@ -178,8 +188,11 @@ export default function Session() {
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
     const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
     const near = contentSize.height - (contentOffset.y + layoutMeasurement.height) < 96
+    // Content growth and programmatic scrolling also emit scroll events. Only a user's
+    // scroll may unlock following; otherwise a streaming update can unlock itself.
+    if (!scrolling.current) return
     pinned.current = near
-    if (near !== atBottom) setAtBottom(near)
+    setAtBottom(near)
   }
 
   const send = async (text: string, files: PromptFile[] = []) => {
@@ -238,7 +251,7 @@ export default function Session() {
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: t.background }}
       behavior={Platform.OS === "ios" ? "padding" : undefined}
-      keyboardVerticalOffset={headerHeight}
+      keyboardVerticalOffset={0}
     >
       <Stack.Screen
         options={{
@@ -255,6 +268,16 @@ export default function Session() {
               </View>
             </View>
           ),
+          headerRight: () => running ? (
+            <Pressable
+              onPress={() => c?.background(params.id).catch((e) => setError(String(e)))}
+              accessibilityRole="button"
+              accessibilityLabel="Send running tools to background"
+              style={{ padding: 10 }}
+            >
+              <Ionicons name="layers-outline" size={22} color={t.tint} />
+            </Pressable>
+          ) : null,
         }}
       />
 
@@ -290,17 +313,51 @@ export default function Session() {
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
+          onScrollBeginDrag={() => { scrolling.current = true }}
+          onScrollEndDrag={(e) => {
+            onScroll(e)
+            scrolling.current = false
+          }}
+          onMomentumScrollBegin={() => { scrolling.current = true }}
+          onMomentumScrollEnd={(e) => {
+            onScroll(e)
+            scrolling.current = false
+          }}
           scrollEventThrottle={64}
           onStartReached={older}
           onStartReachedThreshold={0.5}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          maintainVisibleContentPosition={atBottom ? undefined : { minIndexForVisible: 0 }}
+          onLayout={() => {
+            if (pinned.current) list.current?.scrollToEnd({ animated: false })
+          }}
           onContentSizeChange={() => {
             if (pinned.current) list.current?.scrollToEnd({ animated: false })
           }}
           ListHeaderComponent={
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
           }
-          ListFooterComponent={running && items[items.length - 1]?.kind !== "thinking" ? <Thinking /> : undefined}
+          ListFooterComponent={
+            <View onLayout={() => {
+              if (pinned.current) requestAnimationFrame(() => list.current?.scrollToEnd({ animated: false }))
+            }} style={{ paddingBottom: 12 }}>
+              {changes.length > 0 && (
+                <View style={{ marginHorizontal: 16, marginVertical: 8, borderRadius: 16, backgroundColor: t.surface, overflow: "hidden" }}>
+                  <Text style={[t.font.subhead, { color: t.label, padding: 12 }]}>{changes.length} {changes.length === 1 ? "file changed" : "files changed"}</Text>
+                  {changes.map((change) => (
+                    <Pressable key={change.file} onPress={() => openFile(change.file)} accessibilityRole="button"
+                      accessibilityLabel={`${change.file}, ${change.additions} lines added, ${change.deletions} lines removed`}
+                      style={{ flexDirection: "row", alignItems: "center", gap: 8, padding: 12, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.separator }}>
+                      <Ionicons name={change.status === "added" ? "document-outline" : "create-outline"} size={17} color={t.secondaryLabel} />
+                      <Text numberOfLines={1} style={[t.font.subhead, { flex: 1, color: t.label }]}>{change.file.split(/[\\/]/).pop()}</Text>
+                      <Text style={[t.font.caption, { color: t.status.running }]}>+{change.additions}</Text>
+                      <Text style={[t.font.caption, { color: t.status.failed }]}>−{change.deletions}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
+              {running && items[items.length - 1]?.kind !== "thinking" ? <Thinking /> : null}
+            </View>
+          }
           ListEmptyComponent={
             <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
               No messages yet. Send a prompt to get started.
@@ -313,7 +370,9 @@ export default function Session() {
         <Pressable
           onPress={() => {
             pinned.current = true
-            list.current?.scrollToEnd({ animated: true })
+            scrolling.current = false
+            setAtBottom(true)
+            list.current?.scrollToEnd({ animated: false })
           }}
           style={({ pressed }) => [
             styles.jump,
@@ -335,7 +394,12 @@ export default function Session() {
         />
       ))}
 
-      <Composer running={running} disabled={!c} onSend={send} onStop={stop} />
+      {c && <SessionControls client={c} sessionID={params.id} directory={controlDirectory} panel={panel} onClose={() => setPanel(undefined)} />}
+      <Composer running={running} disabled={!c} onSend={send} onStop={stop}
+        onModel={() => { setControlDirectory(directory.current); setPanel("model") }}
+        onContext={() => setPanel('context')}
+        onPermissions={() => setPanel("permissions")}
+      />
     </KeyboardAvoidingView>
   )
 }
@@ -364,3 +428,4 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
   },
 })
+

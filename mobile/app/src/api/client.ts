@@ -40,6 +40,23 @@ export class Client {
 
   info = () => this.request<{ version: string; capabilities?: Record<string, boolean> }>("/api/info")
 
+  models = (directory: string) => this.request<{ data: { id: string; modelID: string; providerID: string; name: string; variants: { id: string }[] }[] }>(`/api/model?${loc({ directory })}`)
+  context = (id: string) => this.request<{ data: unknown[] }>(`/api/session/${id}/context`)
+  diff = (id: string) => this.request<{ data: { file: string; patch: string; additions: number; deletions: number; status: "added" | "deleted" | "modified" }[] }>(`/api/session/${id}/diff?context=3`)
+  permissions = (id: string) => this.request<{ permissions?: { action: string; resource: string; effect: "allow" | "deny" | "ask" }[] }>(`/api/session/${id}`)
+  setPermissions = async (id: string, permissions: { action: string; resource: string; effect: "allow" | "deny" | "ask" }[]) => {
+    const res = await fetch(`${this.host.origin}/api/session/${id}`, {
+      method: "PATCH", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify({ permissions }),
+    })
+    if (!res.ok) throw new Error(`Could not update permissions (${res.status})`)
+  }
+  switchModel = async (id: string, model: { providerID: string; modelID: string; variant?: string }) => {
+    const res = await fetch(`${this.host.origin}/api/session/${id}/model`, {
+      method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify({ model: { id: model.modelID, providerID: model.providerID, ...(model.variant ? { variant: model.variant } : {}) } }),
+    })
+    if (!res.ok) throw new Error(`Could not switch model (${res.status})`)
+  }
+
   projects = () => this.request<{ id: string; name?: string; canonical?: string }[]>("/api/project")
 
   sessions = (query: string) =>
@@ -62,6 +79,14 @@ export class Client {
 
   interrupt = (sessionID: string) =>
     this.request<{ interrupted: boolean }>(`/api/session/${sessionID}/interrupt`, { method: "POST" })
+
+  background = async (sessionID: string) => {
+    const res = await fetch(`${this.host.origin}/api/session/${sessionID}/background`, {
+      method: "POST",
+      headers: this.headers(),
+    })
+    if (!res.ok) throw new Error(`Could not background tools (${res.status})`)
+  }
 
   fsList = (l: Location, path: string) =>
     this.request<{ data: FileEntry[] }>(`/api/fs/list?${loc(l)}&path=${encodeURIComponent(path)}`)

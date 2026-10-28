@@ -1,10 +1,10 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
-import { useState } from "react"
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
+import { useEffect, useState } from "react"
+import { ActivityIndicator, Alert, Image, Keyboard, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { PromptFile } from "../../api/types"
 import { useTheme } from "../../theme"
-import { useDictation, voiceLanguages } from "../../voice"
+import { useDictation } from "../../voice"
 
 const MAX_FILES = 6
 
@@ -13,11 +13,17 @@ export const Composer = ({
   disabled,
   onSend,
   onStop,
+  onModel,
+  onContext,
+  onPermissions,
 }: {
   running: boolean
   disabled?: boolean
   onSend: (text: string, files: PromptFile[]) => Promise<void>
   onStop: () => Promise<void>
+  onModel?: () => void
+  onContext?: () => void
+  onPermissions?: () => void
 }) => {
   const t = useTheme()
   const insets = useSafeAreaInsets()
@@ -25,9 +31,48 @@ export const Composer = ({
   const [busy, setBusy] = useState(false)
   const [files, setFiles] = useState<PromptFile[]>([])
   const [note, setNote] = useState("")
+  const [keyboard, setKeyboard] = useState(false)
+  const [focused, setFocused] = useState(false)
+  useEffect(() => {
+    const show = Keyboard.addListener("keyboardDidShow", () => setKeyboard(true))
+    const hide = Keyboard.addListener("keyboardDidHide", () => setKeyboard(false))
+    return () => { show.remove(); hide.remove() }
+  }, [])
   const voice = useDictation(setText)
   const canSend = (text.trim().length > 0 || files.length > 0) && !busy && !disabled
   const showStop = running && !text.trim() && !voice.listening && files.length === 0
+
+  const pickFiles = async () => {
+    const { getDocumentAsync } = await import("expo-document-picker")
+    const { File } = await import("expo-file-system")
+    const result = await getDocumentAsync({ multiple: true, copyToCacheDirectory: true })
+    if (result.canceled) return
+    const added = await Promise.all(result.assets.slice(0, MAX_FILES - files.length).map(async (asset) => {
+      const file = new File(asset.uri)
+      if (file.size > 20_000_000) throw new Error(`${asset.name} exceeds the 20 MB attachment limit.`)
+      return { uri: `data:${asset.mimeType || "application/octet-stream"};base64,${await file.base64()}`, name: asset.name }
+    }))
+    setFiles((current) => [...current, ...added].slice(0, MAX_FILES))
+  }
+
+  const attachments = () => Alert.alert("Add to prompt", undefined, [
+    { text: "Paste screenshot", onPress: () => pasteImage().catch((e) => setNote(String(e))) },
+    { text: "Photos & screenshots", onPress: () => pick("library").catch((e) => setNote(String(e))) },
+    { text: "Take a photo", onPress: () => pick("camera").catch((e) => setNote(String(e))) },
+    { text: "Choose files", onPress: () => pickFiles().catch((e) => setNote(String(e))) },
+    { text: "Cancel", style: "cancel" },
+  ])
+
+  const pasteImage = async () => {
+    const { getImageAsync } = await import("expo-clipboard")
+    const image = await getImageAsync({ format: "png" })
+    if (!image) {
+      setNote("No image was pasted. Copy a screenshot first and allow paste access if prompted.")
+      return
+    }
+    setFiles((current) => [...current, { uri: image.data, name: `screenshot-${Date.now()}.png` }].slice(0, MAX_FILES))
+    setNote("")
+  }
 
   const pick = async (source: "library" | "camera") => {
     setNote("")
@@ -92,7 +137,7 @@ export const Composer = ({
     <View
       style={[
         styles.bar,
-        { paddingBottom: Math.max(insets.bottom, 10), backgroundColor: t.background, borderTopColor: t.separator },
+        { paddingBottom: keyboard ? 6 : Math.max(insets.bottom, 10), backgroundColor: t.background, borderTopColor: t.separator },
       ]}
     >
       {(note.length > 0 || voice.error.length > 0) && (
@@ -104,7 +149,12 @@ export const Composer = ({
         <View style={styles.thumbs}>
           {files.map((f, i) => (
             <View key={f.uri.slice(0, 64) + i} style={[styles.thumbWrap, { borderColor: t.separator }]}>
-              <Image source={{ uri: f.uri }} style={styles.thumb} />
+              {f.uri.startsWith("data:image/") ? <Image source={{ uri: f.uri }} style={styles.thumb} /> : (
+                <View style={[styles.thumb, { padding: 5, justifyContent: "center" }]}>
+                  <Ionicons name="document-text-outline" size={20} color={t.label} />
+                  <Text numberOfLines={1} style={{ color: t.label, fontSize: 10 }}>{f.name}</Text>
+                </View>
+              )}
               <Pressable
                 onPress={() => setFiles((current) => current.filter((_, j) => j !== i))}
                 hitSlop={6}
@@ -124,18 +174,32 @@ export const Composer = ({
           { backgroundColor: t.surface, borderColor: voice.listening ? t.status.failed : t.separator },
         ]}
       >
-        <Pressable
-          onPress={() => pick("library")}
-          onLongPress={() => pick("camera")}
-          delayLongPress={400}
-          hitSlop={8}
-          style={({ pressed }) => [styles.mic, { opacity: pressed ? 0.6 : 1 }]}
-          accessibilityRole="button"
-          accessibilityLabel="Add a photo or screenshot"
-          accessibilityHint="Long-press to use the camera"
-        >
-          <Ionicons name="add-circle-outline" size={21} color={t.secondaryLabel} />
-        </Pressable>
+        <TextInput
+          value={text}
+          onChangeText={setText}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          placeholder={voice.listening ? "Listening…" : running ? "Steer the agent…" : "Message the agent"}
+          placeholderTextColor={t.tertiaryLabel}
+          multiline
+          editable={!disabled && !busy}
+          style={[styles.input, { color: t.label, minHeight: focused ? 68 : 40 }]}
+          accessibilityLabel="Message"
+        />
+        <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 4 }}>
+          <Pressable onPress={attachments} disabled={disabled || busy} accessibilityRole="button" accessibilityLabel="Add photos, camera photo, or files" style={styles.mic}>
+            <Ionicons name="add" size={27} color={t.label} />
+          </Pressable>
+          <Pressable onPress={onPermissions} accessibilityRole="button" accessibilityLabel="Session permissions" style={styles.mic}>
+            <Ionicons name="shield-checkmark-outline" size={21} color={t.secondaryLabel} />
+          </Pressable>
+          <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel="Select model and reasoning" style={{ padding: 10 }}>
+            <Text style={{ color: t.secondaryLabel, fontSize: 13 }}>Model</Text>
+          </Pressable>
+          <View style={{ flex: 1 }} />
+          <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel="View session context" style={styles.mic}>
+            <Ionicons name="speedometer-outline" size={20} color={t.secondaryLabel} />
+          </Pressable>
         {voice.available && (
           <Pressable
             onPress={() => (voice.listening ? voice.stop() : voice.start(text))}
@@ -150,27 +214,6 @@ export const Composer = ({
             <Ionicons name={voice.listening ? "mic" : "mic-outline"} size={20} color={voice.listening ? "#FFFFFF" : t.secondaryLabel} />
           </Pressable>
         )}
-        {voice.listening && voiceLanguages.length > 1 && (
-          <Pressable
-            onPress={() => voice.switchLanguage(text)}
-            hitSlop={8}
-            style={[styles.lang, { backgroundColor: t.fill.secondary }]}
-            accessibilityRole="button"
-            accessibilityLabel={`Dictation language ${voice.lang}. Tap to switch.`}
-          >
-            <Text style={[t.font.caption, { color: t.label, fontWeight: "700" }]}>{voice.lang.slice(0, 2).toUpperCase()}</Text>
-          </Pressable>
-        )}
-        <TextInput
-          value={text}
-          onChangeText={setText}
-          placeholder={voice.listening ? "Listening…" : running ? "Steer the agent…" : "Message the agent"}
-          placeholderTextColor={t.tertiaryLabel}
-          multiline
-          editable={!disabled}
-          style={[styles.input, { color: t.label }]}
-          accessibilityLabel="Message"
-        />
         <Pressable
           onPress={showStop ? stop : send}
           disabled={showStop ? busy : !canSend}
@@ -194,6 +237,7 @@ export const Composer = ({
             <Ionicons name="arrow-up" size={19} color={canSend ? "#FFFFFF" : t.tertiaryLabel} />
           )}
         </Pressable>
+        </View>
       </View>
     </View>
   )
@@ -202,8 +246,7 @@ export const Composer = ({
 const styles = StyleSheet.create({
   bar: { paddingHorizontal: 12, paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth },
   field: {
-    flexDirection: "row",
-    alignItems: "flex-end",
+    flexDirection: "column",
     borderRadius: 22,
     borderWidth: StyleSheet.hairlineWidth,
     paddingLeft: 5,
@@ -211,8 +254,8 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     minHeight: 44,
   },
-  input: { flex: 1, fontSize: 16, lineHeight: 21, maxHeight: 132, paddingTop: 7, paddingBottom: 7, marginLeft: 8, marginRight: 8 },
-  mic: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
+  input: { fontSize: 16, lineHeight: 22, maxHeight: 132, paddingTop: 12, paddingBottom: 10, marginLeft: 12, marginRight: 12 },
+  mic: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
   thumbs: { flexDirection: "row", gap: 8, paddingHorizontal: 6, paddingBottom: 8 },
   thumbWrap: { width: 56, height: 56, borderRadius: 12, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth },
   thumb: { width: "100%", height: "100%" },
