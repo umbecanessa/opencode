@@ -61,7 +61,10 @@ export const api: ElectronAPI = {
   readPickedFile: (token, path) => invoke("FilesReadPickedFile", { token, path }).then(toArrayBuffer),
   releasePickedFiles: (token) => invoke("FilesReleasePickedFiles", { token }),
   getPathForFile: (file) => window.electron.getPathForFile(file),
-  saveFile: (opts, content) => invoke("FilesSaveFile", { options: opts, content }),
+  // SAFETY: save content is freshly read bytes (fetch, file.read) or a string, never a view onto a
+  // SharedArrayBuffer, so the payload's ArrayBuffer-backed Uint8Array holds.
+  saveFile: (opts, content) =>
+    invoke("FilesSaveFile", { options: opts, content: content as string | Uint8Array<ArrayBuffer> }),
   openExternal: (url) => send("FilesOpenExternal", { url }),
   openBrowser: (url) => invoke("FilesOpenBrowser", { url }),
   openLocalFile: (url) => send("FilesOpenLocalFile", { url }),

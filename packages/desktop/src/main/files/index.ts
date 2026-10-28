@@ -70,7 +70,7 @@ function make(fs: FileSystem.FileSystem, path: Path.Path) {
     }),
     readPickedFile: pickedFiles.read,
     releasePickedFiles: pickedFiles.release,
-    saveFile: Effect.fn("DesktopFiles.saveFile")(function* (options: SaveFilePickerOptions, content: string) {
+    saveFile: Effect.fn("DesktopFiles.saveFile")(function* (options: SaveFilePickerOptions, content: string | Uint8Array) {
       const result = yield* Effect.promise(() =>
         dialog.showSaveDialog({
           title: options?.title ?? nativeT("desktop.dialog.saveFile"),
@@ -81,7 +81,7 @@ function make(fs: FileSystem.FileSystem, path: Path.Path) {
       if (result.canceled) return false
 
       if (!result.filePath) return false
-      yield* fs.writeFile(result.filePath, new TextEncoder().encode(content))
+      yield* fs.writeFile(result.filePath, content instanceof Uint8Array ? content : new TextEncoder().encode(content))
 
       return true
     }),

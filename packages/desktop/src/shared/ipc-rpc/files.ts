@@ -45,8 +45,9 @@ export const FilesReleasePickedFiles = Rpc.make("FilesReleasePickedFiles", {
   payload: { token: Schema.String },
 })
 
+// Content crosses as text or raw bytes; bytes keep binary downloads (files from remote hosts) intact.
 export const FilesSaveFile = Rpc.make("FilesSaveFile", {
-  payload: { options: SavePickerOptions, content: Schema.String },
+  payload: { options: SavePickerOptions, content: Schema.Union([Schema.String, Transferable.Uint8Array]) },
   success: Schema.Boolean,
 })
 
