@@ -1,4 +1,6 @@
 import { dialog } from "electron"
+import { existsSync } from "node:fs"
+import { join } from "node:path"
 import { Effect, Exit, Scope } from "effect"
 import { MenubarItem, type MainSetup } from "../sdk/main"
 import { Updater } from "./contract"
@@ -9,7 +11,14 @@ import { make } from "./machine"
 const setup: MainSetup<typeof definition> = async (ctx) => {
   const build = ctx.build
   const lifecycle = ctx.lifecycle
-  const enabled = build.packaged && build.channel !== "dev"
+
+  // Fork: a packaged dev-channel build that was given an update feed at packaging time
+  // (electron-builder only ships app-update.yml when a publish config existed) updates too;
+  // without one, upstream's dev policy stays.
+  const enabled =
+    build.packaged &&
+    (build.channel !== "dev" || existsSync(join(process.resourcesPath, "app-update.yml")))
+
   // Holds no resources, so it needs no cleanup.
   const context = logContext(ctx.log.write)
   const runPromise = Effect.runPromiseWith(context)

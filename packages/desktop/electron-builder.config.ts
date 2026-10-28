@@ -70,6 +70,14 @@ function resolveChannel() {
   return "dev"
 }
 
+// Fork release knobs, unset upstream. OPENCODE_UPDATE_URL bakes a generic auto-update
+// feed into every channel (a releases/latest/download URL stays valid across releases);
+// OPENCODE_BUILD_VERSION is the semver the installers, app and latest.yml all report,
+// since electron-updater ignores prerelease tags like the 0.0.0-dev defaults.
+const updateFeed = process.env.OPENCODE_UPDATE_URL
+
+const buildVersion = process.env.OPENCODE_BUILD_VERSION
+
 const APP_IDS = {
   dev: "ai.opencode.desktop.dev",
   beta: "ai.opencode.desktop.beta",
@@ -103,9 +111,9 @@ const getBase = (appId: string): Configuration => {
     // "ai.opencode.desktop.desktop".
     // https://developer.gnome.org/documentation/guidelines/maintainer/integrating.html
     // https://www.electron.build/docs/linux/
-    extraMetadata: {
-      desktopName: `${appId}.desktop`,
-    },
+    extraMetadata: buildVersion
+      ? { desktopName: `${appId}.desktop`, version: buildVersion }
+      : { desktopName: `${appId}.desktop` },
     files: [
       "out/**/*",
       "resources/**/*",
@@ -241,7 +249,7 @@ const getBase = (appId: string): Configuration => {
   }
 }
 
-export function getConfig() {
+function channelConfig() {
   const channel = resolveChannel()
   const appId = APP_IDS[channel]
   const base = getBase(appId)
@@ -289,6 +297,17 @@ export function getConfig() {
       }
     }
   }
+}
+
+export function getConfig() {
+  const config = channelConfig()
+
+  // OPENCODE_UPDATE_URL bakes a fork-owned generic feed into app-update.yml, overriding
+  // the channel's stock publish URL. electron-updater reads that file at runtime, so this
+  // is what every packaged machine actually checks.
+  if (!updateFeed) return config
+
+  return { ...config, publish: { provider: "generic", url: updateFeed, channel: "latest" } }
 }
 
 export default getConfig()
