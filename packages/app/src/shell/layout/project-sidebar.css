@@ -1,0 +1,77 @@
+.project-navigation {
+  --agent-running: #34c759;
+  --agent-waiting: #a65d00;
+  --agent-failed: #d92d20;
+  --agent-unread: #007aff;
+  --agent-done: #81838a;
+}
+@media (prefers-color-scheme: dark) {
+  .project-navigation {
+    --agent-running: #30d158;
+    --agent-waiting: #ffd60a;
+    --agent-failed: #ff453a;
+    --agent-unread: #0a84ff;
+    --agent-done: #6f7278;
+  }
+}
+.project-navigation button {
+  cursor: pointer;
+}
+.project-navigation .sidebar-row {
+  border-radius: 6px;
+  transition: background-color 120ms ease-in-out;
+}
+.project-navigation .sidebar-row:hover,
+.project-navigation .sidebar-row:focus-within {
+  background: var(--v2-background-bg-layer-02);
+}
+.project-navigation .sidebar-row-active {
+  background: var(--v2-background-bg-layer-01);
+}
+.project-navigation .sidebar-row-active:hover {
+  background: var(--v2-background-bg-layer-02);
+}
+.project-navigation .sidebar-quiet:hover,
+.project-navigation .sidebar-quiet[data-expanded="true"] {
+  background: var(--v2-background-bg-layer-02);
+}
+.sidebar-status {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--agent-done);
+}
+.sidebar-status[data-status="running"] { background: var(--agent-running); }
+.sidebar-status[data-status="waiting"] { background: var(--agent-waiting); }
+.sidebar-status[data-status="failed"] { background: var(--agent-failed); }
+.sidebar-status[data-status="unread"] { background: var(--agent-unread); }
+.sidebar-pin {
+  width: 5px;
+  height: 5px;
+  flex-shrink: 0;
+  border-radius: 1px;
+  background: var(--v2-text-text-faint);
+}
+.sidebar-host {
+  max-width: 66px;
+  font-size: 10px;
+  line-height: 16px;
+  padding-inline: 4px;
+  border-radius: 4px;
+  background: var(--v2-background-bg-layer-03);
+  color: var(--v2-text-text-muted);
+}
+.sidebar-label {
+  font-size: 11px;
+  line-height: 16px;
+  text-transform: none;
+  color: var(--v2-text-text-faint);
+}
+.sidebar-menu { opacity: 0; }
+.project-navigation .sidebar-row:hover .sidebar-menu,
+.project-navigation .sidebar-row:focus-within .sidebar-menu,
+.sidebar-menu[data-expanded="true"] { opacity: 1; }
+@media (hover: none) {
+  .sidebar-menu { opacity: 1; }
+}
