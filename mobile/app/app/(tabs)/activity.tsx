@@ -226,16 +226,18 @@ export default function Activity() {
         </Pressable>
         </View>
       ) : (
+        <View style={{ marginBottom: item.item.kind === "parent" ? item.item.open && item.item.family.children.length > 0 ? 0 : 8 : item.item.last ? 8 : 0 }}>
         <TreeRow
           item={item.item}
           first
-          last
+          last={item.item.kind === "parent" ? !item.item.open : item.item.last}
           hostName={hostName(item.item.kind === "parent" ? item.item.family.session.host : item.item.session.host)}
           live={live}
           showDirectory
           onOpen={openSession}
           onToggle={toggle}
         />
+        </View>
       )}
     />
   )
