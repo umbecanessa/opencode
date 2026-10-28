@@ -40,7 +40,7 @@ export class Client {
 
   info = () => this.request<{ version: string; capabilities?: Record<string, boolean> }>("/api/info")
 
-  models = (directory: string) => this.request<{ data: { id: string; modelID: string; providerID: string; name: string; variants: { id: string }[] }[] }>(`/api/model?${loc({ directory })}`)
+  models = (directory: string) => this.request<{ data: { id: string; modelID: string; providerID: string; name: string; limit?: { context: number }; variants: { id: string }[] }[] }>(`/api/model?${loc({ directory })}`)
   context = (id: string) => this.request<{ data: unknown[] }>(`/api/session/${id}/context`)
   diff = (id: string) => this.request<{ data: { file: string; patch: string; additions: number; deletions: number; status: "added" | "deleted" | "modified" }[] }>(`/api/session/${id}/diff?context=3`)
   permissions = (id: string) => this.request<{ permissions?: { action: string; resource: string; effect: "allow" | "deny" | "ask" }[] }>(`/api/session/${id}`)
@@ -64,7 +64,7 @@ export class Client {
 
   active = () => this.request<{ data: Record<string, { type: string }> }>("/api/session/active")
 
-  session = (id: string) => this.request<{ id: string; title?: string; location?: { directory: string } }>(`/api/session/${id}`)
+  session = (id: string) => this.request<{ id: string; title?: string; cost?: number; time?: { created: number; updated: number }; location?: { directory: string } }>(`/api/session/${id}`)
 
   messages = (sessionID: string, cursor?: string) =>
     this.request<{ data: Record<string, unknown>[]; cursor: MessagePage["cursor"] }>(

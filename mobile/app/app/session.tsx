@@ -18,6 +18,7 @@ import type { PermissionDecision, PermissionRequest, PromptFile, Session as Sess
 import { ApprovalCard } from "../src/components/session/Approval"
 import { Composer } from "../src/components/session/Composer"
 import { SessionControls } from "../src/components/session/SessionControls"
+import { contextUsage } from "../src/components/session/context"
 import {
   AssistantText,
   buildItems,
@@ -398,7 +399,7 @@ export default function Session() {
       <Composer running={running} disabled={!c} onSend={send} onStop={stop}
         onModel={() => { setControlDirectory(directory.current); setPanel("model") }}
         onContext={() => setPanel('context')}
-        onPermissions={() => setPanel("permissions")}
+        contextTokens={contextUsage(messages).total}
       />
     </KeyboardAvoidingView>
   )

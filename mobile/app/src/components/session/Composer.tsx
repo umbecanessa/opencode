@@ -15,7 +15,7 @@ export const Composer = ({
   onStop,
   onModel,
   onContext,
-  onPermissions,
+  contextTokens,
 }: {
   running: boolean
   disabled?: boolean
@@ -23,7 +23,7 @@ export const Composer = ({
   onStop: () => Promise<void>
   onModel?: () => void
   onContext?: () => void
-  onPermissions?: () => void
+  contextTokens?: number
 }) => {
   const t = useTheme()
   const insets = useSafeAreaInsets()
@@ -190,15 +190,13 @@ export const Composer = ({
           <Pressable onPress={attachments} disabled={disabled || busy} accessibilityRole="button" accessibilityLabel="Add photos, camera photo, or files" style={styles.mic}>
             <Ionicons name="add" size={27} color={t.label} />
           </Pressable>
-          <Pressable onPress={onPermissions} accessibilityRole="button" accessibilityLabel="Session permissions" style={styles.mic}>
-            <Ionicons name="shield-checkmark-outline" size={21} color={t.secondaryLabel} />
-          </Pressable>
           <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel="Select model and reasoning" style={{ padding: 10 }}>
             <Text style={{ color: t.secondaryLabel, fontSize: 13 }}>Model</Text>
           </Pressable>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel="View session context" style={styles.mic}>
-            <Ionicons name="speedometer-outline" size={20} color={t.secondaryLabel} />
+          <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel={`View session context, ${contextTokens === undefined ? "usage unavailable" : `${contextTokens.toLocaleString()} tokens`}`} style={{ flexDirection: "row", alignItems: "center", gap: 4, minHeight: 44, paddingHorizontal: 6 }}>
+            <Ionicons name="pie-chart-outline" size={17} color={t.secondaryLabel} />
+            <Text style={[t.font.caption, { color: t.secondaryLabel }]}>{contextTokens === undefined ? "—" : new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 0 }).format(contextTokens)}</Text>
           </Pressable>
         {voice.available && (
           <Pressable

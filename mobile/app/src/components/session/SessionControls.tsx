@@ -2,14 +2,15 @@ import { useEffect, useState } from "react"
 import { ActivityIndicator, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native"
 import type { Client } from "../../api/client"
 import { useTheme } from "../../theme"
-import { buildItems, UserBubble, AssistantText, Thought, ToolGroup, TurnEnd, Note, Thinking, type Message } from "./Timeline"
+import { contextUsage, type ContextMessage } from "./context"
 
 export function SessionControls({ client, sessionID, directory, panel, onClose }: {
   client: Client; sessionID: string; directory: string; panel: "model" | "context" | "permissions" | undefined; onClose: () => void
 }) {
   const t = useTheme()
   const [models, setModels] = useState<Awaited<ReturnType<Client["models"]>>["data"]>([])
-  const [context, setContext] = useState<Message[]>([])
+  const [context, setContext] = useState<ContextMessage[]>([])
+  const [info, setInfo] = useState<Awaited<ReturnType<Client["session"]>>>()
   const [provider, setProvider] = useState<string>()
   const [search, setSearch] = useState("")
   const [selected, setSelected] = useState<string>()
@@ -21,7 +22,12 @@ export function SessionControls({ client, sessionID, directory, panel, onClose }
     let cancelled = false
     const load = panel === "model" ? client.models(directory).then((r) => { if (!cancelled) setModels(r.data) })
       : panel === "permissions" ? client.permissions(sessionID).then((r) => { if (!cancelled) setRules(r.permissions ?? []) })
-      : client.context(sessionID).then((r) => { if (!cancelled) setContext(r.data as Message[]) })
+       : Promise.all([client.context(sessionID), client.session(sessionID)]).then(([r, session]) => {
+         if (cancelled) return
+         setContext(r.data as ContextMessage[])
+         setInfo(session)
+         return client.models(session.location?.directory ?? directory).then((catalog) => { if (!cancelled) setModels(catalog.data) })
+       })
     load.catch((e) => { if (!cancelled) setError(String(e)) })
     return () => { cancelled = true }
   }, [client, directory, sessionID, panel])
@@ -31,6 +37,23 @@ export function SessionControls({ client, sessionID, directory, panel, onClose }
       .then(onClose).catch((e) => setError(String(e)))
     setBusy(false)
   }
+  const usage = contextUsage(context)
+  const model = models.find((m) => m.providerID === usage.latest?.model?.providerID && m.id === usage.latest?.model?.id)
+  const number = (value?: number) => value === undefined ? "—" : value.toLocaleString()
+  const date = (value?: number) => value ? new Date(value).toLocaleString() : "—"
+  const stats = [
+    ["Session", info?.title ?? "—"], ["Messages", number(context.length)],
+    ["Provider", usage.latest?.model?.providerID ?? "—"], ["Model", model?.name ?? usage.latest?.model?.id ?? "—"],
+    ["Context limit", number(model?.limit?.context)], ["Total tokens", number(usage.total)],
+    ["Usage", model?.limit?.context && usage.total !== undefined ? `${Math.round(usage.total / model.limit.context * 100)}%` : "—"],
+    ["Input tokens", number(usage.tokens?.input)], ["Output tokens", number(usage.tokens?.output)],
+    ["Reasoning tokens", number(usage.tokens?.reasoning)],
+    ["Cache tokens (read / write)", `${number(usage.tokens?.cache.read)} / ${number(usage.tokens?.cache.write)}`],
+    ["User messages", number(context.filter((m) => m.type === "user").length)],
+    ["Assistant messages", number(context.filter((m) => m.type === "assistant").length)],
+    ["Session cost", info?.cost === undefined ? "—" : new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(info.cost)],
+    ["Session created", date(info?.time?.created)], ["Last activity", date(info?.time?.updated)],
+  ]
   return <Modal visible={!!panel} presentationStyle="pageSheet" animationType="slide" onRequestClose={onClose}>
     <View style={{ flex: 1, backgroundColor: t.background, padding: 20, paddingTop: 24 }}>
       <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
@@ -41,10 +64,10 @@ export function SessionControls({ client, sessionID, directory, panel, onClose }
       {busy && <ActivityIndicator color={t.tint} />}
       {panel === "model" && <TextInput value={search} onChangeText={setSearch} placeholder="Search all models" placeholderTextColor={t.tertiaryLabel}
         style={{ color: t.label, padding: 14, borderRadius: 12, backgroundColor: t.surface, marginBottom: 12 }} />}
-      {panel === "model" && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, marginBottom: 16 }} contentContainerStyle={{ gap: 8 }}>
+      {panel === "model" && <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flexGrow: 0, flexShrink: 0, height: 48, marginBottom: 16 }} contentContainerStyle={{ gap: 8, alignItems: "center" }}>
         {[undefined, ...new Set(models.map((m) => m.providerID))].map((id) => <Pressable key={id ?? "all"} onPress={() => setProvider(id)} accessibilityRole="button" accessibilityState={{ selected: provider === id }}
-          style={{ paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18, backgroundColor: provider === id ? t.tint : t.surface }}>
-          <Text style={{ color: provider === id ? "#FFFFFF" : t.label }}>{id ?? "All providers"}</Text>
+          style={{ paddingHorizontal: 14, minHeight: 40, justifyContent: "center", borderRadius: 20, backgroundColor: provider === id ? t.tint : t.surface }}>
+          <Text style={{ lineHeight: 20, color: provider === id ? "#FFFFFF" : t.label }}>{id ?? "All providers"}</Text>
         </Pressable>)}
       </ScrollView>}
       <ScrollView keyboardShouldPersistTaps="handled">
@@ -76,12 +99,14 @@ export function SessionControls({ client, sessionID, directory, panel, onClose }
               </View>
             </View>)}
           </> : <>
-            <Text style={[t.font.subhead, { color: t.secondaryLabel, marginBottom: 16 }]}>{context.length} active messages since the latest compaction</Text>
-            {buildItems([...context].sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0))).map((item) => <View key={item.key}>
-              {item.kind === "user" ? <UserBubble item={item} /> : item.kind === "text" ? <AssistantText text={item.text} onFile={() => {}} />
-                : item.kind === "tools" ? <ToolGroup tools={item.tools} /> : item.kind === "thought" ? <Thought text={item.text} />
-                : item.kind === "end" ? <TurnEnd outcome={item.outcome} time={item.time} /> : item.kind === "thinking" ? <Thinking /> : <Note text={item.text} />}
-            </View>)}
+            <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+              {stats.map(([label, value]) => <View key={label} style={{ width: "50%", paddingRight: 12, paddingBottom: 24 }}>
+                <Text style={[t.font.caption, { color: t.secondaryLabel, marginBottom: 6 }]}>{label}</Text>
+                <Text selectable style={[t.font.subhead, { color: t.label, fontWeight: "600" }]}>{value}</Text>
+              </View>)}
+            </View>
+            <Text style={[t.font.caption, { color: t.secondaryLabel, marginBottom: 12 }]}>System prompt</Text>
+            <Text selectable style={[t.font.subhead, { color: t.label }]}>{context.find((m) => m.type === "system")?.text ?? "Not available in the active context."}</Text>
           </>}
       </ScrollView>
     </View>
