@@ -15,11 +15,13 @@ import { Dynamic } from "solid-js/web"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { Button } from "@opencode/ui/button"
+import { Icon } from "@opencode/ui/icon"
+import { Menu } from "@opencode/ui/menu"
 import { FileIcon } from "@opencode/ui/file-icon"
 import { SegmentedControl, SegmentedControlItem } from "@opencode/ui/segmented-control"
 import { ScrollView } from "@opencode/ui/scroll-view"
 import { Markdown } from "@opencode/session-ui/markdown"
-import { ArtifactStage, saveArtifactPdf, type ArtifactViewport } from "@opencode/session-ui/artifact-stage"
+import { ArtifactStage, artifactNativeExport, saveArtifactPdf, saveArtifactPng, saveArtifactZip, type ArtifactViewport } from "@opencode/session-ui/artifact-stage"
 import { MarkdownProvider, useMarkdown } from "@opencode/session-ui/context/markdown"
 import { artifactKind, type ArtifactKind } from "@opencode/util/artifact"
 import { getDirectory, getFilename } from "@opencode/util/path"
@@ -182,6 +184,28 @@ export default function ArtifactView(props: {
               >
                 {ctx.t("view.savePdf")}
               </Button>
+              <Show when={artifactNativeExport()}>
+                <Menu gutter={4} modal={false} placement="bottom-end">
+                  <Menu.Trigger
+                    as={Button}
+                    size="small"
+                    variant="ghost"
+                    aria-label={ctx.t("view.exportActions")}
+                  >
+                    <Icon name="outline-dots" size="small" />
+                  </Menu.Trigger>
+                  <Menu.Portal>
+                    <Menu.Content style={{ "min-width": "180px" }}>
+                      <Menu.Item onSelect={() => void saveArtifactPng(props.content.content, getFilename(props.path), viewport())}>
+                        {ctx.t("view.savePng")}
+                      </Menu.Item>
+                      <Menu.Item onSelect={() => void saveArtifactZip(props.content.content, getFilename(props.path))}>
+                        {ctx.t("view.exportZip")}
+                      </Menu.Item>
+                    </Menu.Content>
+                  </Menu.Portal>
+                </Menu>
+              </Show>
             </Show>
             <Show when={kind() === "html"}>
               <OpenInBrowserButton session={props.session} path={props.path} />

@@ -277,6 +277,8 @@ const source = {
   "ui.artifact.save": "Save HTML",
   "ui.artifact.print": "Print / Save as PDF",
   "ui.artifact.savePdf": "Save as PDF",
+  "ui.artifact.savePng": "Save as PNG",
+  "ui.artifact.exportZip": "Export ZIP",
   "ui.artifact.gallery": "Artifacts in this session",
   "ui.artifact.version": "v{{version}}",
   "ui.message.thought": "Thought",

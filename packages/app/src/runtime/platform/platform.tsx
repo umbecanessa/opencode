@@ -74,6 +74,12 @@ type PlatformBase = {
   /** Render HTML offscreen and save it as a PDF through the native save dialog (desktop only) */
   printPdf?(html: string, defaultPath: string): Promise<boolean>
 
+  /** Render HTML offscreen at a viewport size and save a full-page PNG (desktop only) */
+  exportPng?(html: string, defaultPath: string, width: number, height: number): Promise<boolean>
+
+  /** Pack artifact HTML plus a rendered preview.png into a ZIP (desktop only) */
+  exportZip?(html: string, defaultPath: string): Promise<boolean>
+
   /** Storage mechanism, defaults to localStorage */
   storage?: (name?: string) => SyncStorage | AsyncStorage
 

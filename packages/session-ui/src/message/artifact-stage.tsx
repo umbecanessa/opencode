@@ -37,11 +37,30 @@ export function saveArtifact(content: string, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }
 
-// Set by the app host when the platform can render HTML offscreen into a PDF (desktop).
-let pdfSaver: ((html: string, defaultPath: string) => Promise<boolean>) | undefined
+// Set by the app host where the platform renders HTML offscreen (desktop). Absent members
+// hide or degrade the matching export action.
+export type ArtifactSavers = {
+  pdf?: (html: string, defaultPath: string) => Promise<boolean>
+  png?: (html: string, defaultPath: string, width: number, height: number) => Promise<boolean>
+  zip?: (html: string, defaultPath: string) => Promise<boolean>
+}
 
-export function registerArtifactPdfSaver(saver: typeof pdfSaver) {
-  pdfSaver = saver
+let savers: ArtifactSavers = {}
+
+export function registerArtifactSavers(next: ArtifactSavers) {
+  savers = next
+}
+
+/** True where native exports exist; UI hides desktop-only actions otherwise. */
+export function artifactNativeExport() {
+  return !!(savers.pdf || savers.png || savers.zip)
+}
+
+/** PNG export sizes per viewport; desktop uses a standard widescreen viewport. */
+export function artifactPngSize(viewport: ArtifactViewport) {
+  if (viewport === "desktop") return { width: 1440, height: 900 }
+
+  return SIZES[viewport]
 }
 
 /**
@@ -49,7 +68,7 @@ export function registerArtifactPdfSaver(saver: typeof pdfSaver) {
  * (which offers "Save as PDF") elsewhere. False only when the desktop user cancelled.
  */
 export async function saveArtifactPdf(content: string, name: string, frame?: HTMLIFrameElement) {
-  if (pdfSaver) return pdfSaver(content, `${slug(name) || "artifact"}.pdf`)
+  if (savers.pdf) return savers.pdf(content, `${slug(name) || "artifact"}.pdf`)
 
   if (frame) {
     printArtifact(frame)
@@ -69,6 +88,20 @@ export async function saveArtifactPdf(content: string, name: string, frame?: HTM
   setTimeout(() => clone.remove(), 60_000)
 
   return true
+}
+
+export function saveArtifactPng(content: string, name: string, viewport: ArtifactViewport) {
+  const size = artifactPngSize(viewport)
+
+  if (!savers.png) return Promise.resolve(false)
+
+  return savers.png(content, `${slug(name) || "artifact"}.png`, size.width, size.height)
+}
+
+export function saveArtifactZip(content: string, name: string) {
+  if (!savers.zip) return Promise.resolve(false)
+
+  return savers.zip(content, `${slug(name) || "artifact"}.zip`)
 }
 
 /**

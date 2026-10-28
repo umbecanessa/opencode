@@ -8,7 +8,16 @@ import { TextShimmer } from "@opencode/ui/text-shimmer"
 import { useData } from "../context"
 import type { ArtifactSegment } from "../components/artifact-split"
 import { registerArtifact, type RegisteredArtifact } from "./artifact-registry"
-import { ArtifactStage, saveArtifact, saveArtifactPdf, ViewportToggle, type ArtifactViewport } from "./artifact-stage"
+import {
+  ArtifactStage,
+  artifactNativeExport,
+  saveArtifact,
+  saveArtifactPdf,
+  saveArtifactPng,
+  saveArtifactZip,
+  ViewportToggle,
+  type ArtifactViewport,
+} from "./artifact-stage"
 import { ArtifactViewer } from "./artifact-viewer"
 import "./artifact-card.css"
 
@@ -153,6 +162,14 @@ export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; c
                   <Menu.Item onSelect={() => void saveArtifactPdf(artifact().content, title(), frame)}>
                     {i18n.t("ui.artifact.savePdf")}
                   </Menu.Item>
+                  <Show when={artifactNativeExport()}>
+                    <Menu.Item onSelect={() => void saveArtifactPng(artifact().content, title(), viewport())}>
+                      {i18n.t("ui.artifact.savePng")}
+                    </Menu.Item>
+                    <Menu.Item onSelect={() => void saveArtifactZip(artifact().content, title())}>
+                      {i18n.t("ui.artifact.exportZip")}
+                    </Menu.Item>
+                  </Show>
                   <Menu.Separator />
                   <Menu.Item onSelect={() => void copy()}>{i18n.t("ui.artifact.copy")}</Menu.Item>
                 </Menu.Content>

@@ -2,7 +2,16 @@ import { createMemo, createSignal, For, Show } from "solid-js"
 import { Dialog, DialogBody, DialogHeader, DialogTitleGroup } from "@opencode/ui/dialog"
 import { useI18n } from "@opencode/ui/context/i18n"
 import { artifactVersion, sessionArtifacts, type RegisteredArtifact } from "./artifact-registry"
-import { ArtifactStage, saveArtifact, saveArtifactPdf, ViewportToggle, type ArtifactViewport } from "./artifact-stage"
+import {
+  ArtifactStage,
+  artifactNativeExport,
+  saveArtifact,
+  saveArtifactPdf,
+  saveArtifactPng,
+  saveArtifactZip,
+  ViewportToggle,
+  type ArtifactViewport,
+} from "./artifact-stage"
 
 /** Full-size artifact view with the Session's artifact gallery. */
 export function ArtifactViewer(props: { session: string; initial: RegisteredArtifact; viewport: ArtifactViewport }) {
@@ -55,6 +64,14 @@ export function ArtifactViewer(props: { session: string; initial: RegisteredArti
                 <button type="button" onClick={() => void saveArtifactPdf(current().content, name(current()), frame)}>
                   {i18n.t("ui.artifact.savePdf")}
                 </button>
+                <Show when={artifactNativeExport()}>
+                  <button type="button" onClick={() => void saveArtifactPng(current().content, name(current()), viewport())}>
+                    {i18n.t("ui.artifact.savePng")}
+                  </button>
+                  <button type="button" onClick={() => void saveArtifactZip(current().content, name(current()))}>
+                    {i18n.t("ui.artifact.exportZip")}
+                  </button>
+                </Show>
               </div>
             </div>
             <ArtifactStage

@@ -43,6 +43,8 @@ export type ElectronAPI = {
   getPathForFile(file: File): string
   saveFile(opts: SaveFilePickerOptions, content: string | Uint8Array): Promise<boolean>
   printPdf(html: string, defaultPath: string): Promise<boolean>
+  exportPng(html: string, defaultPath: string, width: number, height: number): Promise<boolean>
+  exportZip(html: string, defaultPath: string): Promise<boolean>
   openExternal(url: string): void
   openBrowser(url: string): Promise<boolean>
   openLocalFile(url: string): void

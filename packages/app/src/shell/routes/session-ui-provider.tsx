@@ -1,5 +1,5 @@
 import { DataProvider } from "@opencode/session-ui/context"
-import { registerArtifactPdfSaver } from "@opencode/session-ui/artifact-stage"
+import { registerArtifactSavers } from "@opencode/session-ui/artifact-stage"
 import { MarkdownProvider, type ReadMarkdownImage } from "@opencode/session-ui/context/markdown"
 import { useNavigate, useParams } from "@solidjs/router"
 import { createMemo, type ParentProps } from "solid-js"
@@ -29,10 +29,16 @@ export function SessionUIProvider(
   const tabs = useTabs()
   const language = useLanguage()
   const platform = usePlatform()
-  // Artifacts save PDFs natively where the platform can render offscreen; elsewhere the
-  // stage falls back to the browser print sheet. Re-registration on remount is a no-op.
+  // Artifacts export natively (PDF, PNG, ZIP) where the platform renders offscreen; PDF
+  // falls back to the browser print sheet elsewhere. Re-registration on remount is a no-op.
   const printPdf = platform.printPdf
-  registerArtifactPdfSaver(printPdf ? (html, defaultPath) => printPdf(html, defaultPath) : undefined)
+  const exportPng = platform.exportPng
+  const exportZip = platform.exportZip
+  registerArtifactSavers({
+    pdf: printPdf ? (html, defaultPath) => printPdf(html, defaultPath) : undefined,
+    png: exportPng ? (html, defaultPath, width, height) => exportPng(html, defaultPath, width, height) : undefined,
+    zip: exportZip ? (html, defaultPath) => exportZip(html, defaultPath) : undefined,
+  })
   const directory = () => props.directory
 
   const readImage = createMemo<ReadMarkdownImage>(() => {

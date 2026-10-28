@@ -29,6 +29,54 @@ function make(fs: FileSystem.FileSystem, path: Path.Path) {
     readAttachment(file, maxBytes).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
   )
 
+  const saveDialog = Effect.fnUntraced(function* (defaultPath: string, format: "PDF" | "PNG" | "ZIP") {
+    const result = yield* Effect.promise(() =>
+      dialog.showSaveDialog({
+        title: nativeT("desktop.dialog.saveFile"),
+        defaultPath,
+        filters: [{ name: format, extensions: [format.toLowerCase()] }],
+      }),
+    )
+
+    if (result.canceled || !result.filePath) return null
+
+    return result.filePath
+  })
+
+  // Renders artifact HTML in a hidden sandboxed window for export. The page loads from a temp
+  // file: loadURL on a data: url caps out around 2MB, and artifacts with inline assets pass that.
+  const renderPage = <A>(html: string, body: (window: BrowserWindow) => Effect.Effect<A>) =>
+    Effect.gen(function* () {
+      const source = path.join(tmpdir(), `opencode-artifact-${Date.now().toString(36)}.html`)
+      yield* fs.writeFileString(source, html)
+
+      try {
+        const window = new BrowserWindow({
+          show: false,
+          width: 1280,
+          height: 900,
+          skipTaskbar: true,
+          focusable: false,
+          paintWhenInitiallyHidden: true,
+          webPreferences: { sandbox: true, backgroundThrottling: false },
+        })
+
+        try {
+          yield* Effect.promise(() => window.webContents.loadFile(source))
+          // Webfont <link>s resolve after load; exports would otherwise capture fallback faces.
+          yield* Effect.promise(() =>
+            window.webContents.executeJavaScript("document.fonts.ready.then(() => true)").catch(() => true),
+          )
+
+          return yield* body(window)
+        } finally {
+          window.destroy()
+        }
+      } finally {
+        yield* fs.remove(source).pipe(Effect.ignore)
+      }
+    })
+
   return {
     openDirectoryPicker: Effect.fn("DesktopFiles.openDirectoryPicker")(function* (options?: DirectoryPickerOptions) {
       const result = yield* Effect.promise(() =>
@@ -87,48 +135,69 @@ function make(fs: FileSystem.FileSystem, path: Path.Path) {
       return true
     }),
     printPdf: Effect.fn("DesktopFiles.printPdf")(function* (html: string, defaultPath: string) {
-      const result = yield* Effect.promise(() =>
-        dialog.showSaveDialog({
-          title: nativeT("desktop.dialog.saveFile"),
-          defaultPath,
-          filters: [{ name: "PDF", extensions: ["pdf"] }],
+      const target = yield* saveDialog(defaultPath, "PDF")
+
+      if (!target) return false
+
+      const bytes = yield* renderPage(html, (window) =>
+        Effect.promise(async () =>
+          new Uint8Array(await window.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true })),
+        ),
+      )
+
+      yield* fs.writeFile(target, bytes)
+
+      return true
+    }),
+    exportPng: Effect.fn("DesktopFiles.exportPng")(function* (
+      html: string,
+      defaultPath: string,
+      width: number,
+      height: number,
+    ) {
+      const target = yield* saveDialog(defaultPath, "PNG")
+
+      if (!target) return false
+
+      const bytes = yield* renderPage(html, (window) =>
+        Effect.promise(async () => {
+          // capturePage grabs the viewport only; grow it to the full document for a page-long shot.
+          const pageHeight = await window.webContents.executeJavaScript(
+            "Math.min(Math.max(document.documentElement.scrollHeight, 100), 16384)",
+          )
+
+          window.setContentSize(width, Math.round(pageHeight))
+
+          await new Promise((resolve) => setTimeout(resolve, 150))
+
+          return new Uint8Array((await window.webContents.capturePage()).toPNG())
         }),
       )
 
-      if (result.canceled || !result.filePath) return false
+      yield* fs.writeFile(target, bytes)
 
-      // The page loads from a temp file: loadURL on a data: url caps out around 2MB,
-      // and artifacts with inline assets comfortably pass that.
-      const source = path.join(tmpdir(), `opencode-artifact-${Date.now().toString(36)}.html`)
-      yield* fs.writeFileString(source, html)
+      return true
+    }),
+    exportZip: Effect.fn("DesktopFiles.exportZip")(function* (html: string, defaultPath: string) {
+      const target = yield* saveDialog(defaultPath, "ZIP")
 
-      try {
-        const bytes = yield* Effect.promise(async () => {
-          const window = new BrowserWindow({
-            show: false,
-            width: 1280,
-            height: 900,
-            skipTaskbar: true,
-            focusable: false,
-            paintWhenInitiallyHidden: true,
-            webPreferences: { sandbox: true, backgroundThrottling: false },
-          })
+      if (!target) return false
 
-          try {
-            await window.webContents.loadFile(source)
-            // Webfont <link>s resolve after load; printToPDF would otherwise capture fallbacks.
-            await window.webContents.executeJavaScript("document.fonts.ready.then(() => true)").catch(() => true)
+      const preview = yield* renderPage(html, (window) =>
+        Effect.promise(async () => new Uint8Array((await window.webContents.capturePage()).toPNG())),
+      )
 
-            return await window.webContents.printToPDF({ printBackground: true, preferCSSPageSize: true })
-          } finally {
-            window.destroy()
-          }
-        })
+      const bytes = yield* Effect.promise(async () => {
+        const { BlobWriter, Uint8ArrayReader, ZipWriter } = await import("@zip.js/zip.js")
+        const zip = new ZipWriter(new BlobWriter("application/zip"))
+        await zip.add("index.html", new Uint8ArrayReader(new TextEncoder().encode(html)))
+        await zip.add("preview.png", new Uint8ArrayReader(preview))
+        const blob = await zip.close()
 
-        yield* fs.writeFile(result.filePath, new Uint8Array(bytes))
-      } finally {
-        yield* fs.remove(source).pipe(Effect.ignore)
-      }
+        return new Uint8Array(await blob.arrayBuffer())
+      })
+
+      yield* fs.writeFile(target, bytes)
 
       return true
     }),

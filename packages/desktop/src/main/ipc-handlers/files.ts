@@ -26,6 +26,9 @@ export const fileHandlers = FileRpcs.toLayer(
         Effect.sync(() => files.releasePickedFiles(sender(handoff, context).id, token)),
       FilesSaveFile: ({ options, content }) => files.saveFile(options, content).pipe(Effect.orDie),
       FilesPrintPdf: ({ html, defaultPath }) => files.printPdf(html, defaultPath).pipe(Effect.orDie),
+      FilesExportPng: ({ html, defaultPath, width, height }) =>
+        files.exportPng(html, defaultPath, width, height).pipe(Effect.orDie),
+      FilesExportZip: ({ html, defaultPath }) => files.exportZip(html, defaultPath).pipe(Effect.orDie),
       FilesOpenExternal: ({ url }) => openExternalURL(url).pipe(Effect.asVoid),
       FilesOpenBrowser: ({ url }) => (/^https?:/i.test(url) ? openExternalURL(url) : Effect.succeed(false)),
       FilesOpenLocalFile: ({ url }) => openLocalFileURL(url),

@@ -57,6 +57,18 @@ export const FilesPrintPdf = Rpc.make("FilesPrintPdf", {
   success: Schema.Boolean,
 })
 
+// Renders HTML offscreen at a viewport size and saves a full-page PNG through the native dialog.
+export const FilesExportPng = Rpc.make("FilesExportPng", {
+  payload: { html: Schema.String, defaultPath: Schema.String, width: Schema.Number, height: Schema.Number },
+  success: Schema.Boolean,
+})
+
+// Packs the artifact HTML with a rendered preview.png into a ZIP through the native save dialog.
+export const FilesExportZip = Rpc.make("FilesExportZip", {
+  payload: { html: Schema.String, defaultPath: Schema.String },
+  success: Schema.Boolean,
+})
+
 export const FilesOpenExternal = Rpc.make("FilesOpenExternal", {
   payload: { url: Schema.String },
 })
@@ -95,6 +107,8 @@ export const FileRpcs = RpcGroup.make(
   FilesReleasePickedFiles,
   FilesSaveFile,
   FilesPrintPdf,
+  FilesExportPng,
+  FilesExportZip,
   FilesOpenExternal,
   FilesOpenBrowser,
   FilesOpenLocalFile,

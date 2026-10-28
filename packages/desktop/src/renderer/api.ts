@@ -66,6 +66,8 @@ export const api: ElectronAPI = {
   saveFile: (opts, content) =>
     invoke("FilesSaveFile", { options: opts, content: content as string | Uint8Array<ArrayBuffer> }),
   printPdf: (html, defaultPath) => invoke("FilesPrintPdf", { html, defaultPath }),
+  exportPng: (html, defaultPath, width, height) => invoke("FilesExportPng", { html, defaultPath, width, height }),
+  exportZip: (html, defaultPath) => invoke("FilesExportZip", { html, defaultPath }),
   openExternal: (url) => send("FilesOpenExternal", { url }),
   openBrowser: (url) => invoke("FilesOpenBrowser", { url }),
   openLocalFile: (url) => send("FilesOpenLocalFile", { url }),

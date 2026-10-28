@@ -12,6 +12,8 @@ type DesktopFileAPI = Pick<
   | "getPathForFile"
   | "saveFile"
   | "printPdf"
+  | "exportPng"
+  | "exportZip"
   | "openExternal"
   | "openBrowser"
   | "openLocalFile"
@@ -62,6 +64,9 @@ export function createDesktopFiles(api: DesktopFileAPI, os: DesktopOS) {
     saveFile: (options: { title?: string; defaultPath?: string }, content: string | Uint8Array) =>
       api.saveFile({ title: options.title, defaultPath: options.defaultPath }, content),
     printPdf: (html: string, defaultPath: string) => api.printPdf(html, defaultPath),
+    exportPng: (html: string, defaultPath: string, width: number, height: number) =>
+      api.exportPng(html, defaultPath, width, height),
+    exportZip: (html: string, defaultPath: string) => api.exportZip(html, defaultPath),
     openExternal: (url: string) => api.openExternal(url),
     openBrowser: (url: string) => api.openBrowser(url),
     openLocalFile: (url: string) => api.openLocalFile(url),
