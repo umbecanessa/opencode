@@ -30,7 +30,7 @@ Location-scoped endpoints take `location` as a **nested query parameter** — `l
 | Session fields | `Session.Info` | `id, parentID, projectID, agent, model, cost, tokens, outcome, time, title, subpath, permissions, revert, location` — status derives from `time`/`outcome` + active map, not a single `status` field |
 | Active runs | `GET /api/session/active` | `{data: {<ses_…>: {type:"running"}}}` — the cheap liveness check for overview and bridge polling |
 | History | `GET /api/session/{id}/message` | cursor-paginated `{previous, next}`; message is a `oneOf` union — UI must dispatch per message type |
-| Prompt | `POST /api/session/{id}/prompt` | `{id?, text, files[], agents[], skills[], metadata, delivery?, resume?}`; file attachments supported |
+| Prompt | `POST /api/session/{id}/prompt` | `{id?, text, files[], agents[], skills[], metadata, delivery?, resume?}`; file attachments supported — send `files: [{uri: "data:<mime>;base64,...", name}]`; the server decodes them and projects user messages with `files: [{data, mime, source, name}]` (verified live) |
 | Stop | `POST /api/session/{id}/interrupt?resume=true|false` | resume variant available |
 | Diff view | `GET /api/session/{id}/diff?from=` | per-turn diff against a user message — feeds the "changed files" view |
 | Questions/forms | `GET /api/session/{id}/form`, `POST …/form/{formID}/reply` | agent question flow exists |
