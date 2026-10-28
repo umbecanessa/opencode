@@ -11,6 +11,7 @@ import { useSettingsSurface } from "@/settings/surface"
 import { useSettings } from "@/settings/model"
 import { ExtensionServerCover } from "@/runtime/extension/server-shell"
 import { ExtensionSlot } from "@/runtime/extension/render"
+import { FilePathMenu } from "./layout/file-path-menu"
 
 export default function Layout(props: ParentProps) {
   const platform = usePlatform()
@@ -82,7 +83,7 @@ export default function Layout(props: ParentProps) {
             }}
           >
             <ExtensionServerCover>
-              <Suspense>{props.children}</Suspense>
+              <FilePathMenu><Suspense>{props.children}</Suspense></FilePathMenu>
             </ExtensionServerCover>
           </main>
         </div>
