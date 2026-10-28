@@ -64,7 +64,7 @@ export class Client {
 
   active = () => this.request<{ data: Record<string, { type: string }> }>("/api/session/active")
 
-  session = (id: string) => this.request<{ id: string; title?: string; cost?: number; time?: { created: number; updated: number }; location?: { directory: string } }>(`/api/session/${id}`)
+  session = (id: string) => this.request<{ id: string; title?: string; model?: { id: string; providerID: string; variant?: string }; cost?: number; time?: { created: number; updated: number }; location?: { directory: string } }>(`/api/session/${id}`)
 
   messages = (sessionID: string, cursor?: string) =>
     this.request<{ data: Record<string, unknown>[]; cursor: MessagePage["cursor"] }>(

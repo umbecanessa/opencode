@@ -1,15 +1,32 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
-import { ClipboardPasteButton, isPasteButtonAvailable } from "expo-clipboard"
+import { getImageAsync } from "expo-clipboard"
+import { useState } from "react"
 import { Modal, Pressable, Text, View } from "react-native"
 import { useTheme } from "../../theme"
 
 export function ImagePaste({ onImage }: { onImage: (uri: string) => void }) {
   const t = useTheme()
-  if (!isPasteButtonAvailable) return null
-  return <ClipboardPasteButton acceptedContentTypes={["image"]} imageOptions={{ format: "png" }}
-    onPress={(event) => { if (event.type === "image") onImage(event.data) }}
-    backgroundColor={t.fill.secondary} foregroundColor={t.label} cornerStyle="capsule"
-    style={{ width: 100, height: 40 }} />
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState("")
+  const paste = async () => {
+    setBusy(true)
+    setError("")
+    await getImageAsync({ format: "png" }).then((image) => {
+      if (!image) {
+        setError("No image received. Copy the screenshot and allow paste access if iOS asks.")
+        return
+      }
+      onImage(image.data)
+    }).catch(() => setError("Could not read the clipboard. Copy the screenshot and try again."))
+    setBusy(false)
+  }
+  return <View style={{ maxWidth: 160 }}>
+    <Pressable onPress={paste} disabled={busy} accessibilityRole="button" accessibilityLabel="Paste image from clipboard"
+      style={{ minHeight: 44, paddingHorizontal: 16, justifyContent: "center", alignItems: "center", borderRadius: 22, backgroundColor: t.fill.secondary }}>
+      <Text style={[t.font.subhead, { color: t.label }]}>{busy ? "Pasting…" : "Paste image"}</Text>
+    </Pressable>
+    {!!error && <Text accessibilityRole="alert" style={[t.font.caption, { color: t.status.failed, marginTop: 8 }]}>{error}</Text>}
+  </View>
 }
 
 export function Attachments({ visible, onClose, onDismiss, onChoose, onImage }: {

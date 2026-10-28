@@ -6,7 +6,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { PromptFile } from "../../api/types"
 import { useTheme } from "../../theme"
 import { useDictation } from "../../voice"
-import { Attachments, ImagePaste } from "./Attachments"
+import { Attachments } from "./Attachments"
+import { PasteInput } from "./PasteInput"
 
 const MAX_FILES = 6
 
@@ -17,6 +18,8 @@ export const Composer = ({
   onStop,
   onModel,
   onContext,
+  modelLabel,
+  activeModelLabel,
 }: {
   running: boolean
   disabled?: boolean
@@ -24,6 +27,8 @@ export const Composer = ({
   onStop: () => Promise<void>
   onModel?: () => void
   onContext?: () => void
+  modelLabel?: string
+  activeModelLabel?: string
 }) => {
   const t = useTheme()
   const insets = useSafeAreaInsets()
@@ -62,6 +67,16 @@ export const Composer = ({
     setFiles((current) => [...current, { uri, name: `screenshot-${Date.now()}.png` }].slice(0, MAX_FILES))
     setNote("")
     setAttachmentSheet(false)
+  }
+  const pasteImages = async (uris: string[]) => {
+    const { File } = await import("expo-file-system")
+    const added = await Promise.all(uris.slice(0, Math.max(0, MAX_FILES - files.length)).map(async (uri) => {
+      const file = new File(uri)
+      if (file.size > 20_000_000) throw new Error("Pasted image exceeds the 20 MB attachment limit.")
+      return { uri: `data:${file.type || "image/png"};base64,${await file.base64()}`, name: file.name }
+    }))
+    setFiles((current) => [...current, ...added].slice(0, MAX_FILES))
+    setNote("")
   }
   const openPendingPicker = () => {
     const source = pendingPicker.current
@@ -142,7 +157,6 @@ export const Composer = ({
           setAttachmentSheet(false)
           if (Platform.OS !== "ios") setTimeout(openPendingPicker, 350)
         }} />
-      {focused && <View style={{ alignItems: "flex-end", paddingBottom: 6 }}><ImagePaste onImage={addImage} /></View>}
       {(note.length > 0 || voice.error.length > 0) && (
         <Text style={[t.font.footnote, styles.voiceError, { color: t.status.failed }]} numberOfLines={2}>
           {note || voice.error}
@@ -177,6 +191,8 @@ export const Composer = ({
           { backgroundColor: t.surface, borderColor: voice.listening ? t.status.failed : t.separator },
         ]}
       >
+        {running && activeModelLabel && <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel, paddingHorizontal: 12, paddingTop: 6 }]}>Responding with {activeModelLabel}</Text>}
+        <PasteInput onImages={(uris) => { pasteImages(uris).catch((e) => setNote(String(e))) }} onError={() => setNote("This clipboard content could not be attached. Try Photos or Files from +.")}>
         <TextInput
           value={text}
           onChangeText={setText}
@@ -189,12 +205,14 @@ export const Composer = ({
           style={[styles.input, { color: t.label, minHeight: focused ? 68 : 40 }]}
           accessibilityLabel="Message"
         />
+        </PasteInput>
         <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 4 }}>
           <Pressable onPress={attachments} disabled={disabled || busy} accessibilityRole="button" accessibilityLabel="Add photos, camera photo, or files" style={styles.mic}>
             <Ionicons name="add" size={27} color={t.label} />
           </Pressable>
-          <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel="Select model and reasoning" style={styles.mic}>
+          <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel={`Select model and reasoning. ${modelLabel ?? "Default model"}`} style={{ flexDirection: "row", alignItems: "center", gap: 6, flexShrink: 1, minHeight: 44, paddingHorizontal: 6 }}>
             <MaterialCommunityIcons name="brain" size={23} color={t.secondaryLabel} />
+            <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel, maxWidth: 140 }]}>{modelLabel ?? "Default"}</Text>
           </Pressable>
           <View style={{ flex: 1 }} />
           <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel="View session context" style={styles.mic}>

@@ -3,6 +3,7 @@ import { Stack, useLocalSearchParams, useRouter } from "expo-router"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -50,6 +51,7 @@ export default function Session() {
   const [title, setTitle] = useState(params.title)
   const [atBottom, setAtBottom] = useState(true)
   const [sending, setSending] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<{ id: string; providerID: string; variant?: string }>()
   const [panel, setPanel] = useState<"model" | "context" | "permissions">()
   const [controlDirectory, setControlDirectory] = useState("")
   const directory = useRef("")
@@ -107,6 +109,7 @@ export default function Session() {
     setMessages((current) => {
       const ids = new Set(fresh.map((m) => m.id))
       return [...fresh, ...current.filter((m) => !ids.has(m.id))]
+        .sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0))
     })
   }, [])
 
@@ -139,6 +142,7 @@ export default function Session() {
       .then((s) => {
         directory.current = s.location?.directory ?? ""
         if (s.title) setTitle(s.title)
+        setSelectedModel(s.model)
       })
       .catch(() => {})
     c.messages(params.id)
@@ -270,7 +274,10 @@ export default function Session() {
           ),
           headerRight: () => running ? (
             <Pressable
-              onPress={() => c?.background(params.id).catch((e) => setError(String(e)))}
+              onPress={() => Alert.alert("Send tools to background?", "Running shells and other blocking tools will keep working in the background so the agent can continue. This does not stop them.", [
+                { text: "Cancel", style: "cancel" },
+                { text: "Background tools", onPress: () => { c?.background(params.id).catch((e) => setError(String(e))) } },
+              ])}
               accessibilityRole="button"
               accessibilityLabel="Send running tools to background"
               style={{ padding: 10 }}
@@ -337,9 +344,7 @@ export default function Session() {
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
           }
           ListFooterComponent={
-            <View onLayout={() => {
-              if (pinned.current) requestAnimationFrame(() => list.current?.scrollToEnd({ animated: false }))
-            }} style={{ paddingBottom: 12 }}>
+            <View style={{ paddingBottom: 12 }}>
               {changes.length > 0 && (
                 <View style={{ marginHorizontal: 16, marginVertical: 8, borderRadius: 16, backgroundColor: t.surface, overflow: "hidden" }}>
                   <Text style={[t.font.subhead, { color: t.label, padding: 12 }]}>{changes.length} {changes.length === 1 ? "file changed" : "files changed"}</Text>
@@ -394,8 +399,13 @@ export default function Session() {
         />
       ))}
 
-      {c && <SessionControls client={c} sessionID={params.id} directory={controlDirectory} panel={panel} onClose={() => setPanel(undefined)} />}
+      {c && <SessionControls client={c} sessionID={params.id} directory={controlDirectory} panel={panel} onClose={() => {
+        setPanel(undefined)
+        c.session(params.id).then((s) => setSelectedModel(s.model)).catch(() => {})
+      }} />}
       <Composer running={running} disabled={!c} onSend={send} onStop={stop}
+        modelLabel={selectedModel ? `${selectedModel.id.split("/").pop()}${selectedModel.variant ? ` · ${selectedModel.variant}` : ""}` : undefined}
+        activeModelLabel={messages.find((m) => m.type === "assistant" && m.model)?.model?.id?.split("/").pop()}
         onModel={() => { setControlDirectory(directory.current); setPanel("model") }}
         onContext={() => setPanel('context')}
       />
