@@ -892,8 +892,8 @@ export interface System {
   save(file: {
     /** The suggested file name. */
     readonly name: string
-    /** The file's content. */
-    readonly content: string
+    /** The file's content, text or raw bytes. */
+    readonly content: string | Uint8Array
   }): Promise<boolean>
   /**
    * Opens a URL in the system browser; desktop opens file:// URLs with the default app. For links inside the app,

@@ -8,6 +8,7 @@ import { SplitButton, SplitButtonAction, SplitButtonMenuTrigger } from "@opencod
 import { showToast } from "@opencode/ui/toast"
 import { Tooltip } from "@opencode/ui/tooltip"
 import { createLatest, useExtension, type Context, type OS, type MountedSession, type SessionScreen } from "../sdk"
+import { getDirectory, getFilename } from "@opencode/util/path"
 import type { OpenApp } from "./apps"
 import { useShared, type OpenRequest } from "./context"
 import { openInAppParentPath } from "./path"
@@ -171,6 +172,19 @@ export function useOpenInApp(input: { session: MountedSession; path: () => strin
       .catch((err) => showRequestError(ctx, err))
   }
 
+  // Downloads a file from the session's own server: the read travels over that host's connection, so files sitting
+  // on another machine (a paired host) save locally byte-for-byte. Absolute paths are scoped to their parent.
+  const download = (target = input.path()) => {
+    if (!target) return
+
+    const absolute = /^[a-z]:[\\/]/i.test(target) || target.startsWith("/") || target.startsWith("\\\\")
+
+    input.session.server.client.file
+      .read(absolute ? { path: getFilename(target), location: { directory: getDirectory(target) } } : { path: target })
+      .then((bytes) => ctx.system.save({ name: getFilename(target), content: bytes }))
+      .catch((err) => showRequestError(ctx, err))
+  }
+
   return {
     canOpen,
     opening,
@@ -181,6 +195,7 @@ export function useOpenInApp(input: { session: MountedSession; path: () => strin
     openPath,
     selectApp,
     copyPath,
+    download,
   }
 }
 
@@ -232,7 +247,7 @@ export default function OpenInAppButton(props: { session: MountedSession; screen
           </Menu.Trigger>
           <Menu.Portal>
             <Menu.Content class="open-in-app-v2-menu">
-              <OpenInAppMenuItemsV2 state={state} close={() => state.setMenu("open", false)} />
+              <OpenInAppMenuItemsV2 state={state} download={false} close={() => state.setMenu("open", false)} />
             </Menu.Content>
           </Menu.Portal>
         </Menu>
@@ -246,6 +261,8 @@ function OpenInAppMenuItemsV2(props: {
   path?: () => string
   reveal?: boolean
   selection?: boolean
+  /** False for menus aimed at the project root, where downloading a directory makes no sense. */
+  download?: boolean
   close?: () => void
 }) {
   const ctx = useExtension()
@@ -253,57 +270,70 @@ function OpenInAppMenuItemsV2(props: {
 
   return (
     <>
-      <Menu.Group>
-        <Menu.GroupLabel>{ctx.t("open.in")}</Menu.GroupLabel>
-        <Show
-          when={props.selection !== false}
-          fallback={
-            <For each={props.state.options()}>
-              {(option) => (
-                <Menu.Item
-                  disabled={props.state.opening()}
-                  onSelect={() => {
-                    props.state.selectApp(option.id)
-                    props.close?.()
-                    props.state.openPath(option.id, path(), props.reveal)
-                  }}
-                >
-                  <AppIcon id={option.icon} />
-                  {option.label}
-                </Menu.Item>
-              )}
-            </For>
-          }
-        >
-          <Menu.RadioGroup
-            value={props.state.current().id}
-            onChange={(value) => {
-              const option = props.state.options().find((item) => item.id === value)
-
-              if (option) props.state.selectApp(option.id)
-            }}
+      <Show when={props.state.canOpen()}>
+        <Menu.Group>
+          <Menu.GroupLabel>{ctx.t("open.in")}</Menu.GroupLabel>
+          <Show
+            when={props.selection !== false}
+            fallback={
+              <For each={props.state.options()}>
+                {(option) => (
+                  <Menu.Item
+                    disabled={props.state.opening()}
+                    onSelect={() => {
+                      props.state.selectApp(option.id)
+                      props.close?.()
+                      props.state.openPath(option.id, path(), props.reveal)
+                    }}
+                  >
+                    <AppIcon id={option.icon} />
+                    {option.label}
+                  </Menu.Item>
+                )}
+              </For>
+            }
           >
-            <For each={props.state.options()}>
-              {(option) => (
-                <Menu.RadioItem
-                  value={option.id}
-                  closeOnSelect
-                  disabled={props.state.opening()}
-                  onSelect={() => {
-                    props.state.selectApp(option.id)
-                    props.close?.()
-                    props.state.openPath(option.id, path(), props.reveal)
-                  }}
-                >
-                  <AppIcon id={option.icon} />
-                  {option.label}
-                </Menu.RadioItem>
-              )}
-            </For>
-          </Menu.RadioGroup>
-        </Show>
-      </Menu.Group>
-      <Menu.Separator />
+            <Menu.RadioGroup
+              value={props.state.current().id}
+              onChange={(value) => {
+                const option = props.state.options().find((item) => item.id === value)
+
+                if (option) props.state.selectApp(option.id)
+              }}
+            >
+              <For each={props.state.options()}>
+                {(option) => (
+                  <Menu.RadioItem
+                    value={option.id}
+                    closeOnSelect
+                    disabled={props.state.opening()}
+                    onSelect={() => {
+                      props.state.selectApp(option.id)
+                      props.close?.()
+                      props.state.openPath(option.id, path(), props.reveal)
+                    }}
+                  >
+                    <AppIcon id={option.icon} />
+                    {option.label}
+                  </Menu.RadioItem>
+                )}
+              </For>
+            </Menu.RadioGroup>
+          </Show>
+        </Menu.Group>
+        <Menu.Separator />
+      </Show>
+      <Show when={props.download !== false}>
+        <Menu.Item
+          onSelect={() => {
+            props.close?.()
+            props.state.download(path())
+          }}
+        >
+          <Icon name="download" size="small" class="text-icon-weak" />
+          {ctx.t("open.download")}
+        </Menu.Item>
+      </Show>
       <Menu.Item
         onSelect={() => {
           props.close?.()
@@ -329,7 +359,7 @@ export function OpenInAppContextMenuV2(
   const [open, setOpen] = createSignal(false)
 
   return (
-    <Show when={state.canOpen() && props.path()} fallback={props.children}>
+    <Show when={props.path()} fallback={props.children}>
       <Menu.Context modal={false} onOpenChange={setOpen}>
         <Menu.Context.Trigger
           as="div"
