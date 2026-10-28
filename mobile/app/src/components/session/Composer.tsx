@@ -1,4 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons"
 import { useEffect, useState } from "react"
 import { ActivityIndicator, Alert, Image, Keyboard, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
@@ -15,7 +16,6 @@ export const Composer = ({
   onStop,
   onModel,
   onContext,
-  contextTokens,
 }: {
   running: boolean
   disabled?: boolean
@@ -23,7 +23,6 @@ export const Composer = ({
   onStop: () => Promise<void>
   onModel?: () => void
   onContext?: () => void
-  contextTokens?: number
 }) => {
   const t = useTheme()
   const insets = useSafeAreaInsets()
@@ -190,13 +189,12 @@ export const Composer = ({
           <Pressable onPress={attachments} disabled={disabled || busy} accessibilityRole="button" accessibilityLabel="Add photos, camera photo, or files" style={styles.mic}>
             <Ionicons name="add" size={27} color={t.label} />
           </Pressable>
-          <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel="Select model and reasoning" style={{ padding: 10 }}>
-            <Text style={{ color: t.secondaryLabel, fontSize: 13 }}>Model</Text>
+          <Pressable onPress={onModel} accessibilityRole="button" accessibilityLabel="Select model and reasoning" style={styles.mic}>
+            <MaterialCommunityIcons name="brain" size={23} color={t.secondaryLabel} />
           </Pressable>
           <View style={{ flex: 1 }} />
-          <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel={`View session context, ${contextTokens === undefined ? "usage unavailable" : `${contextTokens.toLocaleString()} tokens`}`} style={{ flexDirection: "row", alignItems: "center", gap: 4, minHeight: 44, paddingHorizontal: 6 }}>
-            <Ionicons name="pie-chart-outline" size={17} color={t.secondaryLabel} />
-            <Text style={[t.font.caption, { color: t.secondaryLabel }]}>{contextTokens === undefined ? "—" : new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 0 }).format(contextTokens)}</Text>
+          <Pressable onPress={onContext} accessibilityRole="button" accessibilityLabel="View session context" style={styles.mic}>
+            <Ionicons name="speedometer-outline" size={20} color={t.secondaryLabel} />
           </Pressable>
         {voice.available && (
           <Pressable
@@ -204,15 +202,17 @@ export const Composer = ({
             hitSlop={8}
             style={({ pressed }) => [
               styles.mic,
-              { backgroundColor: voice.listening ? t.status.failed : "transparent", opacity: pressed ? 0.7 : 1 },
+              { opacity: pressed ? 0.7 : 1 },
             ]}
             accessibilityRole="button"
             accessibilityLabel={voice.listening ? "Stop dictation" : "Dictate a message"}
           >
-            <Ionicons name={voice.listening ? "mic" : "mic-outline"} size={20} color={voice.listening ? "#FFFFFF" : t.secondaryLabel} />
+            <View style={[styles.recording, { backgroundColor: voice.listening ? t.status.failed : "transparent" }]}>
+              <Ionicons name={voice.listening ? "stop" : "mic-outline"} size={voice.listening ? 14 : 20} color={voice.listening ? "#FFFFFF" : t.secondaryLabel} />
+            </View>
           </Pressable>
         )}
-        <Pressable
+        {(!voice.listening || canSend) && <Pressable
           onPress={showStop ? stop : send}
           disabled={showStop ? busy : !canSend}
           hitSlop={8}
@@ -234,7 +234,7 @@ export const Composer = ({
           ) : (
             <Ionicons name="arrow-up" size={19} color={canSend ? "#FFFFFF" : t.tertiaryLabel} />
           )}
-        </Pressable>
+        </Pressable>}
         </View>
       </View>
     </View>
@@ -254,6 +254,7 @@ const styles = StyleSheet.create({
   },
   input: { fontSize: 16, lineHeight: 22, maxHeight: 132, paddingTop: 12, paddingBottom: 10, marginLeft: 12, marginRight: 12 },
   mic: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  recording: { width: 30, height: 30, borderRadius: 15, alignItems: "center", justifyContent: "center" },
   thumbs: { flexDirection: "row", gap: 8, paddingHorizontal: 6, paddingBottom: 8 },
   thumbWrap: { width: 56, height: 56, borderRadius: 12, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth },
   thumb: { width: "100%", height: "100%" },
