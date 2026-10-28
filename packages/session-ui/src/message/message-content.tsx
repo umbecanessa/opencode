@@ -753,7 +753,12 @@ export function AssistantTextContent(props: {
                   />
                 </Show>
               ) : (
-                <ArtifactCard artifact={segment} />
+                <ArtifactCard
+                  artifact={segment}
+                  artifactKey={`${props.id}:${index()}`}
+                  created={props.message.time.created}
+                  index={index()}
+                />
               )
             }
           </For>

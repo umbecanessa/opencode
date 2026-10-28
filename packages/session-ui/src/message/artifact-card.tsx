@@ -1,16 +1,26 @@
 import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js"
 import { Icon } from "@opencode/ui/icon"
+import { IconButton } from "@opencode/ui/icon-button"
+import { Menu } from "@opencode/ui/menu"
+import { useDialog } from "@opencode/ui/context/dialog"
 import { useI18n } from "@opencode/ui/context/i18n"
 import { TextShimmer } from "@opencode/ui/text-shimmer"
+import { useData } from "../context"
 import type { ArtifactSegment } from "../components/artifact-split"
+import { registerArtifact, type RegisteredArtifact } from "./artifact-registry"
+import { ArtifactStage, printArtifact, saveArtifact, ViewportToggle, type ArtifactViewport } from "./artifact-stage"
+import { ArtifactViewer } from "./artifact-viewer"
 import "./artifact-card.css"
 
 type Artifact = Extract<ArtifactSegment, { kind: "artifact" }>
 
 /** Chat card for an `<artifact>` block: live code while generating, sandboxed preview when done. */
-export function ArtifactCard(props: { artifact: Artifact }) {
+export function ArtifactCard(props: { artifact: Artifact; artifactKey: string; created: number; index: number }) {
   const i18n = useI18n()
+  const dialog = useDialog()
+  const data = useData()
   const artifact = () => props.artifact
+  const session = () => data.sessionID ?? ""
 
   const previewable = createMemo(() => {
     const type = artifact().type
@@ -19,9 +29,28 @@ export function ArtifactCard(props: { artifact: Artifact }) {
   })
 
   const [mode, setMode] = createSignal<"code" | "preview">("code")
+  const [viewport, setViewport] = createSignal<ArtifactViewport>("desktop")
   const [mountPreview, setMountPreview] = createSignal(false)
+  let frame: HTMLIFrameElement | undefined
+
   createEffect(() => {
     if (artifact().state === "done" && previewable() && mode() === "preview") setMountPreview(true)
+  })
+
+  const title = () => artifact().title || artifact().identifier || i18n.t("ui.artifact.untitled")
+
+  const entry = createMemo<RegisteredArtifact>(() => ({
+    key: props.artifactKey,
+    identifier: artifact().identifier,
+    title: artifact().title,
+    type: artifact().type,
+    content: artifact().content,
+    created: props.created,
+    index: props.index,
+  }))
+
+  createEffect(() => {
+    if (artifact().state === "done" && previewable()) registerArtifact(session(), entry())
   })
 
   const [copied, setCopied] = createSignal(false)
@@ -46,14 +75,11 @@ export function ArtifactCard(props: { artifact: Artifact }) {
     onCleanup(() => clearTimeout(timeout))
   }
 
-  const title = () => artifact().title || artifact().identifier || i18n.t("ui.artifact.untitled")
+  const expand = () =>
+    dialog.show(() => <ArtifactViewer session={session()} initial={entry()} viewport={viewport()} />)
 
   return (
-    <div
-      data-component="artifact-card"
-      data-state={artifact().state}
-      data-mode={mode()}
-    >
+    <div data-component="artifact-card" data-state={artifact().state} data-mode={mode()}>
       <div data-slot="artifact-card-header">
         <span data-slot="artifact-card-title">
           <Icon name="code-slash" size="small" />
@@ -65,8 +91,11 @@ export function ArtifactCard(props: { artifact: Artifact }) {
               <TextShimmer text={i18n.t("ui.artifact.generating")} active />
             </span>
           </Show>
+          <Show when={previewable() && mode() === "preview"}>
+            <ViewportToggle value={viewport()} onChange={setViewport} />
+          </Show>
           <Show when={previewable()}>
-            <div data-slot="artifact-card-toggle" role="tablist">
+            <div data-slot="artifact-segmented" role="tablist">
               <button
                 type="button"
                 role="tab"
@@ -86,16 +115,50 @@ export function ArtifactCard(props: { artifact: Artifact }) {
                 {i18n.t("ui.artifact.code")}
               </button>
             </div>
+            <IconButton
+              icon={<Icon name="expand" size="small" />}
+              size="normal"
+              variant="ghost-muted"
+              onClick={expand}
+              aria-label={i18n.t("ui.artifact.expand")}
+              title={i18n.t("ui.artifact.expand")}
+            />
           </Show>
-          <button
-            type="button"
-            data-slot="artifact-card-copy"
-            onClick={copy}
-            aria-label={i18n.t("ui.artifact.copy")}
-            title={i18n.t("ui.artifact.copy")}
+          <Show
+            when={previewable()}
+            fallback={
+              <IconButton
+                icon={<Icon name={copied() ? "check" : "outline-copy"} size="small" />}
+                size="normal"
+                variant="ghost-muted"
+                onClick={copy}
+                aria-label={i18n.t("ui.artifact.copy")}
+                title={i18n.t("ui.artifact.copy")}
+              />
+            }
           >
-            <Icon name={copied() ? "check" : "outline-copy"} size="small" />
-          </button>
+            <Menu gutter={4} modal={false} placement="bottom-end">
+              <Menu.Trigger
+                as={IconButton}
+                icon={<Icon name={copied() ? "check" : "outline-dots"} size="small" />}
+                size="normal"
+                variant="ghost-muted"
+                aria-label={i18n.t("ui.artifact.more")}
+              />
+              <Menu.Portal>
+                <Menu.Content style={{ "min-width": "180px" }}>
+                  <Menu.Item onSelect={() => saveArtifact(artifact().content, title())}>
+                    {i18n.t("ui.artifact.save")}
+                  </Menu.Item>
+                  <Menu.Item disabled={mode() !== "preview"} onSelect={() => printArtifact(frame)}>
+                    {i18n.t("ui.artifact.print")}
+                  </Menu.Item>
+                  <Menu.Separator />
+                  <Menu.Item onSelect={() => void copy()}>{i18n.t("ui.artifact.copy")}</Menu.Item>
+                </Menu.Content>
+              </Menu.Portal>
+            </Menu>
+          </Show>
         </div>
       </div>
       <Show when={artifact().state === "truncated"}>
@@ -103,14 +166,15 @@ export function ArtifactCard(props: { artifact: Artifact }) {
       </Show>
       <div data-slot="artifact-card-body">
         <Show when={mountPreview()}>
-          <iframe
-            data-slot="artifact-card-frame"
-            srcdoc={artifact().content}
-            sandbox="allow-scripts allow-downloads"
-            referrerPolicy="no-referrer"
-            title={title()}
-            hidden={mode() !== "preview"}
-          />
+          <div hidden={mode() !== "preview"}>
+            <ArtifactStage
+              content={artifact().content}
+              title={title()}
+              viewport={viewport()}
+              height={viewport() === "desktop" ? 480 : 560}
+              ref={(element) => (frame = element)}
+            />
+          </div>
         </Show>
         <Show when={!(mode() === "preview" && mountPreview())}>
           <pre data-slot="artifact-card-code">
