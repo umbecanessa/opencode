@@ -1,6 +1,14 @@
 import { DESKTOP_NATIVE_ENGLISH } from "./desktop-native"
 
 export const dict = {
+  "sidebar.projectNavigation": "Projects and conversations",
+  "sidebar.agentWorking": "Agent working",
+  "sidebar.subagents": "Subagents",
+  "sidebar.searchConversations": "Search conversations",
+  "sidebar.host": "Host",
+  "sidebar.recentConversations": "Recent",
+  "sidebar.projects": "Projects",
+  "sidebar.sessionsUnavailable": "Conversations could not be refreshed. Reconnect to try again.",
   ...DESKTOP_NATIVE_ENGLISH,
   "session.location.unavailable": "Session location unavailable",
   "session.location.description": "Choose another directory to continue this session.",

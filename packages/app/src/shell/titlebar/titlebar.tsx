@@ -27,6 +27,7 @@ import { TitlebarRightMount } from "@/shell/titlebar/right-slot"
 import { MobileDrawer, MobileDrawerContent, MobileDrawerLabel, MobileDrawerTrigger } from "@/shell/mobile-drawer"
 import { sessionTabTitle } from "./tab-title"
 import { SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
+import { ProjectSidebar } from "@/shell/layout/project-sidebar"
 import { SessionProgressIndicatorV2 } from "@opencode/session-ui/v2/session-progress-indicator-v2"
 import { RecentlyClosedTabsMenu } from "./recently-closed-tabs-menu"
 import { useSettingsDialog } from "@/settings/command"
@@ -733,21 +734,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                             />
                             <div class="h-4 w-full shrink-0" aria-hidden="true" />
                             <div class="flex min-h-0 flex-1 flex-col gap-1">
-                              <TitlebarTabStrip
-                                orientation="vertical"
-                                tabs={tabsStore}
-                                currentTab={currentTab()}
-                                onNavigate={(tab, el) => {
-                                  tabs.select(tab)
-                                  el?.scrollIntoView({ behavior: "instant", block: "nearest" })
-                                }}
-                                onClose={(tab) => {
-                                  const index = tabsStore.findIndex((item) => tabKey(item) === tabKey(tab))
-
-                                  if (index !== -1) tabsStoreActions.closeTab(index)
-                                }}
-                                onReorder={(keys) => tabsStoreActions.reorder(keys)}
-                              />
+                              <ProjectSidebar />
                             </div>
                             <Show when={titlebarItems.ids().length > 0}>
                               <div data-slot="vertical-tabs-footer" class="mt-2 flex w-full shrink-0 flex-col">

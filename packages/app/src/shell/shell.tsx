@@ -23,7 +23,7 @@ export default function Layout(props: ParentProps) {
     tabsMount: undefined,
   })
 
-  const verticalTabs = () => preferences.appearance.tabLayout() === "vertical" && !mobile()
+  const verticalTabs = () => !mobile()
   const bottomTitlebar = () => mobile() && preferences.general.mobileTitlebarPosition() === "bottom"
 
   return (

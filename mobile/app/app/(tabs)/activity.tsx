@@ -2,9 +2,10 @@ import { useRouter } from "expo-router"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native"
 import Ionicons from "@expo/vector-icons/Ionicons"
+import AsyncStorage from "@react-native-async-storage/async-storage"
 import type { PermissionDecision, PermissionRequest, Session } from "../../src/api/types"
 import { LargeTitle } from "../../src/components/LargeTitle"
-import { flattenFamilies, TreeRow } from "../../src/components/SessionTree"
+import { flattenFamilies, TreeRow, type TreeItem } from "../../src/components/SessionTree"
 import { ApprovalCard } from "../../src/components/session/Approval"
 import { Question } from "../../src/components/session/Question"
 import { useHosts } from "../../src/state/hosts"
@@ -24,6 +25,15 @@ export default function Activity() {
   const [hostFilter, setHostFilter] = useState<string>()
   const [statusFilter, setStatusFilter] = useState("All")
   const [filterMenu, setFilterMenu] = useState<"host" | "status">()
+  const [expandedProjects, setExpandedProjects] = useState<Set<string>>(new Set())
+  const [showAllRecent, setShowAllRecent] = useState(false)
+  const [creationError, setCreationError] = useState("")
+  const [creating, setCreating] = useState<string>()
+  useEffect(() => {
+    AsyncStorage.getItem("activity.expandedProjects").then((value) => {
+      if (value) setExpandedProjects(new Set(JSON.parse(value) as string[]))
+    }).catch(() => {})
+  }, [])
 
   const fetchAll = useCallback(async () => {
     const pages = await Promise.allSettled(
@@ -63,6 +73,25 @@ export default function Activity() {
     return status === "done" && (statusFilter === "Failed" ? failed : !failed)
   }), open), [sessions, open, hostFilter, statusFilter, live])
   const titles = useMemo(() => new Map(sessions.map((s) => [`${s.host}/${s.id}`, s])), [sessions])
+  const navigationItems = useMemo(() => {
+    const parents = items.filter((item) => item.kind === "parent")
+    const recent = showAllRecent ? parents : parents.slice(0, 5)
+    const groups = new Map<string, typeof parents>()
+    parents.forEach((item) => {
+      const session = item.family.session
+      const key = `${session.host}/${session.projectID}`
+      groups.set(key, [...(groups.get(key) ?? []), item])
+    })
+    type NavigationItem = { kind: "heading"; key: string; title: string } | { kind: "project"; key: string; title: string; host: string; directory: string; count: number } | { kind: "session"; key: string; item: TreeItem }
+    const result: NavigationItem[] = [{ kind: "heading", key: "recent-heading", title: "Recent" }, ...recent.map((item) => ({ kind: "session" as const, key: `recent/${item.key}`, item }))]
+    result.push({ kind: "heading", key: "projects-heading", title: "Projects" })
+    groups.forEach((members, key) => {
+      const session = members[0].family.session
+      result.push({ kind: "project", key, title: session.location.directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? session.projectID, host: session.host, directory: session.location.directory, count: members.length })
+      if (expandedProjects.has(key)) flattenFamilies(members.map((member) => member.family), open).forEach((item) => result.push({ kind: "session", key: `project/${item.key}`, item }))
+    })
+    return result
+  }, [items, expandedProjects, open, showAllRecent])
   const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? ""
 
   const openSession = (s: Session) =>
@@ -91,7 +120,7 @@ export default function Activity() {
   return (
     <FlatList
       contentContainerStyle={{ paddingBottom: 40 }}
-      data={items}
+      data={navigationItems}
       keyExtractor={(i) => i.key}
       refreshControl={
         <RefreshControl
@@ -106,6 +135,7 @@ export default function Activity() {
       ListHeaderComponent={
         <>
           <LargeTitle title="Activity" />
+          {!!creationError && <Text accessibilityRole="alert" style={{ color: t.status.failed, marginHorizontal: 24 }}>{creationError}</Text>}
           <View style={{ flexDirection: "row", paddingHorizontal: 22, marginBottom: 8, gap: 18 }}>
             {(["host", "status"] as const).map((kind) => <Pressable key={kind} onPress={() => setFilterMenu(kind)} accessibilityRole="button"
               accessibilityLabel={`Filter by ${kind}`} style={{ flexDirection: "row", alignItems: "center", gap: 6, minHeight: 44, flexShrink: 1 }}>
@@ -155,7 +185,6 @@ export default function Activity() {
               ))}
             </View>
           )}
-          {items.length > 0 && <Text style={[t.font.footnote, styles.section, { color: t.tertiaryLabel }]}>RECENT</Text>}
         </>
       }
       ListEmptyComponent={
@@ -165,12 +194,43 @@ export default function Activity() {
           </Text>
         )
       }
-      renderItem={({ item, index }) => (
+      renderItem={({ item }) => item.kind === "heading" ? (
+        <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 24, paddingTop: 20, paddingBottom: 8 }}>
+          <Text style={[t.font.headline, { color: t.label }]}>{item.title}</Text>
+          {item.key === "recent-heading" && <Pressable onPress={() => setShowAllRecent((value) => !value)} accessibilityRole="button" style={{ padding: 8 }}><Text style={[t.font.footnote, { color: t.tint }]}>{showAllRecent ? "Show less" : "See all"}</Text></Pressable>}
+        </View>
+      ) : item.kind === "project" ? (
+        <View style={{ flexDirection: "row", alignItems: "center", paddingRight: 16 }}>
+        <Pressable onPress={() => setExpandedProjects((current) => {
+          const next = new Set(current)
+          if (next.has(item.key)) next.delete(item.key)
+          else next.add(item.key)
+          AsyncStorage.setItem("activity.expandedProjects", JSON.stringify([...next])).catch(() => {})
+          return next
+        })} accessibilityRole="button" accessibilityState={{ expanded: expandedProjects.has(item.key) }} style={{ flex: 1, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 24, minHeight: 56 }}>
+          <Ionicons name={expandedProjects.has(item.key) ? "chevron-down" : "chevron-forward"} size={15} color={t.secondaryLabel} />
+          <Ionicons name="folder-outline" size={20} color={t.secondaryLabel} />
+          <View style={{ flex: 1 }}><Text numberOfLines={1} style={[t.font.headline, { color: t.label }]}>{item.title}</Text><Text style={[t.font.caption, { color: t.secondaryLabel }]}>{hostName(item.host)}</Text></View>
+          <Text style={[t.font.caption, { color: t.secondaryLabel }]}>{item.count}</Text>
+        </Pressable>
+        <Pressable disabled={!!creating} accessibilityRole="button" accessibilityLabel={`New chat in ${item.title}`} onPress={async () => {
+          const c = client(item.host)
+          if (!c) { setCreationError("Host unavailable. Reconnect before starting a chat."); return }
+          setCreating(item.key)
+          setCreationError("")
+          await c.createSession(item.directory).then((session) => router.push({ pathname: "/session", params: { host: item.host, id: session.id, title: session.title ?? "New chat" } }))
+            .catch((e) => setCreationError(e instanceof Error ? e.message : String(e)))
+          setCreating(undefined)
+        }} style={{ width: 44, height: 44, alignItems: "center", justifyContent: "center" }}>
+          <Ionicons name="add" size={23} color={t.tint} />
+        </Pressable>
+        </View>
+      ) : (
         <TreeRow
-          item={item}
-          first={index === 0}
-          last={index === items.length - 1}
-          hostName={hostName(item.kind === "parent" ? item.family.session.host : item.session.host)}
+          item={item.item}
+          first
+          last
+          hostName={hostName(item.item.kind === "parent" ? item.item.family.session.host : item.item.session.host)}
           live={live}
           showDirectory
           onOpen={openSession}
