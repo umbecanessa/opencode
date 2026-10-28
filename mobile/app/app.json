@@ -10,7 +10,12 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "dev.umbecanessa.opencode-mobile",
+      "appleTeamId": "32G4S37Z7D",
+      "entitlements": {
+        "aps-environment": "development"
+      },
       "infoPlist": {
+        "UIBackgroundModes": ["remote-notification"],
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -21,6 +26,7 @@
       }
     },
     "plugins": [
+      ["onesignal-expo-plugin", { "mode": "development", "disableLocation": true }],
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
