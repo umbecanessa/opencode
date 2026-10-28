@@ -1,11 +1,12 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons"
-import { useEffect, useState } from "react"
-import { ActivityIndicator, Alert, Image, Keyboard, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
+import { useEffect, useRef, useState } from "react"
+import { ActivityIndicator, Image, Keyboard, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import type { PromptFile } from "../../api/types"
 import { useTheme } from "../../theme"
 import { useDictation } from "../../voice"
+import { Attachments, ImagePaste } from "./Attachments"
 
 const MAX_FILES = 6
 
@@ -32,6 +33,8 @@ export const Composer = ({
   const [note, setNote] = useState("")
   const [keyboard, setKeyboard] = useState(false)
   const [focused, setFocused] = useState(false)
+  const [attachmentSheet, setAttachmentSheet] = useState(false)
+  const pendingPicker = useRef<"library" | "camera" | "files">(undefined)
   useEffect(() => {
     const show = Keyboard.addListener("keyboardDidShow", () => setKeyboard(true))
     const hide = Keyboard.addListener("keyboardDidHide", () => setKeyboard(false))
@@ -54,23 +57,18 @@ export const Composer = ({
     setFiles((current) => [...current, ...added].slice(0, MAX_FILES))
   }
 
-  const attachments = () => Alert.alert("Add to prompt", undefined, [
-    { text: "Paste screenshot", onPress: () => pasteImage().catch((e) => setNote(String(e))) },
-    { text: "Photos & screenshots", onPress: () => pick("library").catch((e) => setNote(String(e))) },
-    { text: "Take a photo", onPress: () => pick("camera").catch((e) => setNote(String(e))) },
-    { text: "Choose files", onPress: () => pickFiles().catch((e) => setNote(String(e))) },
-    { text: "Cancel", style: "cancel" },
-  ])
-
-  const pasteImage = async () => {
-    const { getImageAsync } = await import("expo-clipboard")
-    const image = await getImageAsync({ format: "png" })
-    if (!image) {
-      setNote("No image was pasted. Copy a screenshot first and allow paste access if prompted.")
-      return
-    }
-    setFiles((current) => [...current, { uri: image.data, name: `screenshot-${Date.now()}.png` }].slice(0, MAX_FILES))
+  const attachments = () => { Keyboard.dismiss(); setAttachmentSheet(true) }
+  const addImage = (uri: string) => {
+    setFiles((current) => [...current, { uri, name: `screenshot-${Date.now()}.png` }].slice(0, MAX_FILES))
     setNote("")
+    setAttachmentSheet(false)
+  }
+  const openPendingPicker = () => {
+    const source = pendingPicker.current
+    pendingPicker.current = undefined
+    if (!source) return
+    const task = source === "files" ? pickFiles() : pick(source)
+    task.catch((e) => setNote(e instanceof Error ? e.message : String(e)))
   }
 
   const pick = async (source: "library" | "camera") => {
@@ -83,13 +81,12 @@ export const Composer = ({
       setNote("Installing attachments needs a newer app build on this phone.")
       return
     }
-    const permission =
-      source === "camera"
-        ? await ImagePicker.requestCameraPermissionsAsync()
-        : await ImagePicker.requestMediaLibraryPermissionsAsync()
-    if (!permission.granted) {
-      setNote(source === "camera" ? "Allow camera access in Settings to take a photo." : "Allow photo library access in Settings.")
-      return
+    if (source === "camera") {
+      const permission = await ImagePicker.requestCameraPermissionsAsync()
+      if (!permission.granted) {
+        setNote("Allow camera access in Settings to take a photo.")
+        return
+      }
     }
     const result =
       source === "camera"
@@ -99,7 +96,7 @@ export const Composer = ({
             base64: true,
             quality: 0.8,
             allowsMultipleSelection: true,
-            selectionLimit: MAX_FILES,
+            selectionLimit: Math.max(1, MAX_FILES - files.length),
           })
     if (result.canceled) return
     const added = result.assets
@@ -139,6 +136,13 @@ export const Composer = ({
         { paddingBottom: keyboard ? 6 : Math.max(insets.bottom, 10), backgroundColor: t.background, borderTopColor: t.separator },
       ]}
     >
+      <Attachments visible={attachmentSheet} onClose={() => setAttachmentSheet(false)} onDismiss={openPendingPicker} onImage={addImage}
+        onChoose={(source) => {
+          pendingPicker.current = source
+          setAttachmentSheet(false)
+          if (Platform.OS !== "ios") setTimeout(openPendingPicker, 350)
+        }} />
+      {focused && <View style={{ alignItems: "flex-end", paddingBottom: 6 }}><ImagePaste onImage={addImage} /></View>}
       {(note.length > 0 || voice.error.length > 0) && (
         <Text style={[t.font.footnote, styles.voiceError, { color: t.status.failed }]} numberOfLines={2}>
           {note || voice.error}
