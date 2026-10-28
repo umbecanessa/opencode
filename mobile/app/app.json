@@ -38,6 +38,14 @@
           "photosPermission": "OpenCode Mobile reads photos and screenshots so you can attach them to prompts.",
           "cameraPermission": "OpenCode Mobile uses the camera so you can attach a photo to a prompt."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "usePrecompiledModules": false
+          }
+        }
       ]
     ],
     "extra": {
