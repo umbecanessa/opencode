@@ -573,6 +573,7 @@ export const make = Effect.fn("PluginHost.make")(function* (
           model: input?.model,
           metadata: input?.metadata,
           permissions: input?.permissions,
+          ...(input?.temporary === undefined ? {} : { temporary: input.temporary }),
           ...(input?.parentID === undefined
             ? {
                 location:

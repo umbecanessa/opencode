@@ -2227,6 +2227,7 @@ export type SessionInfo = {
   cost: MoneyUSD
   tokens: TokenUsageInfo
   outcome?: "succeeded" | "failed" | "interrupted"
+  temporary?: boolean
   time: { created: number; updated: number; idle?: number; viewed?: number; archived?: number }
   title?: string
   subpath?: RelativePath
@@ -2255,6 +2256,7 @@ export type SessionCreated = {
     model?: ModelRef
     metadata?: SessionMetadata
     permissions?: PermissionRuleset
+    temporary?: boolean
     version: string
   }
 }
@@ -3151,6 +3153,7 @@ export type SessionListInput = {
   readonly search?: string | undefined
   readonly parentID?: string | null | undefined
   readonly archived?: boolean | undefined
+  readonly temporary?: boolean | undefined
   readonly directory?: string | undefined
   readonly project?: string | undefined
   readonly subpath?: string | undefined
@@ -3181,6 +3184,7 @@ export type SessionCreateInput = {
     | ReadonlyArray<{ readonly action: string; readonly resource: string; readonly effect: "allow" | "deny" | "ask" }>
     | null
     | undefined
+  readonly temporary?: boolean | null | undefined
 }
 
 export type SessionCreateOutput = { data: SessionInfo }["data"]
@@ -3206,6 +3210,7 @@ export type SessionImportInput = {
       readonly cache: { readonly read: number; readonly write: number }
     }
     readonly outcome?: "succeeded" | "failed" | "interrupted"
+    readonly temporary?: boolean
     readonly time: {
       readonly created: number
       readonly updated: number

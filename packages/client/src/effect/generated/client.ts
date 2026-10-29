@@ -410,6 +410,7 @@ const EndpointSessionList = (raw: RawClient["server.session"]) => (input?: Sessi
         search: input?.["search"],
         parentID: input?.["parentID"],
         archived: input?.["archived"],
+        temporary: input?.["temporary"],
         directory: input?.["directory"],
         project: input?.["project"],
         subpath: input?.["subpath"],
@@ -446,6 +447,7 @@ const EndpointSessionCreate = (raw: RawClient["server.session"]) => (input?: Ses
         location: input?.["location"],
         metadata: input?.["metadata"],
         permissions: input?.["permissions"],
+        temporary: input?.["temporary"],
       },
     }).pipe(
       Effect.mapError(mapClientError),

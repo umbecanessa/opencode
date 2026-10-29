@@ -70,6 +70,10 @@ export const SessionTable = sqliteTable(
     /** The execution claim timestamp (historical column name; see SessionStore.claim). */
     time_suspended: integer(),
     resume_attempts: integer().notNull().default(0),
+    /** Disposable spot-task session: omitted from default listings and garbage-collected after terminal idle. */
+    temporary: integer({ mode: "boolean" })
+      .notNull()
+      .default(false),
   },
   (table) => [
     index("session_v2_project_idx").on(table.project_id),

@@ -207,6 +207,73 @@ describe("SessionTools", () => {
     ),
   )
 
+  it.live("spawns a temporary session hidden from listings with stricter permissions", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "Orchestrator" })
+          yield* withSessionTools(location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+
+          const settled = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-session-spawn-temporary",
+              name: "opencode_session_spawn",
+              input: { title: "spot task", prompt: "do the thing", temporary: true },
+            },
+          })
+          expect(settled.status).toBe("completed")
+          const childID = outputSessionID(settled.metadata)
+          const child = yield* sessions.get(childID)
+          expect(child.temporary).toBe(true)
+          expect(child.permissions).toContainEqual({ action: "session", resource: "*", effect: "deny" })
+          expect(child.permissions).toContainEqual({ action: "subagent", resource: "*", effect: "deny" })
+          expect(child.permissions).toContainEqual({ action: "edit", resource: "*", effect: "deny" })
+
+          // Disposable sessions are invisible to ordinary listings and the only
+          // content of an explicit temporary listing.
+          const ordinary = yield* sessions.list()
+          expect(ordinary.data.map((session) => session.id)).not.toContain(childID)
+          const disposables = yield* sessions.list({ temporary: true })
+          expect(disposables.data.map((session) => session.id)).toEqual([childID])
+        }),
+      ),
+    ),
+  )
+
+  it.live("reap deletes expired temporary sessions and leaves regular sessions alone", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const keeper = yield* sessions.create({ location, title: "Keeper" })
+          const disposable = yield* sessions.create({ location, title: "Disposable", temporary: true })
+
+          yield* sessions.reapTemporary
+
+          expect(yield* sessions.get(keeper.id)).toBeDefined()
+          const gone = yield* sessions.get(disposable.id).pipe(Effect.exit)
+          expect(gone._tag).toBe("Failure")
+          const disposables = yield* sessions.list({ temporary: true })
+          expect(disposables.data).toHaveLength(0)
+        }),
+      ),
+    ),
+  )
+
   completionIt.live("notifies once with a peer-tagged message when a background spawn completes", () =>
     Effect.acquireRelease(
       Effect.promise(() => tmpdir()),

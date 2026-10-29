@@ -196,6 +196,12 @@ export const layer = (options?: Options) =>
 
       return Service.of({
         resumeSuspendedSessions: Effect.gen(function* () {
+          // Disposable sessions are never resumed: release crashed-turn claims so
+          // reclamation sweeps them, then delete expired ones before recovery
+          // accounting runs. Peer jobs observing a reclaimed child complete
+          // silently through the existing vanished-child path.
+          yield* store.releaseTemporaryClaims
+          yield* sessions.reapTemporary
           const active = yield* execution.active
           const pending = yield* jobs.pendingBackground
           const children = pending.flatMap((background) =>

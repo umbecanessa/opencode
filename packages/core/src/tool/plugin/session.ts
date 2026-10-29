@@ -47,6 +47,10 @@ const SpawnInput = Schema.Struct({
     description:
       "Return immediately instead of blocking until the session finishes. You will be notified when it completes. DO NOT sleep or poll.",
   }),
+  temporary: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "true creates a disposable session: it never appears in session lists and is deleted roughly a day after finishing. Prefer true for spot tasks the user should not see in history. The session's permissions default to no edits, no subagents, and no peer spawning.",
+  }),
 })
 
 const SpawnOutput = Schema.Struct({
@@ -84,6 +88,9 @@ const ListInput = Schema.Struct({
   search: Schema.optionalKey(Schema.String).annotate({ description: "Filter by title match" }),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))).annotate({
     description: "Maximum sessions to return. Defaults to 20, newest first.",
+  }),
+  temporary: Schema.optionalKey(Schema.Boolean).annotate({
+    description: "true lists only the disposable temporary sessions (they are otherwise invisible).",
   }),
 })
 
@@ -141,7 +148,12 @@ export const Plugin = {
                   source: { type: "tool", messageID: context.messageID, id: context.id },
                 })
                 .pipe(Effect.mapError((error) => new ToolFailure({ message: "Session coordination denied", error })))
-              const page = yield* sessions.list({ order: "desc", limit: input.limit ?? 20, search: input.search })
+              const page = yield* sessions.list({
+                order: "desc",
+                limit: input.limit ?? 20,
+                ...(input.search === undefined ? {} : { search: input.search }),
+                ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+              })
               const active = yield* sessions.active
               return {
                 output: {
@@ -175,6 +187,7 @@ export const Plugin = {
             "The spawned session starts with no context and is not linked as your child: include everything it needs in the prompt.",
             "Foreground (default) blocks until the session goes idle and returns its final text.",
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
+            "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
           ].join("\n"),
           input: SpawnInput,
           output: SpawnOutput,
@@ -232,7 +245,13 @@ export const Plugin = {
                     }
               const model = override ?? agent?.model ?? parent.model
               const child = yield* sessions
-                .create({ location, title: input.title, agent: agentID, model })
+                .create({
+                  location,
+                  title: input.title,
+                  agent: agentID,
+                  model,
+                  ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+                })
                 .pipe(Effect.mapError(() => new ToolFailure({ message: "Unable to create the session" })))
 
               const background = input.background === true
@@ -300,6 +319,7 @@ export const Plugin = {
             "Sends a follow-up prompt to an existing session by ID, reusing everything it already knows.",
             "The session keeps its current agent and model.",
             "A completion notification is NOT sent for this message; use session_wait to join the run, or session_spawn with background for notified runs.",
+            "If the session is not found it may be an expired temporary session; spawn a fresh one with the needed context instead.",
           ].join("\n"),
           input: SendInput,
           output: Schema.Struct({ sessionID: SessionSchema.ID, accepted: Schema.Boolean }),

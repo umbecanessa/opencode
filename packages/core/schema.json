@@ -1,9 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "44bd8ca5-689a-410e-a46a-958eb5accd97",
-  "prevIds": ["f1f14616-b6a1-483d-87b0-d5b7a9132580"],
-
+  "id": "6eb98ed8-65f5-4ece-bc78-3f544750b415",
+  "prevIds": ["44bd8ca5-689a-410e-a46a-958eb5accd97"],
   "ddl": [
     {
       "name": "account_state",
@@ -1516,6 +1515,16 @@
       "default": "0",
       "generated": null,
       "name": "resume_attempts",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "false",
+      "generated": null,
+      "name": "temporary",
       "entityType": "columns",
       "table": "session_v2"
     },

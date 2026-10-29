@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { DateTime, Effect, Layer, Context, Option, Stream } from "effect"
+import { Clock, DateTime, Effect, Layer, Context, Option, Stream } from "effect"
 import { LLMClient } from "@opencode/ai/effect"
 import { ListAnchor, ListCursor, ListFilter } from "@opencode/schema/session"
 import { and, desc, eq } from "drizzle-orm"
@@ -84,6 +84,20 @@ export type ListInput = SessionStore.ListInput
 
 const DefaultListLimit = 50
 
+// Temporary sessions are disposable: kept for a day after their terminal idle
+// so follow-up prompts can still reuse them, then hard-deleted by the boot and
+// spawn-time sweeps.
+const TemporaryRetentionMillis = 24 * 60 * 60 * 1000
+
+// Disposable sessions read and search freely through their agent's own rules
+// but cannot fan out or change the workspace: no edits, no subagents, no peer
+// coordination. Explicit caller-supplied permissions still override this.
+const TemporaryPermissions: Permission.Ruleset = [
+  { action: "edit", resource: "*", effect: "deny" },
+  { action: "subagent", resource: "*", effect: "deny" },
+  { action: "session", resource: "*", effect: "deny" },
+]
+
 type CreateBaseInput = {
   id?: SessionSchema.ID
   title?: string
@@ -91,6 +105,8 @@ type CreateBaseInput = {
   model?: Model.Ref
   metadata?: SessionSchema.Metadata
   permissions?: Permission.Ruleset
+  /** Disposable spot-task session: never listed by default, reclaimed after terminal idle. */
+  temporary?: boolean
 }
 type CreateInput = CreateBaseInput &
   ({ location: Location.Ref; parentID?: never } | { parentID: SessionSchema.ID; location?: never })
@@ -141,6 +157,13 @@ export interface Interface {
   }) => Effect.Effect<SessionEnvironment.Variables | undefined, NotFoundError>
   readonly view: (input: { sessionID: SessionSchema.ID; idle: number }) => Effect.Effect<void, NotFoundError>
   readonly remove: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
+  /**
+   * Hard-deletes expired temporary Sessions: terminal-idle ones past the
+   * retention window and never-idled ones without a live execution claim.
+   * Actively running temporary sessions are left alone. Called at boot and
+   * opportunistically when new temporary sessions are created.
+   */
+  readonly reapTemporary: Effect.Effect<void>
   readonly messages: (
     input: SessionStore.MessagesInput,
   ) => Effect.Effect<SessionMessage.Info[], NotFoundError | MessageDecodeError>
@@ -298,6 +321,9 @@ const layer = Layer.effect(
         const sessionID = input.id ?? SessionSchema.ID.create()
         const recorded = yield* store.get(sessionID)
         if (recorded) return recorded
+        // Making room for a new disposable session is the natural moment to
+        // sweep expired ones; the fresh row cannot be a reap candidate yet.
+        if (input.temporary === true) yield* result.reapTemporary
         const parent = input.parentID ? yield* store.get(input.parentID) : undefined
         if (input.parentID && parent === undefined) return yield* new NotFoundError({ sessionID: input.parentID })
         const location = parent?.location ?? (input.location && LocationServiceMap.canonical(input.location))
@@ -320,8 +346,9 @@ const layer = Layer.effect(
               // Children inherit metadata and permissions the way they inherit
               // location, so host policies that read them treat the family uniformly.
               metadata: input.metadata ?? parent?.metadata,
-              permissions: input.permissions ?? parent?.permissions,
+              permissions: input.permissions ?? (input.temporary === true ? TemporaryPermissions : parent?.permissions),
               model: input.model,
+              temporary: input.temporary === true ? true : undefined,
             },
             { location },
           )
@@ -404,6 +431,16 @@ const layer = Layer.effect(
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)
       }),
+      reapTemporary: Effect.suspend(() =>
+        Effect.gen(function* () {
+          const cutoff = (yield* Clock.currentTimeMillis) - TemporaryRetentionMillis
+          const expired = yield* store.listExpiredTemporary(cutoff)
+          yield* Effect.forEach(expired, (sessionID) => result.remove(sessionID).pipe(Effect.ignore), {
+            concurrency: 1,
+            discard: true,
+          })
+        }),
+      ),
       list: Effect.fn("Session.list")(function* (input = {}) {
         const filter =
           input.cursor === undefined

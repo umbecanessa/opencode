@@ -172,6 +172,10 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           location: Location.PublicRef.pipe(Schema.optional),
           metadata: Session.Metadata.pipe(Schema.optional),
           permissions: Permission.Ruleset.pipe(Schema.optional),
+          temporary: Schema.Boolean.pipe(Schema.optional).annotate({
+            description:
+              "Create a disposable spot-task session: omitted from default listings and garbage-collected after terminal idle.",
+          }),
         }),
         success: Schema.Struct({ data: PublicSessionInfo }),
         error: SessionNotFoundError,

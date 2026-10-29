@@ -104,6 +104,7 @@ const layer = Layer.effect(
               model: input.data.info.model,
               metadata: input.data.info.metadata,
               permissions: input.data.info.permissions,
+              temporary: input.data.info.temporary,
             },
             {
               location: input.location,

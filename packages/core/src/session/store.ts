@@ -21,6 +21,8 @@ const ListInputBase = {
   order: Schema.Literals(["asc", "desc"]).pipe(Schema.optional),
   parentID: Schema.NullOr(Session.ID).pipe(Schema.optional),
   archived: Schema.Boolean.pipe(Schema.optional),
+  /** Undefined omits temporary sessions entirely; true lists only temporary sessions. */
+  temporary: Schema.Boolean.pipe(Schema.optional),
   anchor: Session.ListAnchor.pipe(Schema.optional),
 }
 
@@ -89,6 +91,18 @@ export interface Interface {
    * total — or undefined when the Session no longer exists.
    */
   readonly countResume: (sessionID: Session.ID) => Effect.Effect<number | undefined>
+  /**
+   * Temporary Sessions eligible for garbage collection: terminal-idle ones
+   * whose idle moment predates `cutoff`, plus ones that never reached a
+   * terminal transition and hold no execution claim.
+   */
+  readonly listExpiredTemporary: (cutoff: number) => Effect.Effect<ReadonlyArray<Session.ID>>
+  /**
+   * Boot-only: clears execution claims left on temporary Sessions by a
+   * crashed turn so reclamation sweeps them instead of resuming disposable
+   * work.
+   */
+  readonly releaseTemporaryClaims: Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionStore") {}
@@ -159,6 +173,9 @@ const layer = Layer.effect(
           )
         if (input.archived !== undefined)
           conditions.push(input.archived ? isNotNull(SessionTable.time_archived) : isNull(SessionTable.time_archived))
+        // Temporary sessions are invisible to ordinary listings; only an
+        // explicit temporary:true query surfaces them.
+        conditions.push(eq(SessionTable.temporary, input.temporary === true))
         if (input.anchor) {
           conditions.push(
             order === "asc"
@@ -262,6 +279,33 @@ const layer = Layer.effect(
           .pipe(Effect.orDie)
         return row?.attempts
       }),
+      listExpiredTemporary: Effect.fn("SessionStore.listExpiredTemporary")(function* (cutoff) {
+        return yield* db
+          .select({ sessionID: SessionTable.id })
+          .from(SessionTable)
+          .where(
+            and(
+              eq(SessionTable.temporary, true),
+              or(
+                and(isNull(SessionTable.time_idle), isNull(SessionTable.time_suspended)),
+                and(isNotNull(SessionTable.time_idle), lt(SessionTable.time_idle, cutoff)),
+              ),
+            ),
+          )
+          .all()
+          .pipe(
+            Effect.orDie,
+            Effect.map((rows) => rows.map((row) => row.sessionID)),
+          )
+      }),
+      releaseTemporaryClaims: Effect.suspend(() =>
+        db
+          .update(SessionTable)
+          .set({ time_suspended: null, resume_attempts: 0, time_updated: sql`${SessionTable.time_updated}` })
+          .where(and(eq(SessionTable.temporary, true), isNotNull(SessionTable.time_suspended)))
+          .run()
+          .pipe(Effect.orDie),
+      ),
     })
   }),
 )

@@ -110,6 +110,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 model: ctx.payload.model,
                 metadata: ctx.payload.metadata,
                 permissions: ctx.payload.permissions,
+                ...(ctx.payload.temporary === undefined ? {} : { temporary: ctx.payload.temporary }),
                 ...(ctx.payload.parentID === undefined
                   ? { location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) } }
                   : { parentID: ctx.payload.parentID }),

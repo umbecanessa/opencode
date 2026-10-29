@@ -76,26 +76,40 @@ dispatch (Phase 4), no completion notification for `session_send` continuations
 of already-finished peers, no `subagent_depth` change, and no cross-server
 discovery tool.
 
-## Phase 2 — Temporary sessions
+## Phase 2 — Temporary sessions (implemented here)
 
-`temporary: boolean` as a first-class `Session.Info` field (pre-existing
-internal precedent: title/compaction utility sessions are already non-listed
-ephemeral sessions and migrate onto the flag). A temporary session behaves
-identically while alive (promptable, continuable, forkable) but is:
+`temporary: boolean` is a first-class field on `Session.Info`, the durable
+`session.created` event, and `SessionTable` (migration
+`add_temporary_sessions`). A temporary session behaves identically while alive
+(promptable, continuable, waitable) but is:
 
-- excluded from `session.list` unless the query opts in;
-- hard-deleted (events, projections, transcripts) at terminal-idle + TTL and on
-  service restart; excluded from resume-recovery claims and recent lists;
-- given a stricter permission preset (read/search allow, edit/subagent deny)
-  unless the prompt grants more.
+- **Listed only on request**: every `session.list` path (service, store, HTTP
+  query parameter, list cursors carry it) omits temporary sessions unless
+  `temporary: true` is passed, which then returns *only* temporary sessions.
+  This covers the desktop/TUI session lists for free — no client changes needed
+  to keep disposable work out of history.
+- **Created via any face**: `session.create` API payload, plugin host
+  `session.create`, and `opencode_session_spawn` with `temporary: true`
+  (also surfaced on `opencode_session_list`).
+- **Permission-preset stricter**: unless the caller supplies explicit
+  permissions, a temporary session gets `deny` rules for `edit`, `subagent`,
+  and `session` on top of its agent's rules. It can read and search but cannot
+  fan out or touch the workspace.
+- **Garbage-collected without live timers**: `Session.reapTemporary` hard-deletes
+  (via the ordinary `Session.remove` cascade: events, projections, transcripts)
+  temporary sessions that are terminal-idle past a 24-hour retention window,
+  plus never-idled ones holding no execution claim (running ones are protected
+  by their claim). It runs opportunistically whenever a new temporary session
+  is created, and at boot the restart sweep first releases temporary claims
+  (disposable work is never resumed) and then reaps. Peer jobs observing a
+  reclaimed child complete silently through the existing vanished-child path.
+- **Expiry is honest to the model**: `session_send` tool text documents that a
+  missing session may be an expired temporary one and to spawn a fresh session
+  with the needed context instead.
 
-Continuation of a garbage-collected temporary session fails with a clear
-"temporary session expired" failure telling the model to spawn a fresh one.
-GC is terminal-idle TTL plus a restart sweep — no live timers during active
-work. UI: a "New temporary session" affordance beside New Session in desktop
-and TUI, distinct icon, never resurfacing in history. Temporary sessions with
-no directory run at the global location, which also yields an unprojected
-session category as a side effect.
+Deliberate Phase 2 non-goals: no desktop/TUI "New temporary session" button
+yet (the API flag is ready for it), no migration of legacy hidden utility
+sessions onto the flag, no configurable retention.
 
 ## Phase 3 — Awareness
 
