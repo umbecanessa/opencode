@@ -9,7 +9,7 @@
   --gauge-hue-1: #16a34a;
   --gauge-hue-2: #7c53d6;
   --gauge-hue-3: #b26a00;
-  --gauge-hue-4: #c2336b;
+  --gauge-hue-4: #a526c9;
   --gauge-hue-5: #0e7fa6;
 }
 @media (prefers-color-scheme: dark) {
@@ -23,7 +23,7 @@
     --gauge-hue-1: #40c977;
     --gauge-hue-2: #b98af5;
     --gauge-hue-3: #e6a23c;
-    --gauge-hue-4: #f272a0;
+    --gauge-hue-4: #d75cf0;
     --gauge-hue-5: #5bc9e8;
   }
 }
