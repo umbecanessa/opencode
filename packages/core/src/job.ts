@@ -23,6 +23,15 @@ const Background = Schema.Struct({
       agent: Schema.String,
       description: Schema.String,
     }),
+    // Structurally identical to a subagent recovery, but the observed session
+    // has no parent link; `parentSessionID` only names the notification target.
+    Schema.Struct({
+      kind: Schema.Literal("peer"),
+      parentSessionID: SessionSchema.ID,
+      childSessionID: SessionSchema.ID,
+      agent: Schema.String,
+      description: Schema.String,
+    }),
   ]),
   status: Schema.Literals(["running", "completed", "error", "cancelled"]),
   output: Schema.optionalKey(Schema.String),

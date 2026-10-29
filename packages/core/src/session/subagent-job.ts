@@ -7,7 +7,7 @@ import { Job } from "../job.js"
 import { Session } from "../session.js"
 import { SubagentCompletion } from "./subagent-completion.js"
 
-type Recovery = Extract<Job.Recovery, { kind: "subagent" }>
+type Recovery = Extract<Job.Recovery, { kind: "subagent" | "peer" }>
 
 export interface Interface {
   start: (recovery: Recovery) => Effect.Effect<Job.Info>

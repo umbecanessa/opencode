@@ -22,12 +22,13 @@ export const deliver = Effect.fnUntraced(function* (
   sessions: Pick<Session.Interface, "synthetic">,
   jobs: Pick<Job.Interface, "completeBackground">,
   input: Pick<Job.Info, "status" | "output" | "error" | "notificationID"> & {
-    recovery: Extract<Job.Recovery, { kind: "subagent" }>
+    recovery: Extract<Job.Recovery, { kind: "subagent" | "peer" }>
     resume?: boolean
   },
 ) {
   if (input.status === "running") return
   const recovery = input.recovery
+  const tag = recovery.kind === "peer" ? "peer" : "subagent"
   const text =
     input.status === "completed"
       ? (input.output ?? NO_TEXT)
@@ -39,8 +40,8 @@ export const deliver = Effect.fnUntraced(function* (
     sessionID: recovery.parentSessionID,
     ...(input.resume === false ? { resume: false } : {}),
     description: recovery.description,
-    text: `<subagent sessionID="${recovery.childSessionID}" state="${input.status}" description="${recovery.description}">\n${text}\n</subagent>`,
-    metadata: { source: "subagent", childID: recovery.childSessionID, agent: recovery.agent, state: input.status },
+    text: `<${tag} sessionID="${recovery.childSessionID}" state="${input.status}" description="${recovery.description}">\n${text}\n</${tag}>`,
+    metadata: { source: recovery.kind, childID: recovery.childSessionID, agent: recovery.agent, state: input.status },
   })
   if (input.notificationID) yield* jobs.completeBackground(input.notificationID)
 })

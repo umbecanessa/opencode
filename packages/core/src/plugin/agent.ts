@@ -68,6 +68,7 @@ export const Plugin = define({
         item.permissions.push(
           { action: "question", resource: "*", effect: "deny" },
           { action: "subagent", resource: "*", effect: "deny" },
+          { action: "session", resource: "*", effect: "deny" },
         )
       })
 
@@ -89,6 +90,7 @@ export const Plugin = define({
           { action: "read", resource: "*.env.*", effect: "ask" },
           { action: "read", resource: "*.env.example", effect: "allow" },
           { action: "subagent", resource: "*", effect: "deny" },
+          { action: "session", resource: "*", effect: "deny" },
           { action: "external_directory", resource: "*", effect: "allow" },
         )
       })

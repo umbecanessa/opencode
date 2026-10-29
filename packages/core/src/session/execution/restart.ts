@@ -137,11 +137,16 @@ export const layer = (options?: Options) =>
 
       const recoverSubagent = Effect.fnUntraced(function* (
         background: Job.Background,
-        recovery: Extract<Job.Recovery, { kind: "subagent" }>,
+        recovery: Extract<Job.Recovery, { kind: "subagent" | "peer" }>,
         suspended: ReadonlySet<SessionSchema.ID>,
       ) {
         const child = yield* store.get(recovery.childSessionID)
-        if (!child || child.parentID !== recovery.parentSessionID || !(yield* store.get(recovery.parentSessionID))) {
+        // A peer child has no parent link; only its own existence is required.
+        if (
+          !child ||
+          (recovery.kind === "subagent" && child.parentID !== recovery.parentSessionID) ||
+          !(yield* store.get(recovery.parentSessionID))
+        ) {
           yield* jobs.completeBackground(background.notificationID)
           return
         }
@@ -167,7 +172,7 @@ export const layer = (options?: Options) =>
 
         yield* jobs.start({
           id: background.id,
-          type: "subagent",
+          type: recovery.kind,
           title: recovery.description,
           notificationID: background.notificationID,
           recovery,
@@ -194,7 +199,7 @@ export const layer = (options?: Options) =>
           const active = yield* execution.active
           const pending = yield* jobs.pendingBackground
           const children = pending.flatMap((background) =>
-            background.status === "running" && background.recovery.kind === "subagent"
+            background.status === "running" && background.recovery.kind !== "shell"
               ? [background.recovery.childSessionID]
               : [],
           )
@@ -205,7 +210,7 @@ export const layer = (options?: Options) =>
           yield* store.releaseChildClaims(children)
           yield* Effect.forEach(
             // Admit shell outcomes before a recovered child can start its first model request.
-            pending.toSorted((a, b) => Number(a.recovery.kind === "subagent") - Number(b.recovery.kind === "subagent")),
+            pending.toSorted((a, b) => Number(a.recovery.kind !== "shell") - Number(b.recovery.kind !== "shell")),
             Effect.fnUntraced(function* (background) {
               if ((yield* jobs.get(background.id))?.status === "running") return
               const recovery = background.recovery
