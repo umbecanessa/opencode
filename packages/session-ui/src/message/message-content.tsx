@@ -1144,26 +1144,40 @@ export function AssistantTextContent(props: {
     <Show when={props.text}>
       <div data-component="text-part" data-timeline-part-id={props.id}>
         <div data-slot="text-part-body">
-          <For each={segments()}>
-            {(segment, index) =>
-              segment.kind === "markdown" ? (
-                <Show when={segment.text.trim()}>
-                  <PacedMarkdown
-                    text={segment.text}
-                    cacheKey={`${props.id}:${index()}`}
-                    streaming={streaming()}
-                  />
+          {/* Indexed by position, not identity: splitArtifacts returns fresh segment
+              objects on every delta, and a keyed For would remount each Markdown (and
+              lose its rendered content, collapsing the row) on every token. */}
+          <Index each={segments()}>
+            {(segment, index) => {
+              const markdown = () => {
+                const s = segment()
+                return s.kind === "markdown" ? s.text : null
+              }
+              const artifact = () => {
+                const s = segment()
+                return s.kind === "artifact" ? s : null
+              }
+              return (
+                <Show
+                  when={markdown()?.trim()}
+                  fallback={
+                    <Show when={artifact()}>
+                      {(value) => (
+                        <ArtifactCard
+                          artifact={value()}
+                          artifactKey={`${props.id}:${index}`}
+                          created={props.message.time.created}
+                          index={index}
+                        />
+                      )}
+                    </Show>
+                  }
+                >
+                  <PacedMarkdown text={markdown() ?? ""} cacheKey={`${props.id}:${index}`} streaming={streaming()} />
                 </Show>
-              ) : (
-                <ArtifactCard
-                  artifact={segment}
-                  artifactKey={`${props.id}:${index()}`}
-                  created={props.message.time.created}
-                  index={index()}
-                />
               )
-            }
-          </For>
+            }}
+          </Index>
         </div>
         <Show when={sources()} fallback={<Show when={props.showCopy}>{copyFooter()}</Show>}>
           {(value) => (
