@@ -128,7 +128,7 @@
   stroke-width: 3;
   stroke-linecap: round;
 }
-/* An exhausted window reads red whatever the neutral ring color is. */
+/* An exhausted window drains its fill and colors the bare track red instead. */
 .project-navigation .sidebar-gauge-reached {
   stroke: var(--usage-reached);
 }

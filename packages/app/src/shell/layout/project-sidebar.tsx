@@ -505,10 +505,11 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
 }
 
 /**
- * The provider's quota ring: a 26px circle whose top half arc carries the shortest
- * window (the 5-hour kind) and whose bottom half carries the longest (weekly or
- * monthly), filled clockwise from the top the way the Codex clients draw them. A
- * lone window takes the whole circle. An exhausted window draws its half in red.
+ * The provider's remaining allowance as a 26px ring: the top half arc carries the
+ * shortest window (the 5-hour kind) and the bottom half the longest (weekly or
+ * monthly). Both halves start full and shorten as the allowance is spent, so the
+ * ring drains toward empty rather than filling up. A lone window takes the whole
+ * circle. An exhausted window leaves its half drained and colors the track red.
  * The ring itself wears the context circle's neutral colors; hue carries no meaning.
  */
 function GaugeRing(props: { windows: readonly { percent: number; limited: boolean }[] }) {
@@ -516,10 +517,10 @@ function GaugeRing(props: { windows: readonly { percent: number; limited: boolea
   const half = Math.PI * radius
   const arc = (path: string, window: { percent: number; limited: boolean } | undefined, length: number) => (
     <g>
-      <path d={path} class="sidebar-gauge-track" />
+      <path d={path} class={window?.limited ? "sidebar-gauge-track sidebar-gauge-reached" : "sidebar-gauge-track"} />
       <Show when={window}>
-        <path d={path} class={window!.limited ? "sidebar-gauge-fill sidebar-gauge-reached" : "sidebar-gauge-fill"}
-          stroke-dasharray={`${(Math.max(0, Math.min(1, window!.percent / 100)) * length).toFixed(2)} ${length + 1}`} />
+        <path d={path} class="sidebar-gauge-fill"
+          stroke-dasharray={`${(Math.max(0, 1 - Math.min(1, window!.percent / 100)) * length).toFixed(2)} ${length + 1}`} />
       </Show>
     </g>
   )
