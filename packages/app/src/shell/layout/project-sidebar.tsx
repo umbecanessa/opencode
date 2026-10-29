@@ -20,6 +20,7 @@ import { showToast } from "@/shell/notifications/toast"
 import { notifySessionTabsRemoved } from "@/shell/titlebar/session-events"
 import { sessionTreeIDs, sessionPermissionRequest, sessionFormRequest } from "@/session/requests/session-request-tree"
 import { getRelativeTime } from "@/shell/time"
+import { useUsageFormat } from "@/usage/format"
 import type { SessionInfo } from "@opencode/client/promise"
 import "./project-sidebar.css"
 
@@ -226,8 +227,8 @@ export function ProjectSidebar() {
   })
 
   return <nav aria-label={language.t("sidebar.projectNavigation")} class="project-navigation flex min-h-0 flex-1 flex-col gap-1 text-v2-text-text-base">
-    <div class="px-2 pt-1">
-      <Menu placement="bottom-end"><Menu.Trigger aria-label={language.t("command.project.open")} class="sidebar-row flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-start text-13-regular">
+    <div class="pt-1">
+      <Menu placement="bottom-end"><Menu.Trigger aria-label={language.t("command.project.open")} class="sidebar-row flex h-7 w-full items-center gap-1.5 rounded-md ps-1.5 pe-2 text-start text-13-regular text-v2-text-text-faint hover:text-v2-text-text-base">
         <Icon name="folder-plus" size="small" /><span class="min-w-0 truncate">{language.t("command.project.open")}</span>
       </Menu.Trigger>
         <Menu.Portal><Menu.Content><For each={home.server.list()}>{(connection) => <Menu.Item onSelect={() => add(connection)}>
@@ -384,6 +385,7 @@ function RenameDialog(props: { initial: string; busy: () => boolean; onCancel: (
  */
 function SidebarLimits(props: { target: () => { host: Host; directory: string } | undefined }) {
   const language = useLanguage()
+  const usageFormat = useUsageFormat()
   const [collapsed, setCollapsed] = persisted(Persist.window("navigation.limits.collapsed"), Schema.Record(Schema.String, Schema.Boolean), {})
   const [clock, setClock] = createStore({ now: Date.now() })
 
@@ -417,7 +419,7 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
     const target = props.target()
     if (!target) return []
     const info = target.host.ctx.data.location.usage.limits({ directory: target.directory })
-    type Window = { label: string; percent: number; limited: boolean; resetsAt?: number; provider?: string }
+    type Window = { label: string; percent: number; limited: boolean; resetsAt?: number; provider?: string; balance?: number }
     const groups = new Map<string, { name: string; windows: Window[] }>()
     for (const provider of info?.providers ?? [])
       for (const window of provider.windows) {
@@ -469,6 +471,12 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
                               <span class={window.limited ? "sidebar-limit-percent sidebar-limit-reached" : "sidebar-limit-percent"}>
                                 {language.t("usage.sidebar.percent", { percent: Math.round(window.percent) })}
                               </span>
+                              <Show when={window.balance !== undefined}>
+                                <>
+                                  <span class="sidebar-limit-dot" />
+                                  <span>{usageFormat.money(window.balance!)}</span>
+                                </>
+                              </Show>
                               <Show when={window.resetsAt}>
                                 {(reset) => (
                                   <>
