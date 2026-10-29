@@ -4,13 +4,6 @@
   --agent-failed: #d92d20;
   --agent-unread: #007aff;
   --agent-done: #81838a;
-  /* Stable per-provider ring hues, chosen so neighbors read apart at 26px. */
-  --gauge-hue-0: #1d6fd6;
-  --gauge-hue-1: #16a34a;
-  --gauge-hue-2: #7c53d6;
-  --gauge-hue-3: #b26a00;
-  --gauge-hue-4: #a526c9;
-  --gauge-hue-5: #0e7fa6;
 }
 @media (prefers-color-scheme: dark) {
   .project-navigation {
@@ -19,12 +12,6 @@
     --agent-failed: #ff453a;
     --agent-unread: #0a84ff;
     --agent-done: #6f7278;
-    --gauge-hue-0: #4ea1ff;
-    --gauge-hue-1: #40c977;
-    --gauge-hue-2: #b98af5;
-    --gauge-hue-3: #e6a23c;
-    --gauge-hue-4: #d75cf0;
-    --gauge-hue-5: #5bc9e8;
   }
 }
 .project-navigation button {
@@ -127,24 +114,21 @@
   line-height: 12px;
   color: var(--v2-text-text-faint);
 }
+/* The rings wear the same colors as the composer's context circle: a recessed
+   track and the base icon tone for progress, so a busy ring reads as an instrument,
+   not as a status light. */
 .project-navigation .sidebar-gauge-track {
   fill: none;
-  stroke: var(--v2-background-bg-layer-03);
+  stroke: var(--v2-background-bg-layer-04);
   stroke-width: 3;
 }
 .project-navigation .sidebar-gauge-fill {
   fill: none;
-  stroke: var(--v2-background-bg-inverse);
+  stroke: var(--v2-icon-icon-base, var(--icon-base));
   stroke-width: 3;
   stroke-linecap: round;
 }
-.gauge-hue-0 .sidebar-gauge-fill { stroke: var(--gauge-hue-0); }
-.gauge-hue-1 .sidebar-gauge-fill { stroke: var(--gauge-hue-1); }
-.gauge-hue-2 .sidebar-gauge-fill { stroke: var(--gauge-hue-2); }
-.gauge-hue-3 .sidebar-gauge-fill { stroke: var(--gauge-hue-3); }
-.gauge-hue-4 .sidebar-gauge-fill { stroke: var(--gauge-hue-4); }
-.gauge-hue-5 .sidebar-gauge-fill { stroke: var(--gauge-hue-5); }
-/* After the hue rules on purpose: an exhausted window reads red whatever its provider hue is. */
+/* An exhausted window reads red whatever the neutral ring color is. */
 .project-navigation .sidebar-gauge-reached {
   stroke: var(--usage-reached);
 }

@@ -456,7 +456,7 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
             <For each={gauges()}>{(gauge) => (
               <Menu placement="top" gutter={6}>
                 <Menu.Trigger aria-label={gauge.name} title={gauge.name} class="sidebar-gauge">
-                  <GaugeRing name={gauge.name} windows={gauge.windows} />
+                  <GaugeRing windows={gauge.windows} />
                   <span class="sidebar-gauge-name max-w-14 truncate">{gauge.name}</span>
                 </Menu.Trigger>
                 <Menu.Portal>
@@ -509,11 +509,10 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
  * window (the 5-hour kind) and whose bottom half carries the longest (weekly or
  * monthly), filled clockwise from the top the way the Codex clients draw them. A
  * lone window takes the whole circle. An exhausted window draws its half in red.
- * Each provider holds one hue, stable across sessions by name.
+ * The ring itself wears the context circle's neutral colors; hue carries no meaning.
  */
-function GaugeRing(props: { name: string; windows: readonly { percent: number; limited: boolean }[] }) {
+function GaugeRing(props: { windows: readonly { percent: number; limited: boolean }[] }) {
   const radius = 11.5
-  const hue = [...props.name.toLowerCase()].reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) >>> 0, 7) % 6
   const half = Math.PI * radius
   const arc = (path: string, window: { percent: number; limited: boolean } | undefined, length: number) => (
     <g>
@@ -526,7 +525,7 @@ function GaugeRing(props: { name: string; windows: readonly { percent: number; l
   )
   const split = props.windows.length > 1
   return (
-    <svg width="26" height="26" viewBox={`0 0 ${radius * 2 + 3} ${radius * 2 + 3}`} class={`gauge-hue-${hue}`} aria-hidden="true">
+    <svg width="26" height="26" viewBox={`0 0 ${radius * 2 + 3} ${radius * 2 + 3}`} aria-hidden="true">
       {split ? (
         <>
           {arc(`M 13 1.5 A ${radius} ${radius} 0 0 1 13 24.5`, props.windows[0], half)}
