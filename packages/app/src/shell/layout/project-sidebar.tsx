@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, type JSX } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { ContextMenu } from "@opencode/ui/context-menu"
 import { skipToken, useQuery, useQueryClient } from "@tanstack/solid-query"
@@ -24,6 +24,7 @@ import type { SessionInfo } from "@opencode/client/promise"
 import "./project-sidebar.css"
 
 const LIST_LIMIT = 5
+const LIMIT_REFRESH_MS = 60_000
 
 type Host = { connection: ServerConnection.Any; key: ReturnType<typeof ServerConnection.key>; ctx: ReturnType<ReturnType<typeof createHomeController>["server"]["context"]>; label: string }
 
@@ -205,9 +206,30 @@ export function ProjectSidebar() {
   const add = (connection: ServerConnection.Any) => pickDirectory({ server: connection, title: language.t("command.project.open"), multiple: true,
     onSelect: (result) => { if (result) home.project.add(connection, Array.isArray(result) ? result : [result]) } })
 
+  // Whose usage the sidebar shows: the open session, else the most recent one, else the first
+  // project the registry knows. Providers are server-wide, so any real directory of that host
+  // resolves the same set; the pick only decides which host answers.
+  const limitsTarget = createMemo(() => {
+    const route = layout.route()
+    if (route.type === "session") {
+      const host = hosts().find((item) => item.key === route.server)
+      const directory = host?.ctx.data.session.get(route.sessionId)?.location.directory
+      if (host && directory) return { host, directory }
+    }
+    const top = sorted()[0]
+    if (top) return { host: top.host, directory: top.session.location.directory }
+    for (const host of hosts()) {
+      const project = host.ctx.projects.list()[0]
+      if (project?.worktree) return { host, directory: project.worktree }
+    }
+    return undefined
+  })
+
   return <nav aria-label={language.t("sidebar.projectNavigation")} class="project-navigation flex min-h-0 flex-1 flex-col gap-1 text-v2-text-text-base">
-    <div class="flex items-center justify-end px-2 pt-1">
-      <Menu placement="bottom-end"><Menu.Trigger aria-label={language.t("command.project.open")} class="sidebar-quiet flex size-8 shrink-0 items-center justify-center rounded-md"><Icon name="plus-small" size="small" /></Menu.Trigger>
+    <div class="px-2 pt-1">
+      <Menu placement="bottom-end"><Menu.Trigger aria-label={language.t("command.project.open")} class="sidebar-row flex min-h-8 w-full items-center gap-2 rounded-md px-2 text-start text-13-regular">
+        <Icon name="folder-plus" size="small" /><span class="min-w-0 truncate">{language.t("command.project.open")}</span>
+      </Menu.Trigger>
         <Menu.Portal><Menu.Content><For each={home.server.list()}>{(connection) => <Menu.Item onSelect={() => add(connection)}>
           <span class="flex w-full items-center justify-between gap-3"><span>{language.t("command.project.open")}</span><span class="sidebar-host shrink-0">{home.server.label(connection)}</span></span>
         </Menu.Item>}</For></Menu.Content></Menu.Portal>
@@ -224,6 +246,7 @@ export function ProjectSidebar() {
         failed={state.failed.includes(host.key)} openNewSession={(worktree) => home.project.openProjectNewSession(host.connection, worktree)} row={row}
         projectNames={projectNames} renameProject={(project) => renameProject(host, project)} />}</For>
     </div>
+    <SidebarLimits target={limitsTarget} />
     <For each={hosts()}>{(host) => <HostSessions connection={host.connection} onData={(list, failed) => {
       setState("byHost", host.key, list)
       setState("failed", (current) => failed ? [...new Set([...current, host.key])] : current.filter((key) => key !== host.key))
@@ -350,6 +373,97 @@ function RenameDialog(props: { initial: string; busy: () => boolean; onCancel: (
       onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); submit() } }}
       onInput={(event) => setDraft("title", event.currentTarget.value)} /></div>
     <DialogFooter><Button variant="ghost" disabled={props.busy()} onClick={props.onCancel}>{language.t("common.cancel")}</Button><Button disabled={props.busy() || !draft.title.trim()} onClick={submit}>{language.t("common.save")}</Button></DialogFooter></Dialog>
+}
+
+/**
+ * The usage windows the elected host's providers report about themselves, docked at the
+ * bottom of the sidebar. The Usage dialog reads limits on demand; this keeps its own pulse —
+ * reload every minute and when the window returns to the foreground, and the countdown
+ * re-renders off the same clock tick. Loads fail silently, exactly like the poller behind
+ * the dialog: a provider that does not answer simply reports nothing.
+ */
+function SidebarLimits(props: { target: () => { host: Host; directory: string } | undefined }) {
+  const language = useLanguage()
+  const [collapsed, setCollapsed] = persisted(Persist.window("navigation.limits.collapsed"), Schema.Record(Schema.String, Schema.Boolean), {})
+  const [clock, setClock] = createStore({ now: Date.now() })
+
+  createEffect(() => {
+    const target = props.target()
+    if (!target) return
+    const usage = target.host.ctx.data.location.usage
+    const ref = { directory: target.directory }
+    const load = () => {
+      setClock("now", Date.now())
+      usage.invalidate(ref)
+      void usage.sync(ref).catch(() => {})
+    }
+    load()
+    const interval = setInterval(load, LIMIT_REFRESH_MS)
+    const visible = () => {
+      if (document.visibilityState === "visible") load()
+    }
+    document.addEventListener("visibilitychange", visible)
+    onCleanup(() => {
+      clearInterval(interval)
+      document.removeEventListener("visibilitychange", visible)
+    })
+  })
+
+  // The same projection the Usage dialog groups under its provider sections.
+  const groups = createMemo(() => {
+    const target = props.target()
+    if (!target) return []
+    const info = target.host.ctx.data.location.usage.limits({ directory: target.directory })
+    return (info?.providers ?? []).flatMap((provider) =>
+      provider.windows.length === 0 ? [] : [{ name: provider.name ?? provider.providerID, windows: provider.windows }])
+  })
+  const hidden = () => collapsed.usage === true
+  // Terse percent + duration: the widest the label may be is what one line leaves after them.
+  const duration = (until: number) => {
+    const minutes = Math.max(1, Math.floor((until - clock.now) / 60_000))
+    if (minutes >= 1_440)
+      return language.t("usage.duration.days", { days: Math.floor(minutes / 1_440), hours: Math.floor((minutes % 1_440) / 60) })
+    if (minutes >= 60) return language.t("usage.duration.hours", { hours: Math.floor(minutes / 60), minutes: minutes % 60 })
+    return language.t("usage.duration.minutes", { minutes })
+  }
+
+  return (
+    <Show when={groups().length > 0}>
+      <section class="sidebar-limits" aria-label={language.t("usage.title")}>
+        <button type="button" aria-expanded={!hidden()} onClick={() => setCollapsed((current) => ({ ...current, usage: !current.usage }))}
+          class="sidebar-row flex min-h-8 w-full items-center gap-1 rounded-md px-2 py-1 text-start">
+          <Icon name={hidden() ? "chevron-right" : "chevron-down"} size="small" />
+          <span class="sidebar-label min-w-0 flex-1 truncate">{language.t("usage.title")}</span>
+        </button>
+        <Show when={!hidden()}>
+          <div data-scrollable class="sidebar-limits-body max-h-64 overflow-y-auto">
+            <For each={groups()}>{(group) => (
+              <div class="px-2 pt-1">
+                <div class="sidebar-limits-provider min-w-0 truncate" title={group.name}>{group.name}</div>
+                <For each={group.windows}>{(window) => (
+                  <div class="sidebar-limit" title={`${group.name} · ${window.label}`}>
+                    <div class="flex min-w-0 items-baseline justify-between gap-2">
+                      <span class="sidebar-limit-label min-w-0 truncate">{window.label}</span>
+                      <span class="sidebar-limit-meta shrink-0">
+                        <span class={window.limited ? "sidebar-limit-percent sidebar-limit-reached" : "sidebar-limit-percent"}>
+                          {language.t("usage.sidebar.percent", { percent: Math.round(window.percent) })}
+                        </span>
+                        <span class="sidebar-limit-dot" />
+                        <span>{duration(window.resetsAt)}</span>
+                      </span>
+                    </div>
+                    <div class="sidebar-limit-track" data-reached={window.limited}>
+                      <div style={{ width: `${Math.max(0, Math.min(1, window.percent / 100)) * 100}%` }} />
+                    </div>
+                  </div>
+                )}</For>
+              </div>
+            )}</For>
+          </div>
+        </Show>
+      </section>
+    </Show>
+  )
 }
 
 function HostSessions(props: { connection: ServerConnection.Any; onData: (sessions: SessionInfo[], failed: boolean) => void }) {

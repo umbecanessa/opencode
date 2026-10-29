@@ -31,10 +31,6 @@
 .project-navigation .sidebar-row-active:hover {
   background: var(--v2-background-bg-layer-02);
 }
-.project-navigation .sidebar-quiet:hover,
-.project-navigation .sidebar-quiet[data-expanded="true"] {
-  background: var(--v2-background-bg-layer-02);
-}
 .sidebar-status {
   width: 6px;
   height: 6px;
@@ -81,4 +77,64 @@
 @media (hover: none) {
   .sidebar-menu { opacity: 1; }
   .sidebar-plus { opacity: 1; }
+}
+/* Reached windows use the same deep red the usage dialog draws; on dark surfaces that is the danger foreground. */
+.project-navigation .sidebar-limits {
+  --usage-reached: var(--v2-red-900);
+  border-top: 1px solid var(--v2-border-border-base);
+  margin-inline: 8px;
+  padding-top: 6px;
+}
+[data-color-scheme="dark"] .project-navigation .sidebar-limits {
+  --usage-reached: var(--v2-state-fg-danger);
+}
+.project-navigation .sidebar-limits-provider {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--v2-text-text-faint);
+}
+.project-navigation .sidebar-limit {
+  padding: 4px 2px 6px;
+}
+.project-navigation .sidebar-limit-label {
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--v2-text-text-base);
+}
+.project-navigation .sidebar-limit-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--v2-text-text-muted);
+}
+.project-navigation .sidebar-limit-percent {
+  font-weight: var(--font-weight-medium);
+  color: var(--v2-text-text-base);
+}
+.project-navigation .sidebar-limit-reached {
+  color: var(--usage-reached);
+}
+.project-navigation .sidebar-limit-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--v2-text-text-faint);
+}
+.project-navigation .sidebar-limit-track {
+  margin-top: 4px;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: var(--v2-background-bg-layer-03);
+}
+.project-navigation .sidebar-limit-track > div {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--v2-background-bg-inverse);
+}
+.project-navigation .sidebar-limit-track[data-reached="true"] > div {
+  background: var(--usage-reached);
 }

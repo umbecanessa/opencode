@@ -857,7 +857,9 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                                 keybind={command.keybind("tab.new")}
                               />
                             </div>
-                            <div class="h-4 w-full shrink-0" aria-hidden="true" />
+                            {/* The project sidebar opens with its own labeled row, so it only needs a hairline after
+                                the nav buttons; the inbox list still wants the full block gap. */}
+                            <div class={`${settings.appearance.tabLayout() === "inbox" ? "h-4" : "h-1"} w-full shrink-0`} aria-hidden="true" />
                             <div class="flex min-h-0 flex-1 flex-col gap-1">
                               <Show
                                 when={settings.appearance.tabLayout() === "inbox"}
