@@ -1257,6 +1257,7 @@ export const dict = {
   "usage.duration.hours": "{{hours}}h {{minutes}}m",
   "usage.duration.minutes": "{{minutes}}m",
   "usage.sidebar.percent": "{{percent}}%",
+  "usage.window.credit": "Credits",
   "usage.budget.all": "All spend",
   "usage.budget.each": "Each model",
   "usage.budget.vendors": "{{vendors}} models",

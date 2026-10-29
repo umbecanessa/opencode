@@ -409,13 +409,27 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
     })
   })
 
-  // The same projection the Usage dialog groups under its provider sections.
-  const groups = createMemo(() => {
+  // One gauge per upstream service. Providers that report their own quotas (a hub) name the service
+  // behind each window, so Cursor and OpenAI each get a ring; a plain provider gauges as one. The
+  // ring is split top/bottom between the shortest and longest window, the way Codex clients wear
+  // their quota; everything else lives in the gauge's popover.
+  const gauges = createMemo(() => {
     const target = props.target()
     if (!target) return []
     const info = target.host.ctx.data.location.usage.limits({ directory: target.directory })
-    return (info?.providers ?? []).flatMap((provider) =>
-      provider.windows.length === 0 ? [] : [{ name: provider.name ?? provider.providerID, windows: provider.windows }])
+    type Window = { label: string; percent: number; limited: boolean; resetsAt?: number; provider?: string }
+    const groups = new Map<string, { name: string; windows: Window[] }>()
+    for (const provider of info?.providers ?? [])
+      for (const window of provider.windows) {
+        const name = window.provider ?? provider.name ?? provider.providerID
+        const group = groups.get(name) ?? { name, windows: [] }
+        group.windows.push(window)
+        groups.set(name, group)
+      }
+    return [...groups.values()].map((group) => ({
+      ...group,
+      windows: group.windows.sort((a, b) => (a.resetsAt ?? Infinity) - (b.resetsAt ?? Infinity)),
+    }))
   })
   const hidden = () => collapsed.usage === true
   // Terse percent + duration: the widest the label may be is what one line leaves after them.
@@ -428,7 +442,7 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
   }
 
   return (
-    <Show when={groups().length > 0}>
+    <Show when={gauges().length > 0}>
       <section class="sidebar-limits" aria-label={language.t("usage.title")}>
         <button type="button" aria-expanded={!hidden()} onClick={() => setCollapsed((current) => ({ ...current, usage: !current.usage }))}
           class="sidebar-row flex min-h-8 w-full items-center gap-1 rounded-md px-2 py-1 text-start">
@@ -436,33 +450,84 @@ function SidebarLimits(props: { target: () => { host: Host; directory: string } 
           <span class="sidebar-label min-w-0 flex-1 truncate">{language.t("usage.title")}</span>
         </button>
         <Show when={!hidden()}>
-          <div data-scrollable class="sidebar-limits-body max-h-64 overflow-y-auto">
-            <For each={groups()}>{(group) => (
-              <div class="px-2 pt-1">
-                <div class="sidebar-limits-provider min-w-0 truncate" title={group.name}>{group.name}</div>
-                <For each={group.windows}>{(window) => (
-                  <div class="sidebar-limit" title={`${group.name} · ${window.label}`}>
-                    <div class="flex min-w-0 items-baseline justify-between gap-2">
-                      <span class="sidebar-limit-label min-w-0 truncate">{window.label}</span>
-                      <span class="sidebar-limit-meta shrink-0">
-                        <span class={window.limited ? "sidebar-limit-percent sidebar-limit-reached" : "sidebar-limit-percent"}>
-                          {language.t("usage.sidebar.percent", { percent: Math.round(window.percent) })}
-                        </span>
-                        <span class="sidebar-limit-dot" />
-                        <span>{duration(window.resetsAt)}</span>
-                      </span>
+          <div class="sidebar-gauges">
+            <For each={gauges()}>{(gauge) => (
+              <Menu placement="top" gutter={6}>
+                <Menu.Trigger aria-label={gauge.name} title={gauge.name} class="sidebar-gauge">
+                  <GaugeRing name={gauge.name} windows={gauge.windows} />
+                  <span class="sidebar-gauge-name max-w-14 truncate">{gauge.name}</span>
+                </Menu.Trigger>
+                <Menu.Portal>
+                  <Menu.Content>
+                    <div class="sidebar-limits-popover">
+                      <div class="sidebar-limits-provider min-w-0 truncate">{gauge.name}</div>
+                      <For each={gauge.windows}>{(window) => (
+                        <div class="sidebar-limit" title={`${gauge.name} · ${window.label || language.t("usage.window.credit")}`}>
+                          <div class="flex min-w-0 items-baseline justify-between gap-2">
+                            <span class="sidebar-limit-label min-w-0 truncate">{window.label || language.t("usage.window.credit")}</span>
+                            <span class="sidebar-limit-meta shrink-0">
+                              <span class={window.limited ? "sidebar-limit-percent sidebar-limit-reached" : "sidebar-limit-percent"}>
+                                {language.t("usage.sidebar.percent", { percent: Math.round(window.percent) })}
+                              </span>
+                              <Show when={window.resetsAt}>
+                                {(reset) => (
+                                  <>
+                                    <span class="sidebar-limit-dot" />
+                                    <span>{duration(reset())}</span>
+                                  </>
+                                )}
+                              </Show>
+                            </span>
+                          </div>
+                          <div class="sidebar-limit-track" data-reached={window.limited}>
+                            <div style={{ width: `${Math.max(0, Math.min(1, window.percent / 100)) * 100}%` }} />
+                          </div>
+                        </div>
+                      )}</For>
                     </div>
-                    <div class="sidebar-limit-track" data-reached={window.limited}>
-                      <div style={{ width: `${Math.max(0, Math.min(1, window.percent / 100)) * 100}%` }} />
-                    </div>
-                  </div>
-                )}</For>
-              </div>
+                  </Menu.Content>
+                </Menu.Portal>
+              </Menu>
             )}</For>
           </div>
         </Show>
       </section>
     </Show>
+  )
+}
+
+/**
+ * The provider's quota ring: a 26px circle whose top half arc carries the shortest
+ * window (the 5-hour kind) and whose bottom half carries the longest (weekly or
+ * monthly), filled clockwise from the top the way the Codex clients draw them. A
+ * lone window takes the whole circle. An exhausted window draws its half in red.
+ * Each provider holds one hue, stable across sessions by name.
+ */
+function GaugeRing(props: { name: string; windows: readonly { percent: number; limited: boolean }[] }) {
+  const radius = 11.5
+  const hue = [...props.name.toLowerCase()].reduce((acc, char) => (acc * 31 + char.charCodeAt(0)) >>> 0, 7) % 6
+  const half = Math.PI * radius
+  const arc = (path: string, window: { percent: number; limited: boolean } | undefined, length: number) => (
+    <g>
+      <path d={path} class="sidebar-gauge-track" />
+      <Show when={window}>
+        <path d={path} class={window!.limited ? "sidebar-gauge-fill sidebar-gauge-reached" : "sidebar-gauge-fill"}
+          stroke-dasharray={`${(Math.max(0, Math.min(1, window!.percent / 100)) * length).toFixed(2)} ${length + 1}`} />
+      </Show>
+    </g>
+  )
+  const split = props.windows.length > 1
+  return (
+    <svg width="26" height="26" viewBox={`0 0 ${radius * 2 + 3} ${radius * 2 + 3}`} class={`gauge-hue-${hue}`} aria-hidden="true">
+      {split ? (
+        <>
+          {arc(`M 13 1.5 A ${radius} ${radius} 0 0 1 13 24.5`, props.windows[0], half)}
+          {arc(`M 13 24.5 A ${radius} ${radius} 0 0 1 13 1.5`, props.windows[props.windows.length - 1], half)}
+        </>
+      ) : (
+        arc(`M 13 1.5 A ${radius} ${radius} 0 1 1 12.99 1.5`, props.windows[0], 2 * half)
+      )}
+    </svg>
   )
 }
 

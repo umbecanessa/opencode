@@ -61,6 +61,7 @@ const read = (
       UsageLimits.layer.pipe(
         Layer.provide(
           Layer.mergeAll(
+            Layer.mock(Credential.Service, { list: () => Effect.succeed([]) }),
             Layer.mock(Provider.Service, {
               get: () => Effect.undefined,
               all: () => Effect.succeed(configured),

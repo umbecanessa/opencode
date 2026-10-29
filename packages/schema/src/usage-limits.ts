@@ -71,7 +71,10 @@ export const ProviderWindow = Schema.Struct({
   percent: Percent,
   /** The provider refuses requests until the window resets. */
   limited: Schema.Boolean,
-  resetsAt: Instant,
+  /** When the window rolls over; absent for allowances that never reset, e.g. a credit balance. */
+  resetsAt: Instant.pipe(optional),
+  /** The upstream service whose allowance this window measures, when the reporting endpoint aggregates several, e.g. a hub. */
+  provider: Schema.String.pipe(optional),
 }).annotate({ identifier: "UsageLimits.ProviderWindow" })
 
 /** The usage meters a provider reports about itself, from the endpoint its `usageURL` setting names. */

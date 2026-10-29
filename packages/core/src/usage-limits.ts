@@ -8,7 +8,7 @@ import { httpClient } from "@opencode/util/effect/app-node-platform"
 import { Context, Duration, Effect, Layer, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { ConsoleAccess } from "./console-access.js"
-import type { Credential } from "./credential.js"
+import { Credential } from "./credential.js"
 import { Integration } from "./integration.js"
 import { Provider } from "./provider.js"
 
@@ -31,12 +31,16 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const integrations = yield* Integration.Service
     const providers = yield* Provider.Service
+    const credentials = yield* Credential.Service
     const http = yield* HttpClient.HttpClient
 
     const get = Effect.fn("UsageLimits.get")(function* () {
-      const [console, reported] = yield* Effect.all([readConsole(integrations, http), readProviders(providers, integrations, http)], {
-        concurrency: 2,
-      })
+      const [console, reported] = yield* Effect.all(
+        [readConsole(integrations, http), readProviders(providers, integrations, credentials, http)],
+        {
+          concurrency: 2,
+        },
+      )
       if (console === undefined && reported.length === 0) return undefined
       return {
         ...console ?? { budgets: [] },
@@ -51,7 +55,7 @@ export const layer = Layer.effect(
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Integration.node, Provider.node, httpClient],
+  deps: [Integration.node, Provider.node, Credential.node, httpClient],
 })
 
 /** The Console limits of the workspace the location is signed in to, or undefined when it isn't. */
@@ -88,21 +92,28 @@ const readConsole = Effect.fn("UsageLimits.readConsole")(function* (
   }
 })
 
-// A provider's usage endpoint answers with its windows; `resetsAt` is epoch millis or an ISO date, and `limited`
-// defaults to false when the endpoint only reports percentages.
+// A provider's usage endpoint answers with its windows; `resetsAt` is epoch millis or an ISO date, `limited`
+// defaults to false when the endpoint only reports percentages, and `provider` names the upstream service when
+// the endpoint aggregates several (a hub). Endpoints that only expose a dollar credit balance (OpenRouter) may
+// answer with that instead, which reads as one window that never resets.
 const ProviderWindow = Schema.Struct({
   label: Schema.optional(Schema.String),
   percent: Schema.Finite,
   limited: Schema.optional(Schema.Boolean),
   resetsAt: Schema.optional(Schema.Union([Schema.Finite, Schema.DateFromString])),
   resetsIn: Schema.optional(Schema.Finite),
+  provider: Schema.optional(Schema.String),
 })
-const ProviderUsageResponse = Schema.Struct({ windows: Schema.Array(ProviderWindow) })
+const ProviderUsageResponse = Schema.Union([
+  Schema.Struct({ windows: Schema.Array(ProviderWindow) }),
+  Schema.Struct({ data: Schema.Struct({ total_credits: Schema.Finite, total_usage: Schema.Finite }) }),
+])
 
 /** The usage of every available provider that configures a `usageURL`. One failing provider simply reports nothing. */
 const readProviders = Effect.fn("UsageLimits.readProviders")(function* (
   providers: Provider.Interface,
   integrations: Integration.Interface,
+  credentials: Credential.Interface,
   http: HttpClient.HttpClient,
 ) {
   const configured = (yield* providers.available()).filter(
@@ -111,7 +122,7 @@ const readProviders = Effect.fn("UsageLimits.readProviders")(function* (
   return yield* Effect.forEach(
     configured,
     (provider) =>
-      readProvider(http, integrations, provider).pipe(
+      readProvider(http, integrations, credentials, provider).pipe(
         Effect.timeout(Duration.seconds(15)),
         Effect.catch(() => Effect.succeed(undefined)),
       ),
@@ -122,10 +133,15 @@ const readProviders = Effect.fn("UsageLimits.readProviders")(function* (
 const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
   http: HttpClient.HttpClient,
   integrations: Integration.Interface,
+  credentials: Credential.Interface,
   provider: Provider.Info,
 ) {
-  const connection = yield* integrations.connection.active(provider.integrationID ?? Integration.ID.make(provider.id))
+  const integrationID = provider.integrationID ?? Integration.ID.make(provider.id)
+  const connection = yield* integrations.connection.active(integrationID)
   const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
+  const stored = connection
+    ? undefined
+    : (yield* credentials.list(integrationID)).flatMap((entry) => (entry.value.type === "key" ? [entry.value] : []))[0]
   const token =
     credential && credential.type !== "external"
       ? credential.type === "oauth"
@@ -133,7 +149,7 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
         : credential.key
       : typeof provider.settings?.apiKey === "string"
         ? provider.settings.apiKey
-        : undefined
+        : stored?.key
   const request = HttpClientRequest.get(provider.settings?.usageURL ?? "").pipe(HttpClientRequest.acceptJson)
   const body = yield* HttpClient.withScope(http)
     .execute(token === undefined ? request : HttpClientRequest.bearerToken(token)(request))
@@ -145,17 +161,30 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
   return {
     providerID: Provider.ID.make(provider.id),
     ...(provider.name === provider.id ? {} : { name: provider.name }),
-    windows: body.windows.map((window) => ({
-      label: window.label ?? "",
-      percent: Math.min(100, Math.max(0, window.percent)),
-      limited: window.limited ?? false,
-      resetsAt:
-        window.resetsAt === undefined
-          ? Date.now() + (window.resetsIn ?? 0)
-          : typeof window.resetsAt === "number"
-            ? window.resetsAt
-            : window.resetsAt.getTime(),
-    })),
+    windows:
+      "windows" in body
+        ? body.windows.map((window) => ({
+            label: window.label ?? "",
+            percent: Math.min(100, Math.max(0, window.percent)),
+            limited: window.limited ?? false,
+            ...(window.resetsAt === undefined
+              ? window.resetsIn === undefined
+                ? {}
+                : { resetsAt: Date.now() + window.resetsIn }
+              : {
+                  resetsAt:
+                    typeof window.resetsAt === "number" ? window.resetsAt : window.resetsAt.getTime(),
+                }),
+            ...(window.provider === undefined || window.provider === "" ? {} : { provider: window.provider }),
+          }))
+        : [
+            {
+              label: "",
+              // A drained credit balance blocks every model, and an unpurchased one never refills.
+              percent: body.data.total_credits > 0 ? Math.min(100, (body.data.total_usage / body.data.total_credits) * 100) : 100,
+              limited: body.data.total_credits <= body.data.total_usage,
+            },
+          ],
   }
 })
 

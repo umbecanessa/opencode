@@ -340,7 +340,13 @@ export type WebSearchResult = { url: string; title?: string; content?: string; t
 
 export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: number }
 
-export type UsageLimitsProviderWindow = { label: string; percent: number; limited: boolean; resetsAt: number }
+export type UsageLimitsProviderWindow = {
+  label: string
+  percent: number
+  limited: boolean
+  resetsAt?: number
+  provider?: string
+}
 
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 

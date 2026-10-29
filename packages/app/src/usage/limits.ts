@@ -58,12 +58,14 @@ export type GoRow = {
   readonly resetsAt: number
 }
 
-/** One quota window a provider reported about itself. */
+/** One quota window a provider reported about itself. `resetsAt` is absent for allowances that never reset, e.g. a credit balance. */
 export type ProviderRow = {
   readonly label: string
   readonly percent: number
   readonly limited: boolean
-  readonly resetsAt: number
+  readonly resetsAt?: number
+  /** The upstream service behind an aggregating reporter, e.g. a hub naming Cursor or OpenAI. */
+  readonly provider?: string
 }
 
 /** A provider that reports its own quota, shown as its own group. */

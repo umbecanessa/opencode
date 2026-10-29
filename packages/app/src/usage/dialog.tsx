@@ -279,7 +279,7 @@ export function UsageDialogContent(props: {
                           status={language.t("usage.provider.used", { percent: Math.round(window.percent) })}
                           reached={window.limited}
                         >
-                          {language.t("usage.provider.resetsIn", { duration: duration(window.resetsAt) })}
+                          {window.resetsAt === undefined ? "" : language.t("usage.provider.resetsIn", { duration: duration(window.resetsAt) })}
                         </Spend>
                       </div>
                       <Track fill={window.percent / 100} reached={window.limited} />
