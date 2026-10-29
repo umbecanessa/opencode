@@ -213,18 +213,20 @@ export function UsageDialogContent(props: {
   return (
     <UsageFrame
       footer={
-        <>
-          <span class="flex h-7 min-w-0 flex-1 items-center">
-            <Line class="text-v2-text-text-faint">{footer()}</Line>
-          </span>
-          <Button
-            variant="ghost"
-            class="text-v2-text-text-muted!"
-            onClick={() => platform.openExternal(props.info.workspace.usageURL)}
-          >
-            {language.t("usage.footer.details")}
-          </Button>
-        </>
+        props.info.workspace && (
+          <>
+            <span class="flex h-7 min-w-0 flex-1 items-center">
+              <Line class="text-v2-text-text-faint">{footer()}</Line>
+            </span>
+            <Button
+              variant="ghost"
+              class="text-v2-text-text-muted!"
+              onClick={() => platform.openExternal(props.info.workspace!.usageURL)}
+            >
+              {language.t("usage.footer.details")}
+            </Button>
+          </>
+        )
       }
     >
       <Show when={view().callout}>
@@ -260,7 +262,37 @@ export function UsageDialogContent(props: {
           </Section>
         )}
       </Show>
-      <Section label={language.t("usage.section.console")} badge={view().workspace} dimmed={view().dimmed}>
+      <For each={view().providers}>
+        {(group) => (
+          <Section label={group.name}>
+            <Panel>
+              <For each={group.windows}>
+                {(window, index) => (
+                  <>
+                    <Show when={index() > 0}>
+                      <Divider />
+                    </Show>
+                    <Item>
+                      <div class="flex items-center justify-between self-stretch">
+                        <Line class="font-[530] text-v2-text-text-base">{window.label}</Line>
+                        <Spend
+                          status={language.t("usage.provider.used", { percent: Math.round(window.percent) })}
+                          reached={window.limited}
+                        >
+                          {language.t("usage.provider.resetsIn", { duration: duration(window.resetsAt) })}
+                        </Spend>
+                      </div>
+                      <Track fill={window.percent / 100} reached={window.limited} />
+                    </Item>
+                  </>
+                )}
+              </For>
+            </Panel>
+          </Section>
+        )}
+      </For>
+      <Show when={props.info.workspace}>
+        <Section label={language.t("usage.section.console")} badge={view().workspace} dimmed={view().dimmed}>
         <Show
           when={view().budgets.length > 0}
           fallback={
@@ -328,6 +360,7 @@ export function UsageDialogContent(props: {
           </Panel>
         </Show>
       </Section>
+      </Show>
     </UsageFrame>
   )
 }

@@ -62,15 +62,39 @@ export const Budget = Schema.Struct({
   resetsAt: Instant,
 }).annotate({ identifier: "UsageLimits.Budget" })
 
-/** The usage limits of the OpenCode Console workspace a location is signed in to. */
+/** One quota window a provider reports for itself, e.g. a 5-hour or weekly subscription limit. */
+export interface ProviderWindow extends Schema.Schema.Type<typeof ProviderWindow> {}
+export const ProviderWindow = Schema.Struct({
+  /** What the provider calls the window, e.g. "5-hour" or "Weekly". */
+  label: Schema.String,
+  /** How much of the window's allowance is used. */
+  percent: Percent,
+  /** The provider refuses requests until the window resets. */
+  limited: Schema.Boolean,
+  resetsAt: Instant,
+}).annotate({ identifier: "UsageLimits.ProviderWindow" })
+
+/** The usage meters a provider reports about itself, from the endpoint its `usageURL` setting names. */
+export interface ProviderUsage extends Schema.Schema.Type<typeof ProviderUsage> {}
+export const ProviderUsage = Schema.Struct({
+  providerID: Provider.ID,
+  /** The provider's display name, when the config or catalog gives it one. */
+  name: Schema.String.pipe(optional),
+  windows: Schema.Array(ProviderWindow),
+}).annotate({ identifier: "UsageLimits.ProviderUsage" })
+
+/** The usage limits a location sees: its OpenCode Console workspace, if signed in, and providers reporting their own quotas. */
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
+  /** The Console workspace the location is signed in to; absent when it isn't. */
   workspace: Schema.Struct({
     id: Schema.String,
     name: Schema.String.pipe(optional),
     /** The member's usage page in OpenCode Console. */
     usageURL: Schema.String,
-  }),
+  }).pipe(optional),
   go: Go.pipe(optional),
   budgets: Schema.Array(Budget),
+  /** Providers configured to report their own usage, in provider order. */
+  providers: Schema.Array(ProviderUsage).pipe(optional),
 }).annotate({ identifier: "UsageLimits.Info" })

@@ -2,7 +2,6 @@ export * as UsageLimits from "./usage-limits.js"
 
 import { Model } from "@opencode/schema/model"
 import { Money } from "@opencode/schema/money"
-import { Provider } from "@opencode/schema/provider"
 import { UsageLimits } from "@opencode/schema/usage-limits"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
@@ -11,6 +10,7 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { ConsoleAccess } from "./console-access.js"
 import type { Credential } from "./credential.js"
 import { Integration } from "./integration.js"
+import { Provider } from "./provider.js"
 
 export const Info = UsageLimits.Info
 export type Info = UsageLimits.Info
@@ -30,35 +30,17 @@ export const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const integrations = yield* Integration.Service
+    const providers = yield* Provider.Service
     const http = yield* HttpClient.HttpClient
 
     const get = Effect.fn("UsageLimits.get")(function* () {
-      const connection = yield* integrations.connection.active(Integration.ID.make("opencode"))
-      if (!connection) return undefined
-      const credential = yield* integrations.connection
-        .resolve(connection)
-        .pipe(Effect.mapError((error) => new UnavailableError({ message: error.message })))
-      if (!credential || credential.type === "external") return undefined
-      const workspaceID = credential.metadata?.orgID
-      if (typeof workspaceID !== "string") return undefined
-      const server = ConsoleAccess.server(credential)
-      const [budgets, go] = yield* Effect.all(
-        [readBudgets(http, server, credential), readGo(http, server, credential, workspaceID)],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.seconds(15),
-          orElse: () => Effect.fail(new UnavailableError({ message: "OpenCode Console usage limits timed out" })),
-        }),
-      )
+      const [console, reported] = yield* Effect.all([readConsole(integrations, http), readProviders(providers, integrations, http)], {
+        concurrency: 2,
+      })
+      if (console === undefined && reported.length === 0) return undefined
       return {
-        workspace: {
-          id: workspaceID,
-          ...(typeof credential.metadata?.orgName === "string" ? { name: credential.metadata.orgName } : {}),
-          usageURL: `${server}/${workspaceID}/activity/overview`,
-        },
-        ...(go === undefined ? {} : { go }),
-        budgets,
+        ...console ?? { budgets: [] },
+        ...(reported.length === 0 ? {} : { providers: reported }),
       }
     })
 
@@ -69,7 +51,112 @@ export const layer = Layer.effect(
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Integration.node, httpClient],
+  deps: [Integration.node, Provider.node, httpClient],
+})
+
+/** The Console limits of the workspace the location is signed in to, or undefined when it isn't. */
+const readConsole = Effect.fn("UsageLimits.readConsole")(function* (
+  integrations: Integration.Interface,
+  http: HttpClient.HttpClient,
+) {
+  const connection = yield* integrations.connection.active(Integration.ID.make("opencode"))
+  if (!connection) return undefined
+  const credential = yield* integrations.connection
+    .resolve(connection)
+    .pipe(Effect.mapError((error) => new UnavailableError({ message: error.message })))
+  if (!credential || credential.type === "external") return undefined
+  const workspaceID = credential.metadata?.orgID
+  if (typeof workspaceID !== "string") return undefined
+  const server = ConsoleAccess.server(credential)
+  const [budgets, go] = yield* Effect.all(
+    [readBudgets(http, server, credential), readGo(http, server, credential, workspaceID)],
+    { concurrency: 2 },
+  ).pipe(
+    Effect.timeoutOrElse({
+      duration: Duration.seconds(15),
+      orElse: () => Effect.fail(new UnavailableError({ message: "OpenCode Console usage limits timed out" })),
+    }),
+  )
+  return {
+    workspace: {
+      id: workspaceID,
+      ...(typeof credential.metadata?.orgName === "string" ? { name: credential.metadata.orgName } : {}),
+      usageURL: `${server}/${workspaceID}/activity/overview`,
+    },
+    ...(go === undefined ? {} : { go }),
+    budgets,
+  }
+})
+
+// A provider's usage endpoint answers with its windows; `resetsAt` is epoch millis or an ISO date, and `limited`
+// defaults to false when the endpoint only reports percentages.
+const ProviderWindow = Schema.Struct({
+  label: Schema.optional(Schema.String),
+  percent: Schema.Finite,
+  limited: Schema.optional(Schema.Boolean),
+  resetsAt: Schema.optional(Schema.Union([Schema.Finite, Schema.DateFromString])),
+  resetsIn: Schema.optional(Schema.Finite),
+})
+const ProviderUsageResponse = Schema.Struct({ windows: Schema.Array(ProviderWindow) })
+
+/** The usage of every available provider that configures a `usageURL`. One failing provider simply reports nothing. */
+const readProviders = Effect.fn("UsageLimits.readProviders")(function* (
+  providers: Provider.Interface,
+  integrations: Integration.Interface,
+  http: HttpClient.HttpClient,
+) {
+  const configured = (yield* providers.available()).filter(
+    (provider) => typeof provider.settings?.usageURL === "string" && provider.settings.usageURL !== "",
+  )
+  return yield* Effect.forEach(
+    configured,
+    (provider) =>
+      readProvider(http, integrations, provider).pipe(
+        Effect.timeout(Duration.seconds(15)),
+        Effect.catch(() => Effect.succeed(undefined)),
+      ),
+    { concurrency: 4 },
+  ).pipe(Effect.map((usage) => usage.flatMap((entry) => (entry ? [entry] : []))))
+})
+
+const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
+  http: HttpClient.HttpClient,
+  integrations: Integration.Interface,
+  provider: Provider.Info,
+) {
+  const connection = yield* integrations.connection.active(provider.integrationID ?? Integration.ID.make(provider.id))
+  const credential = connection ? yield* integrations.connection.resolve(connection) : undefined
+  const token =
+    credential && credential.type !== "external"
+      ? credential.type === "oauth"
+        ? credential.access
+        : credential.key
+      : typeof provider.settings?.apiKey === "string"
+        ? provider.settings.apiKey
+        : undefined
+  const request = HttpClientRequest.get(provider.settings?.usageURL ?? "").pipe(HttpClientRequest.acceptJson)
+  const body = yield* HttpClient.withScope(http)
+    .execute(token === undefined ? request : HttpClientRequest.bearerToken(token)(request))
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(ProviderUsageResponse)),
+      Effect.scoped,
+    )
+  return {
+    providerID: Provider.ID.make(provider.id),
+    ...(provider.name === provider.id ? {} : { name: provider.name }),
+    windows: body.windows.map((window) => ({
+      label: window.label ?? "",
+      percent: Math.min(100, Math.max(0, window.percent)),
+      limited: window.limited ?? false,
+      resetsAt:
+        window.resetsAt === undefined
+          ? Date.now() + (window.resetsIn ?? 0)
+          : typeof window.resetsAt === "number"
+            ? window.resetsAt
+            : window.resetsAt.getTime(),
+    })),
+  }
 })
 
 // One budget as `GET /api/policies/current-budgets` describes it.

@@ -91,7 +91,7 @@ export function DialogUsage() {
           <DialogSelect
             title="Usage"
             description={[
-              info().workspace.name ? `Workspace: ${info().workspace.name}` : undefined,
+              info().workspace?.name ? `Workspace: ${info().workspace?.name}` : undefined,
               rows().length > 0 ? `Resets ${formatReset(resets())}` : undefined,
             ]
               .filter(Boolean)
@@ -142,7 +142,7 @@ export function DialogUsageModel(props: { model: ModelInfo }) {
     const level = usageLevel(value, props.model)
     return level === "out" || level === "reached"
   }
-  const workspace = () => limits.info()?.workspace.name
+  const workspace = () => limits.info()?.workspace?.name
 
   return (
     <DialogLayout
@@ -270,7 +270,7 @@ export function useLimitNotice(message: () => SessionMessageAssistant) {
       }
     if (error.status === 402 && limits.served(value.model.providerID))
       return {
-        title: `${limits.info()?.workspace.name ?? "Your workspace"} is out of credits`,
+        title: `${limits.info()?.workspace?.name ?? "Your workspace"} is out of credits`,
         body: "Paid models are paused until an admin adds credits in OpenCode Console.",
       }
     return undefined

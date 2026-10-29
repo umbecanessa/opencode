@@ -1,10 +1,10 @@
 import { expect } from "bun:test"
 import { Credential } from "@opencode/core/credential"
 import { Integration } from "@opencode/core/integration"
+import { Provider } from "@opencode/core/provider"
 import { UsageLimits } from "@opencode/core/usage-limits"
 import { Model } from "@opencode/schema/model"
 import { Money } from "@opencode/schema/money"
-import { Provider } from "@opencode/schema/provider"
 import { Effect, Exit, Layer } from "effect"
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http"
 import { testEffect } from "./lib/effect"
@@ -54,12 +54,18 @@ const read = (
   credential: Credential.Value | undefined,
   respond: (url: string) => Response,
   requests: HttpClientRequest.HttpClientRequest[] = [],
+  configured: readonly Provider.Info[] = [],
 ) =>
   Effect.flatMap(UsageLimits.Service, (limits) => limits.get()).pipe(
     Effect.provide(
       UsageLimits.layer.pipe(
         Layer.provide(
-          Layer.merge(
+          Layer.mergeAll(
+            Layer.mock(Provider.Service, {
+              get: () => Effect.undefined,
+              all: () => Effect.succeed(configured),
+              available: () => Effect.succeed(configured),
+            }),
             Layer.mock(Integration.Service, {
               revision: () => 0,
               get: unused,
@@ -205,6 +211,77 @@ it.effect("reports a Console that can't answer as unavailable", () =>
 
     expect(Exit.isFailure(exit) && Exit.findErrorOption(exit)).toMatchObject({
       value: { _tag: "UsageLimits.UnavailableError" },
+    })
+  }),
+)
+
+const gateway = {
+  id: Provider.ID.make("opencodex"),
+  name: "OpenCodex",
+  activation: "auto",
+  package: "aisdk:@ai-sdk/openai-compatible",
+  settings: { usageURL: "https://gateway.example/v1/usage", apiKey: "ocx_data_key" },
+} satisfies Provider.Info
+
+const windows = {
+  windows: [
+    { label: "5-hour", percent: 37, limited: false, resetsAt: "2026-10-28T20:00:00.000Z" },
+    { label: "Weekly", percent: 8, resetsAt: 1793300000000 },
+  ],
+}
+
+it.effect("polls a configured provider usageURL with the provider's key, with or without a Console", () =>
+  Effect.gen(function* () {
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const limits = yield* read(
+      undefined,
+      (url) => (url === "https://gateway.example/v1/usage" ? Response.json(windows) : new Response("?", { status: 500 })),
+      requests,
+      [gateway],
+    )
+
+    // An unsigned window defaults to not-limited; epoch-millis resetsAt passes through; a signed-out location
+    // still reports the provider it configured.
+    expect(limits).toEqual({
+      budgets: [],
+      providers: [
+        {
+          providerID: Provider.ID.make("opencodex"),
+          name: "OpenCodex",
+          windows: [
+            { label: "5-hour", percent: 37, limited: false, resetsAt: Date.parse("2026-10-28T20:00:00.000Z") },
+            { label: "Weekly", percent: 8, limited: false, resetsAt: 1793300000000 },
+          ],
+        },
+      ],
+    })
+    expect(requests.map((request) => ({ url: request.url, authorization: request.headers.authorization }))).toEqual([
+      { url: "https://gateway.example/v1/usage", authorization: "Bearer ocx_data_key" },
+    ])
+  }),
+)
+
+it.effect("shows the Console alone when a provider's usage endpoint fails", () =>
+  Effect.gen(function* () {
+    const limits = yield* read(
+      signedIn,
+      (url) =>
+        url === "https://gateway.example/v1/usage"
+          ? new Response("rate limited", { status: 503 })
+          : url.endsWith("/zen/go/v1/usage")
+            ? Response.json({ type: "error" }, { status: 403 })
+            : Response.json([budget]),
+      [],
+      [gateway],
+    )
+
+    expect(limits).toEqual({
+      workspace: {
+        id: "wrk_anomaly",
+        name: "Anomaly",
+        usageURL: "https://dev.opencode.ai/console/wrk_anomaly/activity/overview",
+      },
+      budgets: [expect.objectContaining({ id: "rule_astra" })],
     })
   }),
 )

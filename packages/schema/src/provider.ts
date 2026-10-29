@@ -74,6 +74,8 @@ export const Settings = Schema.StructWithRest(
     cache: Cache.pipe(optional),
     transport: Transport.pipe(optional),
     encoding: Encoding.pipe(optional),
+    /** A provider endpoint polled for its own usage and quota meters, authenticated like its requests. */
+    usageURL: Schema.String.pipe(optional),
   }),
   [Schema.Record(Schema.String, Schema.Any)],
 ).annotate({ identifier: "Provider.Settings" })

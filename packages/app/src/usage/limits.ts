@@ -58,10 +58,25 @@ export type GoRow = {
   readonly resetsAt: number
 }
 
+/** One quota window a provider reported about itself. */
+export type ProviderRow = {
+  readonly label: string
+  readonly percent: number
+  readonly limited: boolean
+  readonly resetsAt: number
+}
+
+/** A provider that reports its own quota, shown as its own group. */
+export type ProviderGroup = {
+  readonly name: string
+  readonly windows: readonly ProviderRow[]
+}
+
 export type UsageView = {
   readonly workspace: string | undefined
   readonly callout?: Callout
   readonly go?: readonly GoRow[]
+  readonly providers: readonly ProviderGroup[]
   readonly budgets: readonly BudgetRow[]
   /** A callout explains why paid models are paused, so the budgets are shown as context. */
   readonly dimmed: boolean
@@ -89,9 +104,19 @@ export function usageView(
   const resetsAt = Math.min(...info.budgets.map((budget) => budget.resetsAt))
   const go = info.go
   return {
-    workspace: info.workspace.name,
+    workspace: info.workspace?.name,
     callout,
     go: go && (["rolling", "weekly", "monthly"] as const).map((window) => ({ window, ...go[window] })),
+    providers: (info.providers ?? []).flatMap((provider) =>
+      provider.windows.length === 0
+        ? []
+        : [
+            {
+              name: provider.name ?? provider.providerID,
+              windows: provider.windows.map((window) => ({ ...window })),
+            },
+          ],
+    ),
     budgets: budgets.map((entry, index) => ({
       id: entry.budget.id,
       label: label(entry.budget),

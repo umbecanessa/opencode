@@ -340,6 +340,8 @@ export type WebSearchResult = { url: string; title?: string; content?: string; t
 
 export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: number }
 
+export type UsageLimitsProviderWindow = { label: string; percent: number; limited: boolean; resetsAt: number }
+
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
 export type ConfigWorktree = { directory: string }
@@ -893,6 +895,12 @@ export type WebSearchProvider = { id: WebSearchID; name: string }
 
 export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMeter; monthly: UsageLimitsMeter }
 
+export type UsageLimitsProviderUsage = {
+  providerID: ProviderID
+  name?: string
+  windows: Array<UsageLimitsProviderWindow>
+}
+
 export type ConfigModelCapabilities = {
   tools?: boolean
   input?: Array<string>
@@ -968,6 +976,7 @@ export type ProviderSettings = {
   cache?: ProviderCache
   transport?: ProviderTransport
   encoding?: ProviderEncoding
+  usageURL?: string
 } & { [x: string]: any }
 
 export type ModelSettings = { compaction?: ProviderCompaction; cache?: ProviderCache; encoding?: ProviderEncoding } & {
@@ -982,6 +991,7 @@ export type ConfigProviderSettings = {
   cache?: ProviderCache
   transport?: ProviderTransport
   encoding?: ProviderEncoding
+  usageURL?: string
 } & { [x: string]: JsonValue | null }
 
 export type ConfigModelSettings = {
@@ -2438,9 +2448,10 @@ export type ConfigEntry =
   | { type: "directory"; path: AbsolutePath }
 
 export type UsageLimitsInfo = {
-  workspace: { id: string; name?: string; usageURL: string }
+  workspace?: { id: string; name?: string; usageURL: string }
   go?: UsageLimitsGo
   budgets: Array<UsageLimitsBudget>
+  providers?: Array<UsageLimitsProviderUsage>
 }
 
 export type GenerateImageResponse = { data: GenerateImageResult }
