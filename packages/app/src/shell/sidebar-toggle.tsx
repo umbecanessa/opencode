@@ -150,7 +150,9 @@ function useCollapsedSlot() {
   const mac = () => platform.platform === "desktop" && platform.os === "macos" && !platform.windowFullscreen?.()
 
   return {
-    visible: () => desktop() && !windows() && settings.appearance.tabLayout() !== "horizontal",
+    // Fork: the vertical shell (and its sidebar) is always on past mobile, so the toggle is too; only the
+    // traffic-light slot on Windows keeps its own rules. tabLayout is not consulted - see shell.tsx.
+    visible: () => desktop() && !windows(),
     open: settings.appearance.sidebarOpen,
     // Lays the toggle out as if the traffic lights were the header's first control.
     width: () =>

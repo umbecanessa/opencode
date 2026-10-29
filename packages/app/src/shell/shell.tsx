@@ -60,7 +60,10 @@ export default function Layout(props: ParentProps) {
     tabsPanel: undefined,
   })
 
-  const verticalTabs = () => preferences.appearance.tabLayout() !== "horizontal" && !mobile()
+  // Fork: the desktop always docks the vertical tab strip and the host ProjectSidebar (the multi-host sidebar is
+  // the fork's primary navigation). The appearance tabLayout setting is ignored here except for "inbox", which
+  // the titlebar switches to SidebarInbox for; horizontal/vertical both render the fork's sidebar.
+  const verticalTabs = () => !mobile()
 
   const toggleSidebar = () => preferences.appearance.setSidebarOpen(!preferences.appearance.sidebarOpen())
 
