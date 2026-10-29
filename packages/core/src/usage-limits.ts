@@ -103,6 +103,7 @@ const ProviderWindow = Schema.Struct({
   resetsAt: Schema.optional(Schema.Union([Schema.Finite, Schema.DateFromString])),
   resetsIn: Schema.optional(Schema.Finite),
   provider: Schema.optional(Schema.String),
+  balance: Schema.optional(Schema.Finite),
 })
 const ProviderUsageResponse = Schema.Union([
   Schema.Struct({ windows: Schema.Array(ProviderWindow) }),
@@ -176,6 +177,7 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
                     typeof window.resetsAt === "number" ? window.resetsAt : window.resetsAt.getTime(),
                 }),
             ...(window.provider === undefined || window.provider === "" ? {} : { provider: window.provider }),
+            ...(window.balance === undefined ? {} : { balance: Money.USD.make(window.balance) }),
           }))
         : [
             {
@@ -183,6 +185,7 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
               // A drained credit balance blocks every model, and an unpurchased one never refills.
               percent: body.data.total_credits > 0 ? Math.min(100, (body.data.total_usage / body.data.total_credits) * 100) : 100,
               limited: body.data.total_credits <= body.data.total_usage,
+              balance: Money.USD.make(Math.max(0, body.data.total_credits - body.data.total_usage)),
             },
           ],
   }

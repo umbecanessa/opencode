@@ -340,14 +340,6 @@ export type WebSearchResult = { url: string; title?: string; content?: string; t
 
 export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: number }
 
-export type UsageLimitsProviderWindow = {
-  label: string
-  percent: number
-  limited: boolean
-  resetsAt?: number
-  provider?: string
-}
-
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
 export type ConfigWorktree = { directory: string }
@@ -431,6 +423,15 @@ export type SessionMessageCompactionRunning = {
 }
 
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
+
+export type UsageLimitsProviderWindow = {
+  label: string
+  percent: number
+  limited: boolean
+  resetsAt?: number
+  provider?: string
+  balance?: MoneyUSD
+}
 
 export type FileSystemEntry = { path: RelativePath; type: "file" | "directory" }
 
@@ -901,12 +902,6 @@ export type WebSearchProvider = { id: WebSearchID; name: string }
 
 export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMeter; monthly: UsageLimitsMeter }
 
-export type UsageLimitsProviderUsage = {
-  providerID: ProviderID
-  name?: string
-  windows: Array<UsageLimitsProviderWindow>
-}
-
 export type ConfigModelCapabilities = {
   tools?: boolean
   input?: Array<string>
@@ -1028,6 +1023,12 @@ export type UsageLimitsBudget = {
   picked: boolean
   shared: boolean
   resetsAt: number
+}
+
+export type UsageLimitsProviderUsage = {
+  providerID: ProviderID
+  name?: string
+  windows: Array<UsageLimitsProviderWindow>
 }
 
 export type GenerateImageResult = {
