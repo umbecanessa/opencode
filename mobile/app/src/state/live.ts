@@ -50,6 +50,8 @@ export const useLive = (intervalMs = 5000): Live => {
         const id = hosts[i].id
         if (r.status !== "fulfilled") {
           nextOnline[id] = false
+          // Diagnostics: why the probe died (DNS/TLS/refused/HTTP status) lands in the Metro log.
+          console.warn(`live: ${hosts[i].name} (${hosts[i].origin}) offline: ${String(r.reason)}`)
           return
         }
         nextOnline[id] = true
