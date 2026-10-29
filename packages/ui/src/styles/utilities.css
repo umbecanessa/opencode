@@ -46,6 +46,16 @@
   letter-spacing: var(--letter-spacing-normal);
 }
 
+/* 13px compact UI text, per the typography guide: 16px line height for Inter descenders. */
+.text-13-regular {
+  font-family: var(--font-family-sans);
+  font-size: var(--font-size-small);
+  font-style: normal;
+  font-weight: var(--font-weight-regular);
+  line-height: var(--line-height-compact); /* 16px */
+  letter-spacing: var(--letter-spacing-normal);
+}
+
 .text-14-regular {
   font-family: var(--font-family-sans);
   font-size: var(--font-size-base);
