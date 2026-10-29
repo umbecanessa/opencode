@@ -71,7 +71,14 @@
 .sidebar-menu { opacity: 0; }
 .project-navigation .sidebar-row:hover .sidebar-menu,
 .project-navigation .sidebar-row:focus-within .sidebar-menu,
+.project-navigation .sidebar-project-row:hover .sidebar-menu,
+.project-navigation .sidebar-project-row:focus-within .sidebar-menu,
 .sidebar-menu[data-expanded="true"] { opacity: 1; }
+.sidebar-plus { opacity: 0; }
+.project-navigation .sidebar-project-row:hover .sidebar-plus,
+.project-navigation .sidebar-project-row:focus-within .sidebar-plus { opacity: 1; }
+.project-navigation .sidebar-plus:hover { background: var(--v2-background-bg-layer-03); }
 @media (hover: none) {
   .sidebar-menu { opacity: 1; }
+  .sidebar-plus { opacity: 1; }
 }

@@ -11,7 +11,7 @@ import { Button } from "@opencode/ui/button"
 import { TextInput } from "@opencode/ui/text-input"
 import { createHomeController } from "@/home/model"
 import { loadHomeSessionIndex, mergeHomeSessionIndex } from "@/home/sessions/index"
-import { ServerConnection, serverName } from "@/runtime/server/registry"
+import { ServerConnection, useServers } from "@/runtime/server/registry"
 import { useLanguage } from "@/runtime/i18n/language"
 import { useLayout } from "@/shell/state/layout"
 import { Persist, persisted } from "@/runtime/persistence/storage"
@@ -25,7 +25,7 @@ import "./project-sidebar.css"
 
 const LIST_LIMIT = 5
 
-type Host = { connection: ServerConnection.Any; key: ReturnType<typeof ServerConnection.key>; ctx: ReturnType<ReturnType<typeof createHomeController>["server"]["context"]> }
+type Host = { connection: ServerConnection.Any; key: ReturnType<typeof ServerConnection.key>; ctx: ReturnType<ReturnType<typeof createHomeController>["server"]["context"]>; label: string }
 
 type Entry = { host: Host; session: SessionInfo }
 
@@ -46,7 +46,6 @@ export function ProjectSidebar() {
   const [projectNames, setProjectNames] = persisted(Persist.window("navigation.projects.names"), Schema.Record(Schema.String, Schema.String), initialNames)
 
   const [state, setState] = createStore<{
-    search: string
     recentExpanded: boolean
     removed: string[]
     failed: string[]
@@ -55,7 +54,6 @@ export function ProjectSidebar() {
     expandedProjects: Record<string, boolean>
     expandedHosts: Record<string, boolean>
   }>({
-    search: "",
     recentExpanded: false,
     removed: [],
     failed: [],
@@ -65,11 +63,10 @@ export function ProjectSidebar() {
     expandedHosts: {},
   })
 
-  const hosts = createMemo(() => home.server.list().map((connection) => ({ connection, key: ServerConnection.key(connection), ctx: home.server.context(connection) })))
-  const search = () => state.search.trim().toLowerCase()
+  const hosts = createMemo(() => home.server.list().map((connection) => ({ connection, key: ServerConnection.key(connection), ctx: home.server.context(connection), label: home.server.label(connection) })))
 
   const entries = createMemo(() => hosts().flatMap((host) => (state.byHost[host.key] ?? [])
-    .filter((session) => !session.parentID && !state.removed.includes(session.id) && !session.time.archived && (!search() || session.title?.toLowerCase().includes(search())))
+    .filter((session) => !session.parentID && !state.removed.includes(session.id) && !session.time.archived)
     .map((session) => ({ host, session }))))
 
   const sorted = createMemo(() => [...entries()].sort((a, b) => Number(!!pinned[b.session.id]) - Number(!!pinned[a.session.id]) || b.session.time.updated - a.session.time.updated))
@@ -187,7 +184,7 @@ export function ProjectSidebar() {
       <span class="sidebar-status" data-status={status(entry.host, entry.session)} title={language.t(`sidebar.status.${status(entry.host, entry.session)}`)} />
       <span class="min-w-0 flex-1 truncate">{entry.session.title || language.t("command.session.new")}</span>
       <Show when={pinned[entry.session.id]}><span class="sidebar-pin" aria-label={language.t("sidebar.pin")} /></Show>
-      <Show when={showHost}><span class="sidebar-host truncate">{serverName(entry.host.connection)}</span></Show>
+      <Show when={showHost}><span class="sidebar-host truncate">{entry.host.label}</span></Show>
       <span class="shrink-0 text-12-regular text-v2-text-text-faint" title={new Date(entry.session.time.updated).toLocaleString()}>{getRelativeTime(new Date(entry.session.time.updated).toISOString(), language.t)}</span>
     </button>
     <Menu placement="bottom-end" modal={false}><Menu.Trigger aria-label={language.t("common.moreOptions")} class="sidebar-menu flex size-7 shrink-0 items-center justify-center rounded-md"><Icon name="outline-dots" size="small" /></Menu.Trigger>
@@ -209,12 +206,10 @@ export function ProjectSidebar() {
     onSelect: (result) => { if (result) home.project.add(connection, Array.isArray(result) ? result : [result]) } })
 
   return <nav aria-label={language.t("sidebar.projectNavigation")} class="project-navigation flex min-h-0 flex-1 flex-col gap-1 text-v2-text-text-base">
-    <div class="flex items-center gap-1 px-2 pt-1">
-      <input value={state.search} onInput={(event) => setState("search", event.currentTarget.value)} placeholder={language.t("sidebar.searchConversations")}
-        aria-label={language.t("sidebar.searchConversations")} class="min-h-8 min-w-0 flex-1 rounded-md border-none bg-v2-background-bg-layer-01 px-2.5 text-13-regular text-v2-text-text-base outline-none placeholder:text-v2-text-text-faint focus-visible:bg-v2-background-bg-layer-02" />
+    <div class="flex items-center justify-end px-2 pt-1">
       <Menu placement="bottom-end"><Menu.Trigger aria-label={language.t("command.project.open")} class="sidebar-quiet flex size-8 shrink-0 items-center justify-center rounded-md"><Icon name="plus-small" size="small" /></Menu.Trigger>
         <Menu.Portal><Menu.Content><For each={home.server.list()}>{(connection) => <Menu.Item onSelect={() => add(connection)}>
-          <span class="flex w-full items-center justify-between gap-3"><span>{language.t("command.project.open")}</span><span class="sidebar-host shrink-0">{serverName(connection)}</span></span>
+          <span class="flex w-full items-center justify-between gap-3"><span>{language.t("command.project.open")}</span><span class="sidebar-host shrink-0">{home.server.label(connection)}</span></span>
         </Menu.Item>}</For></Menu.Content></Menu.Portal>
       </Menu>
     </div>
@@ -255,6 +250,7 @@ function HostProjects(props: {
   renameProject: (project: { id?: string; worktree: string; name?: string }) => void
 }) {
   const language = useLanguage()
+  const servers = useServers()
   const [menuProject, setMenuProject] = createSignal<{ id?: string; worktree: string; name?: string }>()
   const projectLabel = (project: { worktree: string; name?: string }) => project.name?.trim() || props.projectNames[project.worktree]?.trim() || folderName(project.worktree)
   const hostEntries = createMemo(() => props.entries.filter((entry) => entry.host.key === props.host.key))
@@ -277,7 +273,7 @@ function HostProjects(props: {
     <div class="flex items-center">
       <button type="button" aria-expanded={hostOpen()} onClick={props.toggleHost} class="sidebar-row sidebar-host-label flex min-h-8 min-w-0 flex-1 items-center gap-1 rounded-md px-2 pb-1 pt-4 text-start text-12-regular">
         <Icon name={hostOpen() ? "chevron-down" : "chevron-right"} size="small" />
-        <span class="truncate">{serverName(props.host.connection)}</span>
+        <span class="truncate">{servers.label(props.host.connection)}</span>
       </button>
     </div>
     <Show when={props.failed}><p class="px-2 py-1 text-12-regular text-v2-text-text-faint">{language.t("sidebar.sessionsUnavailable")}</p></Show>
@@ -296,10 +292,13 @@ function HostProjects(props: {
         const open = () => !props.collapsed[props.collapsedKey(project.worktree)]
 
         return <section class="mb-1">
-          <div class="flex items-center">
+          <div class="sidebar-project-row flex items-center">
             <button type="button" data-project-worktree={project.worktree} aria-expanded={open()} onClick={() => props.toggleCollapsed(project.worktree)} class="sidebar-row flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 text-start text-13-regular">
               <Icon name={open() ? "chevron-down" : "chevron-right"} size="small" /><Icon name="folder" size="small" />
               <span class="truncate" title={project.worktree}>{projectLabel(project)}</span>
+            </button>
+            <button type="button" data-project-worktree={project.worktree} aria-label={language.t("command.session.new")} title={language.t("command.session.new")} onClick={() => props.openNewSession(project.worktree)} class="sidebar-plus flex size-7 shrink-0 items-center justify-center rounded-md">
+              <Icon name="plus-small" size="small" />
             </button>
             <Menu placement="bottom-end" modal={false}><Menu.Trigger aria-label={language.t("common.moreOptions")} class="sidebar-menu flex size-7 shrink-0 items-center justify-center rounded-md"><Icon name="outline-dots" size="small" /></Menu.Trigger>
               <Menu.Portal><Menu.Content>
