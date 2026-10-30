@@ -352,6 +352,13 @@ nowhere to surface permission asks, so the peer should be configured to run
 such work unattended. An unknown server name fails with the list of
 configured servers so you can correct it.
 
+Besides config keys, the desktop app registers its own remote servers at
+runtime — the SSH and WSL tunnels from its server list (named `ssh:<id>` and
+`wsl:<distro>`), plus servers added manually by URL. Registered names work in
+the `server` parameter exactly like config keys; they live only in memory, and
+a config key of the same name wins. When peer servers are available your
+system prompt lists their names.
+
 ## [Troubleshooting](https://opencode.ai/v2/docs/troubleshooting)
 
 OpenCode runs a client and a background server. Start by determining whether a

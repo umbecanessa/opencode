@@ -1,4 +1,5 @@
 import { Instance } from "@opencode/core/instance/service"
+import { PeerServers } from "@opencode/core/peer-servers"
 import { Session } from "@opencode/core/session"
 import { SessionStats } from "@opencode/core/session/stats"
 import { SessionTitle } from "@opencode/core/session/title"
@@ -37,6 +38,7 @@ function missingForm(id: Form.ID) {
 export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
+    const peers = yield* PeerServers.Registry
     const transfer = yield* SessionTransfer.Service
     const instructions = yield* InstructionEntry.Service
     const instances = yield* Instance.Service
@@ -162,6 +164,13 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
           return {
             data: Object.fromEntries(Array.from(active, (sessionID) => [sessionID, { type: "running" as const }])),
           }
+        }),
+      )
+      .handle(
+        "peer.servers",
+        Effect.fn(function* (ctx) {
+          yield* peers.set(ctx.payload.servers)
+          return HttpApiSchema.NoContent.make()
         }),
       )
       .handle(

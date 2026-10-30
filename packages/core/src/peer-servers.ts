@@ -1,9 +1,10 @@
 export * as PeerServers from "./peer-servers.js"
 
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Ref, Schema } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
-import { makeLocationNode } from "@opencode/util/effect/app-node"
+import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
+import { ConfigServer } from "@opencode/schema/config/server"
 import { Config } from "./config.js"
 import { Model } from "./model.js"
 import { SessionSchema } from "./session/schema.js"
@@ -60,9 +61,41 @@ export interface Interface {
   ) => Effect.Effect<boolean, Failure>
   readonly wait: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<void, Failure>
   readonly outcome: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<Outcome | undefined, Failure>
+  /** Server names these tools can act on: config `servers` keys plus runtime registrations. */
+  readonly names: Effect.Effect<readonly string[]>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/PeerServers") {}
+
+/**
+ * Peer servers registered at runtime by a connected client, such as the desktop
+ * app pushing its SSH and WSL tunnels. In-memory only: the process forgets
+ * them on exit, and a config `servers` key with the same name always wins.
+ */
+export interface RegistryInterface {
+  /** Replaces the whole map; an empty map clears every registration. */
+  readonly set: (entries: Readonly<Record<string, ConfigServer.Info>>) => Effect.Effect<void>
+  readonly get: (name: string) => Effect.Effect<ConfigServer.Info | undefined>
+  readonly entries: Effect.Effect<Readonly<Record<string, ConfigServer.Info>>>
+}
+
+export class Registry extends Context.Service<Registry, RegistryInterface>()("@opencode/PeerServers/Registry") {}
+
+export const registryNode = makeGlobalNode({
+  service: Registry,
+  layer: Layer.effect(
+    Registry,
+    Effect.gen(function* () {
+      const entries = yield* Ref.make<Readonly<Record<string, ConfigServer.Info>>>({})
+      return Registry.of({
+        set: (next) => Ref.set(entries, { ...next }),
+        get: (name) => Ref.get(entries).pipe(Effect.map((current) => current[name])),
+        entries: Ref.get(entries),
+      })
+    }),
+  ),
+  deps: [],
+})
 
 /** Wire subset of the remote `Session.Info` payload: only the fields listings and waits need. */
 const SessionBody = Schema.Struct({
@@ -108,6 +141,14 @@ const ContextResponse = Schema.Struct({
   ),
 })
 
+/** Union of config `servers` keys and runtime registrations, config first. */
+function serverNames(
+  config: Readonly<Record<string, ConfigServer.Info>> | undefined,
+  registered: Readonly<Record<string, ConfigServer.Info>>,
+) {
+  return [...new Set([...Object.keys(config ?? {}), ...Object.keys(registered)])]
+}
+
 /** Last assistant text block of the remote context window, newest message first. */
 function lastText(messages: readonly { type: string; content?: readonly { type: string; text?: string }[] }[]) {
   for (const message of messages.slice().reverse()) {
@@ -123,14 +164,18 @@ const layer = Layer.effect(
   Effect.gen(function* () {
     const config = yield* Config.Service
     const http = yield* HttpClient.HttpClient
+    const registry = yield* Registry
 
+    // Config entries are explicit user intent, so a config name outranks a
+    // runtime registration with the same name; registrations fill the rest.
     const target = Effect.fn("PeerServers.target")(function* (server: string) {
       const servers = Config.latest(yield* config.entries(), "servers")
-      const info = servers?.[server]
+      const registered = yield* registry.entries
+      const info = servers?.[server] ?? registered[server]
       if (info === undefined)
         return yield* new Failure({
           server,
-          detail: `is not configured. Configured servers: ${Object.keys(servers ?? {}).join(", ") || "none"}`,
+          detail: `is not configured. Configured servers: ${serverNames(servers, registered).join(", ") || "none"}`,
         })
       return { base: info.url.replace(/\/+$/, ""), credential: info.credential }
     })
@@ -301,9 +346,16 @@ const layer = Layer.effect(
 
       stop: Effect.fn("PeerServers.stop")((server, input) => interruptRemote(server, input.sessionID, input.resume)),
 
-      wait: Effect.fn("PeerServers.wait")((server, sessionID) => waitRemote(server, sessionID)),
+      wait: Effect.fn("PeerServers.wait")((server, sessionID) => idleAfterPrompt(server, sessionID)),
 
       outcome: outcomeOf,
+
+      names: Effect.gen(function* () {
+        return serverNames(
+          Config.latest(yield* config.entries(), "servers"),
+          yield* registry.entries,
+        )
+      }),
     })
   }),
 )
@@ -311,5 +363,5 @@ const layer = Layer.effect(
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Config.node, httpClient],
+  deps: [Config.node, registryNode, httpClient],
 })

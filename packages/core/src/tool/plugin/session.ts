@@ -48,7 +48,8 @@ const assertServer = (permission: Permission.Interface, server: string, context:
     .pipe(Effect.mapError((error) => new ToolFailure({ message: `Cross-server dispatch denied: ${server}`, error })))
 
 const serverField = Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
-  description: "Name of a configured peer OpenCode server (config `servers`) to act against instead of this one.",
+  description:
+    "Name of a peer OpenCode server to act against instead of this one: a key of the config `servers` map or a server registered at runtime by a connected client.",
 })
 
 const SpawnInput = Schema.Struct({
@@ -238,7 +239,7 @@ export const Plugin = {
             "Foreground (default) blocks until the session goes idle and returns its final text.",
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
             "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
-            "Set server to dispatch the whole task to a peer OpenCode server from the config `servers` map: it runs there in the foreground (background and directory do not apply) and returns its final text.",
+            "Set server to dispatch the whole task to a named peer OpenCode server (config `servers` or registered by the desktop): it runs there in the foreground (background and directory do not apply) and returns its final text.",
           ].join("\n"),
           input: SpawnInput,
           output: SpawnOutput,
@@ -601,14 +602,18 @@ export const Plugin = {
       .pipe(Effect.orDie)
 
     const hook = (event: SessionHooks["context"]) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         if (!event.tools.session_spawn) return
+        const names = yield* peers.names
+        const peersLine = names.length
+          ? `Peer OpenCode servers available for the server parameter: ${names.join(", ")}. It lists, dispatches, sends, stops, and waits against that machine.`
+          : "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine."
         event.system.push(
           SystemPart.make(
             [
               "You can coordinate other sessions with opencode_session_list, opencode_session_spawn, opencode_session_send, opencode_session_stop, and opencode_session_wait.",
               "Sessions spawned with session_spawn are independent main-agent sessions; their completion arrives as <peer> messages.",
-              "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine.",
+              peersLine,
             ].join(" "),
           ),
         )

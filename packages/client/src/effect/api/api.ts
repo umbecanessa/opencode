@@ -1326,6 +1326,14 @@ export type SessionViewInput = { readonly sessionID: Session.ID; readonly idle: 
 export type SessionViewOutput = void
 export type SessionViewOperation<E = never> = (input: SessionViewInput) => Effect.Effect<SessionViewOutput, E>
 
+export type SessionPeerServersInput = {
+  readonly servers: { readonly [x: string]: { readonly url: string; readonly credential?: string | undefined } }
+}
+export type SessionPeerServersOutput = void
+export type SessionPeerServersOperation<E = never> = (
+  input: SessionPeerServersInput,
+) => Effect.Effect<SessionPeerServersOutput, E>
+
 export interface SessionApi<E = never> {
   readonly list: SessionListOperation<E>
   readonly stats: SessionStatsOperation<E>
@@ -1380,6 +1388,7 @@ export interface SessionApi<E = never> {
   }
   readonly environment: SessionEnvironmentOperation<E>
   readonly view: SessionViewOperation<E>
+  readonly peer: { readonly servers: SessionPeerServersOperation<E> }
 }
 
 export type MessageListInput = {

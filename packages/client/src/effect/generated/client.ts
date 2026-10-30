@@ -109,6 +109,8 @@ import type {
   SessionEnvironmentOutput,
   SessionViewInput,
   SessionViewOutput,
+  SessionPeerServersInput,
+  SessionPeerServersOutput,
   MessageListInput,
   MessageListOutput,
   ModelListInput,
@@ -810,6 +812,11 @@ const EndpointSessionView = (raw: RawClient["server.session"]) => (input: Sessio
     ),
   )
 
+const EndpointSessionPeerServers = (raw: RawClient["server.session"]) => (input: SessionPeerServersInput) =>
+  preserveEffect<SessionPeerServersOutput>()(
+    raw["peer.servers"]({ payload: { servers: input["servers"] } }).pipe(Effect.mapError(mapClientError)),
+  )
+
 const adaptGroupSession = (raw: RawClient["server.session"]) => ({
   list: EndpointSessionList(raw),
   stats: EndpointSessionStats(raw),
@@ -864,6 +871,7 @@ const adaptGroupSession = (raw: RawClient["server.session"]) => ({
   },
   environment: EndpointSessionEnvironment(raw),
   view: EndpointSessionView(raw),
+  peer: { servers: EndpointSessionPeerServers(raw) },
 })
 
 const EndpointMessageList = (raw: RawClient["server.message"]) => (input: MessageListInput) =>

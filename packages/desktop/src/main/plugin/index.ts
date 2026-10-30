@@ -9,6 +9,7 @@ import { Shutdown } from "../lifecycle/shutdown"
 const LEVELS = { debug: "Debug", info: "Info", warn: "Warn", error: "Error" } as const
 
 import { DesktopCli } from "../service/desktop-cli"
+import { PeerServers } from "../service/peer-servers"
 import { DesktopStorage } from "../storage"
 import { setAppQuitting } from "../windows"
 import type { PluginHost } from "./host"
@@ -123,6 +124,8 @@ export const layer = Layer.effect(
         // Re-inserting keeps the most recent window last, which resolution prefers.
         servers.delete(window)
         servers.set(window, list)
+        // Keep the sidecar's cross-server dispatch pointed at the servers the app sees.
+        runFork(PeerServers.configure([...new Map([...servers.values()].flat().map((entry) => [entry.id, entry])).values()]))
       },
     })
   }),

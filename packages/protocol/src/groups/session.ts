@@ -1,5 +1,6 @@
 import { SessionMessage } from "@opencode/schema/session-message"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { ConfigServer } from "@opencode/schema/config/server"
 import { PromptInput } from "@opencode/schema/prompt-input"
 import { Session } from "@opencode/schema/session"
 import { SessionStats } from "@opencode/schema/session-stats"
@@ -825,6 +826,24 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "session.view",
           summary: "View session",
           description: "Mark the idle transition observed by the viewer as viewed.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.put("peer.servers", "/api/experimental/peer-servers", {
+        payload: Schema.Struct({
+          servers: Schema.Record(Schema.String, ConfigServer.Info).annotate({
+            description:
+              "Peer OpenCode servers the session tools may dispatch to. Replaces the whole runtime map; in memory only, and config `servers` keys of the same name win.",
+          }),
+        }),
+        success: HttpApiSchema.NoContent,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "peer.servers",
+          summary: "Register peer servers",
+          description:
+            "Replace the runtime-registered peer OpenCode server map used by cross-server session dispatch. Entries live in memory only and are forgotten on process exit.",
         }),
       ),
     )

@@ -72,6 +72,7 @@ const stubLayer = Layer.succeed(
         calls.push({ op: "wait", server, input: sessionID })
       }),
     outcome: () => Effect.succeed("succeeded" as const),
+    names: Effect.succeed(["lab"] as const),
   }),
 )
 

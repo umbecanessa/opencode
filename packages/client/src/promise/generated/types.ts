@@ -342,6 +342,8 @@ export type UsageLimitsMeter = { percent: number; limited: boolean; resetsAt: nu
 
 export type McpProtocol = "legacy" | "auto" | "2026-07-28"
 
+export type ConfigServer = { url: string; credential?: string }
+
 export type ConfigWorktree = { directory: string }
 
 export type ConfigModelReasoning =
@@ -2387,6 +2389,7 @@ export type ConfigEntry =
             | { repository: string; branch?: string; description?: string; hidden?: boolean }
             | { path: string; description?: string; hidden?: boolean }
         }
+        servers?: { [x: string]: ConfigServer }
         websearch?: false | { provider: "random" | WebSearchID }
         plugins?: Array<string | { package: string; options?: { [x: string]: JsonValue } }>
         worktree?: ConfigWorktree
@@ -3730,6 +3733,12 @@ export type SessionEnvironmentOutput = void
 export type SessionViewInput = { readonly sessionID: string; readonly idle: number }
 
 export type SessionViewOutput = void
+
+export type SessionPeerServersInput = {
+  readonly servers: { readonly [x: string]: { readonly url: string; readonly credential?: string } }
+}
+
+export type SessionPeerServersOutput = void
 
 export type MessageListInput = {
   readonly sessionID: string

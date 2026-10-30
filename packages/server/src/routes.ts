@@ -28,6 +28,7 @@ import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { LocationActivity } from "@opencode/core/location-activity"
 import { ModelsDev } from "@opencode/core/models-dev"
+import { PeerServers } from "@opencode/core/peer-servers"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
 import { PluginUpdate } from "@opencode/core/plugin/update"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
@@ -74,6 +75,7 @@ const applicationServiceNodes = [
   Credential.node,
   WellKnown.node,
   ServerPairing.node,
+  PeerServers.registryNode,
   LocationServiceMap.node,
   LocationActivity.node,
   SessionRestart.node,

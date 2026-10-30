@@ -152,9 +152,27 @@ permission asks; pre-approve in the remote project or keep a client attached.
 Covered by `packages/core/test/tool-session-remote.test.ts` (stubbed
 `PeerServers` routing) plus the existing local tool suite.
 
-Remaining for this phase: the desktop app syncing its SSH/WSL-registered
-servers into this config (the only genuinely new wire), and V2 docs prose in
-`services/www`.
+Remaining for this phase: the V2 docs prose in `services/www`.
+
+### Desktop registration (implemented here)
+
+The last Phase 4 wire: the desktop app pushes its ready remote servers into the
+sidecar's runtime registry so the session tools see the same SSH/WSL tunnels
+the user sees. New in-memory global core service `PeerServers.Registry`
+(`@opencode/PeerServers/Registry`), resolved by `PeerServers.target` after the
+config map (a config key of the same name always wins); unknown names list
+both sources. Protocol gains exactly one endpoint,
+`PUT /api/experimental/peer-servers` (payload `{ servers }`, whole-map
+replace), handled by the session group with no location middleware; the
+registry node joins `applicationServiceNodes` in `server/src/routes.ts`.
+Desktop side: `main/service/peer-servers.ts` retains the union of
+renderer-reported endpoints (`PluginConfigure`) and PUTs
+`{ <ServerConnection key>: { url, credential } }` — keyed `ssh:<id>`,
+`wsl:<distro>`, or the manual URL — skipping the sidecar's own origin;
+re-pushed from `BackgroundService.connect` so a reconnect with a new password
+re-registers. The session-tools system hook now lists the live names from
+`PeerServers.names()` when any exist. Nothing persists: a server restart
+forgets registrations until the desktop re-pushes.
 
 ## Phase 5 — Placement (clustering endpoint)
 

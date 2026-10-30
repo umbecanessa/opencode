@@ -103,6 +103,8 @@ import type {
   SessionEnvironmentOutput,
   SessionViewInput,
   SessionViewOutput,
+  SessionPeerServersInput,
+  SessionPeerServersOutput,
   MessageListInput,
   MessageListOutput,
   ModelListInput,
@@ -1140,6 +1142,20 @@ export function make(options: ClientOptions) {
           },
           requestOptions,
         ),
+      peer: {
+        servers: (input: SessionPeerServersInput, requestOptions?: RequestOptions) =>
+          request<SessionPeerServersOutput>(
+            {
+              method: "PUT",
+              path: `/api/experimental/peer-servers`,
+              body: { servers: input["servers"] },
+              successStatus: 204,
+              declaredStatuses: [400, 401],
+              empty: true,
+            },
+            requestOptions,
+          ),
+      },
     },
     message: {
       list: (input: MessageListInput, requestOptions?: RequestOptions) =>
