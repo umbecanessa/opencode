@@ -42,6 +42,8 @@ const patterns = [
   // Hugging Face Text Generation Inference, e.g. Together
   /`inputs` tokens \+ `max_new_tokens` must be <= \d+/i,
   /context window exceeds limit/i,
+  // LiteLLM's ContextWindowExceededError
+  /context window exceeded/i,
   /exceeded model token limit/i,
   /context[_ ]length[_ ]exceeded/i,
   /context length is only \d+ tokens/i,
@@ -331,8 +333,6 @@ function providerCodes(value: unknown) {
     decoded.code,
     ...awsErrorType(decoded.__type),
     ...awsErrorType(decoded.code),
-    // Stability's `{ id, name, errors }` bodies carry the code in `name`.
-    Array.isArray(decoded.errors) ? decoded.name : undefined,
     decoded.error_type,
     error?.code,
     error?.type,
