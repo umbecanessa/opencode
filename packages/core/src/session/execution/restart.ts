@@ -3,7 +3,9 @@ export * as SessionRestart from "./restart.js"
 import { Context, Effect, Layer } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Bus } from "../../bus.js"
+import { Instance } from "../../instance/service.js"
 import { Job } from "../../job.js"
+import { PeerServers } from "../../peer-servers.js"
 import { Session } from "../../session.js"
 import { SessionEvent } from "../event.js"
 import { SessionExecution } from "../execution.js"
@@ -68,6 +70,7 @@ export const layer = (options?: Options) =>
     Effect.gen(function* () {
       const store = yield* SessionStore.Service
       const execution = yield* SessionExecution.Service
+      const instances = yield* Instance.Service
       const bus = yield* Bus.Service
       const jobs = yield* Job.Service
       const sessions = yield* Session.Service
@@ -194,6 +197,59 @@ export const layer = (options?: Options) =>
         )
       })
 
+      const recoverRemote = Effect.fnUntraced(function* (
+        background: Job.Background,
+        recovery: Extract<Job.Recovery, { kind: "peer_remote" }>,
+        suspended: ReadonlySet<SessionSchema.ID>,
+      ) {
+        // The child row lives on the peer server; only the parent's existence
+        // gates delivery.
+        const parent = yield* store.get(recovery.parentSessionID)
+        if (!parent) {
+          yield* jobs.completeBackground(background.notificationID)
+          return
+        }
+
+        const notify = Effect.fnUntraced(function* (result: Pick<Job.Background, "status" | "output" | "error">) {
+          yield* SubagentCompletion.deliver(sessions, jobs, {
+            ...result,
+            recovery,
+            notificationID: background.notificationID,
+            resume: suspended.has(recovery.parentSessionID) ? false : undefined,
+          }).pipe(Effect.orDie)
+        })
+
+        // The dispatch settled before the restart: deliver the stored outcome
+        // without re-consulting the peer.
+        if (background.status !== "running") {
+          yield* notify(background)
+          return
+        }
+
+        // Re-arm the watcher through the parent's placement so the config
+        // `servers` map resolves as it did at dispatch time.
+        yield* instances
+          .provide(parent)(
+            Effect.gen(function* () {
+              const peers = yield* PeerServers.Service
+              yield* jobs.start({
+                id: background.id,
+                type: recovery.kind,
+                title: recovery.description,
+                notificationID: background.notificationID,
+                recovery,
+                run: peers.watch(recovery.server, recovery.childSessionID),
+              })
+              yield* jobs.background(background.id)
+              yield* jobs.wait({ id: background.id }).pipe(
+                Effect.flatMap((result) => (result.info ? notify(result.info) : Effect.void)),
+                Effect.forkIn(scope),
+              )
+            }),
+          )
+          .pipe(Effect.catch((error) => notify({ status: "error", error: String(error) })))
+      })
+
       return Service.of({
         resumeSuspendedSessions: Effect.gen(function* () {
           // Disposable sessions are never resumed: release crashed-turn claims so
@@ -205,7 +261,8 @@ export const layer = (options?: Options) =>
           const active = yield* execution.active
           const pending = yield* jobs.pendingBackground
           const children = pending.flatMap((background) =>
-            background.status === "running" && background.recovery.kind !== "shell"
+            background.status === "running" &&
+            (background.recovery.kind === "subagent" || background.recovery.kind === "peer")
               ? [background.recovery.childSessionID]
               : [],
           )
@@ -222,7 +279,9 @@ export const layer = (options?: Options) =>
               const recovery = background.recovery
               yield* recovery.kind === "shell"
                 ? recoverShell(background, recovery)
-                : recoverSubagent(background, recovery, suspended)
+                : recovery.kind === "peer_remote"
+                  ? recoverRemote(background, recovery, suspended)
+                  : recoverSubagent(background, recovery, suspended)
             }),
             { discard: true },
           )
@@ -247,5 +306,5 @@ export const layer = (options?: Options) =>
 export const node = makeGlobalNode({
   service: Service,
   layer: layer(),
-  deps: [SessionStore.node, SessionExecution.node, Bus.node, Job.node, Session.node],
+  deps: [SessionStore.node, SessionExecution.node, Instance.node, Bus.node, Job.node, Session.node],
 })

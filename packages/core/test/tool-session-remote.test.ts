@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer, Stream } from "effect"
 import { Agent } from "@opencode/core/agent"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
@@ -10,10 +10,12 @@ import { Job } from "@opencode/core/job"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Model } from "@opencode/core/model"
+import { PeerPlacements } from "@opencode/core/peer-placements"
 import { PeerServers } from "@opencode/core/peer-servers"
 import { Permission } from "@opencode/core/permission"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
+import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SubagentJob } from "@opencode/core/session/subagent-job"
 import { Plugin } from "@opencode/core/plugin"
@@ -34,6 +36,7 @@ import { executeTool, registerToolPlugin, toolIdentity } from "./lib/tool"
 const remoteText = "remote final response"
 const remoteSessionID = Session.ID.create()
 const calls: { op: string; server: string; input: unknown }[] = []
+let stopNotFound = false
 
 const stubLayer = Layer.succeed(
   PeerServers.Service,
@@ -59,15 +62,29 @@ const stubLayer = Layer.succeed(
             return { sessionID: remoteSessionID, text: remoteText, outcome: "succeeded" as const }
           })
         : Effect.fail(new PeerServers.Failure({ server, detail: "is not configured. Configured servers: lab" })),
+    dispatch: (server, input) =>
+      server === "lab"
+        ? Effect.sync(() => {
+            calls.push({ op: "dispatch", server, input })
+            return { sessionID: remoteSessionID }
+          })
+        : Effect.fail(new PeerServers.Failure({ server, detail: "is not configured. Configured servers: lab" })),
+    watch: (server, sessionID) =>
+      Effect.sync(() => {
+        calls.push({ op: "watch", server, input: sessionID })
+        return remoteText
+      }),
     send: (server, input) =>
       Effect.sync(() => {
         calls.push({ op: "send", server, input })
       }),
     stop: (server, input) =>
-      Effect.sync(() => {
-        calls.push({ op: "stop", server, input })
-        return true
-      }),
+      stopNotFound
+        ? Effect.fail(new PeerServers.Failure({ server, detail: "not found (HTTP 404)", notFound: true }))
+        : Effect.sync(() => {
+            calls.push({ op: "stop", server, input })
+            return true
+          }),
     wait: (server, sessionID) =>
       Effect.sync(() => {
         calls.push({ op: "wait", server, input: sessionID })
@@ -106,6 +123,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     Config.node,
     FileAccess.node,
     Model.node,
+    PeerPlacements.node,
     PeerServers.node,
     Permission.node,
     Session.node,
@@ -150,7 +168,7 @@ const withSessionTools = (location: Location.Ref) =>
   })
 
 const withTools =
-  (run: (registry: Tool.Interface, sessionID: Session.ID) => Effect.Effect<void>) =>
+  <R>(run: (registry: Tool.Interface, sessionID: Session.ID) => Effect.Effect<void, never, R>) =>
   () =>
     Effect.acquireRelease(
     Effect.promise(() => tmpdir()),
@@ -159,6 +177,7 @@ const withTools =
     Effect.flatMap((dir) =>
       Effect.gen(function* () {
         calls.length = 0
+        stopNotFound = false
         const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
         const sessions = yield* Session.Service
         const parent = yield* sessions.create({ location, title: "Orchestrator" })
@@ -216,18 +235,72 @@ describe("SessionTools cross-server dispatch", () => {
   )
 
   it.live(
-    "rejects background dispatch to a peer server",
+    "dispatches a background peer session and routes a later send by session ID alone",
     withTools((registry, sessionID) =>
       Effect.gen(function* () {
-        const settled = yield* call(registry, sessionID, "opencode_session_spawn", {
-          title: "bg",
-          prompt: "hello",
+        const bus = yield* Bus.Service
+        const admitted = yield* bus.subscribe(SessionEvent.InboxEnqueued).pipe(
+          Stream.filter((event) => event.data.sessionID === sessionID && event.data.item.type === "synthetic"),
+          Stream.take(1),
+          Stream.runCollect,
+          Effect.forkScoped({ startImmediately: true }),
+        )
+
+        const spawned = yield* call(registry, sessionID, "opencode_session_spawn", {
+          title: "bg remote",
+          prompt: "go",
           server: "lab",
           background: true,
         })
-        expect(settled.status).toBe("error")
-        expect(JSON.stringify(settled.error)).toContain("foreground")
-        expect(calls).toEqual([])
+        expect(spawned.status).toBe("completed")
+        expect(spawned.output).toEqual({ sessionID: remoteSessionID, status: "running", output: expect.stringContaining("DO NOT sleep") })
+        expect(calls.map((entry) => entry.op)).toContain("dispatch")
+
+        // The watcher job settles with the remote outcome and notifies the parent.
+        const admission = Array.from(yield* Fiber.join(admitted))[0]
+        expect(admission?.data.item.type).toBe("synthetic")
+        if (admission?.data.item.type === "synthetic") {
+          expect(admission.data.item.payload.text).toContain(`<peer sessionID="${remoteSessionID}" state="completed"`)
+          expect(admission.data.item.payload).toMatchObject({
+            description: "bg remote",
+            metadata: { source: "peer_remote", childID: remoteSessionID, state: "completed" },
+          })
+        }
+
+        const sent = yield* call(registry, sessionID, "opencode_session_send", {
+          sessionID: remoteSessionID,
+          prompt: "keep going",
+        })
+        expect(sent.status).toBe("completed")
+        expect(calls.filter((entry) => entry.op === "send")).toEqual([
+          { op: "send", server: "lab", input: { sessionID: remoteSessionID, prompt: "keep going" } },
+        ])
+      }),
+    ),
+  )
+
+  it.live(
+    "drops the placement when the peer reports the dispatched session gone",
+    withTools((registry, sessionID) =>
+      Effect.gen(function* () {
+        const settled = yield* call(registry, sessionID, "opencode_session_spawn", {
+          title: "fg remote",
+          prompt: "do it",
+          server: "lab",
+        })
+        expect(settled.status).toBe("completed")
+
+        stopNotFound = true
+        const stopped = yield* call(registry, sessionID, "opencode_session_stop", { sessionID: remoteSessionID })
+        expect(stopped.status).toBe("error")
+        expect(JSON.stringify(stopped.error)).toContain("HTTP 404")
+
+        const sent = yield* call(registry, sessionID, "opencode_session_send", {
+          sessionID: remoteSessionID,
+          prompt: "still there?",
+        })
+        expect(sent.status).toBe("error")
+        expect(JSON.stringify(sent.error)).toContain("Session not found")
       }),
     ),
   )

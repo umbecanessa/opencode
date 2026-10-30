@@ -32,6 +32,17 @@ const Background = Schema.Struct({
       agent: Schema.String,
       description: Schema.String,
     }),
+    // A peer session dispatched to another OpenCode server: `childSessionID`
+    // lives on `server`, not in this database. Recovery re-arms the remote
+    // watcher so completion still reaches `parentSessionID`.
+    Schema.Struct({
+      kind: Schema.Literal("peer_remote"),
+      parentSessionID: SessionSchema.ID,
+      childSessionID: SessionSchema.ID,
+      server: Schema.String,
+      agent: Schema.String,
+      description: Schema.String,
+    }),
   ]),
   status: Schema.Literals(["running", "completed", "error", "cancelled"]),
   output: Schema.optionalKey(Schema.String),

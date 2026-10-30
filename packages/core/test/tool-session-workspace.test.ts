@@ -11,6 +11,7 @@ import { Job } from "@opencode/core/job"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { Model } from "@opencode/core/model"
+import { PeerPlacements } from "@opencode/core/peer-placements"
 import { PeerServers } from "@opencode/core/peer-servers"
 import { Permission } from "@opencode/core/permission"
 import { AbsolutePath } from "@opencode/core/schema"
@@ -41,6 +42,8 @@ const peerStub = Layer.succeed(
   PeerServers.Service.of({
     list: unused,
     spawn: unused,
+    dispatch: unused,
+    watch: unused,
     send: unused,
     stop: unused,
     wait: unused,
@@ -93,6 +96,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     Config.node,
     FileAccess.node,
     Model.node,
+    PeerPlacements.node,
     PeerServers.node,
     Permission.node,
     Session.node,

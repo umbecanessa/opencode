@@ -24,6 +24,7 @@ import { LocationLifecycle } from "./location-lifecycle.js"
 import { FileAccess } from "./file-access.js"
 import { ModelResolver } from "./model-resolver.js"
 import { Mcp } from "./mcp/index.js"
+import { PeerServers } from "./peer-servers.js"
 import { Permission } from "./permission.js"
 import { Plugin } from "./plugin.js"
 import { PluginHooks } from "./plugin/hooks.js"
@@ -68,6 +69,7 @@ const nodes = [
   Rpc.node,
   WebSearch.node,
   Integration.node,
+  PeerServers.node,
   Provider.node,
   Model.node,
   ModelResolver.node,

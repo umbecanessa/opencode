@@ -54,6 +54,7 @@ import { Location } from "../location.js"
 import { ModelsDev } from "../models-dev.js"
 import { Mcp } from "../mcp/index.js"
 import { Npm } from "@opencode/util/npm"
+import { PeerPlacements } from "../peer-placements.js"
 import { PeerServers } from "../peer-servers.js"
 import { Permission } from "../permission.js"
 import { Reference } from "../reference.js"
@@ -136,6 +137,7 @@ const services = [
   ModelsDev.Service,
   Mcp.Service,
   Npm.Service,
+  PeerPlacements.Service,
   PeerServers.Service,
   Permission.Service,
   Form.Service,
@@ -191,6 +193,7 @@ export const requirements = LayerNode.group([
   ModelsDev.node,
   Mcp.node,
   Npm.node,
+  PeerPlacements.node,
   PeerServers.node,
   Permission.node,
   Form.node,

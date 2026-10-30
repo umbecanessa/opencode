@@ -22,13 +22,13 @@ export const deliver = Effect.fnUntraced(function* (
   sessions: Pick<Session.Interface, "synthetic">,
   jobs: Pick<Job.Interface, "completeBackground">,
   input: Pick<Job.Info, "status" | "output" | "error" | "notificationID"> & {
-    recovery: Extract<Job.Recovery, { kind: "subagent" | "peer" }>
+    recovery: Extract<Job.Recovery, { kind: "subagent" | "peer" | "peer_remote" }>
     resume?: boolean
   },
 ) {
   if (input.status === "running") return
   const recovery = input.recovery
-  const tag = recovery.kind === "peer" ? "peer" : "subagent"
+  const tag = recovery.kind === "subagent" ? "subagent" : "peer"
   const text =
     input.status === "completed"
       ? (input.output ?? NO_TEXT)

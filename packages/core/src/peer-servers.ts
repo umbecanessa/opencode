@@ -8,6 +8,7 @@ import { ConfigServer } from "@opencode/schema/config/server"
 import { Config } from "./config.js"
 import { Model } from "./model.js"
 import { SessionSchema } from "./session/schema.js"
+import { SubagentCompletion } from "./session/subagent-completion.js"
 
 export type Outcome = "succeeded" | "failed" | "interrupted"
 
@@ -27,6 +28,8 @@ export interface Entry {
 export class Failure extends Schema.TaggedError<Failure>()("PeerServers.Failure", {
   server: Schema.String,
   detail: Schema.String,
+  /** Set when the remote answered 404: the target session may no longer exist there. */
+  notFound: Schema.optionalKey(Schema.Boolean),
 }) {
   override get message() {
     return `${this.server}: ${this.detail}`
@@ -51,6 +54,23 @@ export interface Interface {
     { readonly sessionID: SessionSchema.ID; readonly text?: string; readonly outcome?: Outcome },
     Failure
   >
+  /** Creates and prompts a remote session without waiting: the run continues on the peer. */
+  readonly dispatch: (
+    server: string,
+    input: {
+      readonly title: string
+      readonly prompt: string
+      readonly agent?: string
+      readonly model?: typeof Model.Ref.Type
+      readonly temporary?: boolean
+    },
+  ) => Effect.Effect<{ readonly sessionID: SessionSchema.ID }, Failure>
+  /**
+   * Blocks until the remote session goes idle and returns its final text.
+   * A failed outcome surfaces as a Failure and an interrupted one interrupts
+   * this effect, so a local job observing the run settles with matching state.
+   */
+  readonly watch: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<string, Failure>
   readonly send: (
     server: string,
     input: { readonly sessionID: SessionSchema.ID; readonly prompt: string; readonly delivery?: "steer" | "queue" },
@@ -199,7 +219,7 @@ const layer = Layer.effect(
           server,
           detail: `authentication failed (HTTP ${response.status}): set the server's credential in the \`servers\` config`,
         })
-      if (response.status === 404) return yield* new Failure({ server, detail: "not found (HTTP 404)" })
+      if (response.status === 404) return yield* new Failure({ server, detail: "not found (HTTP 404)", notFound: true })
       if (response.status >= 400) {
         const body = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")))
         return yield* new Failure({
@@ -243,6 +263,36 @@ const layer = Layer.effect(
         Effect.flatMap(json(server, SessionResponse)),
         Effect.map((response) => response.data.outcome),
       )
+
+    const contextOf = (server: string, sessionID: SessionSchema.ID) =>
+      call(server, get(`/api/session/${sessionID}/context`)).pipe(Effect.flatMap(json(server, ContextResponse)))
+
+    const createAndPrompt = (
+      server: string,
+      input: {
+        readonly title: string
+        readonly prompt: string
+        readonly agent?: string
+        readonly model?: typeof Model.Ref.Type
+        readonly temporary?: boolean
+      },
+    ) =>
+      Effect.gen(function* () {
+        const created = yield* call(
+          server,
+          postJson("/api/session", CreateBody, {
+            title: input.title,
+            ...(input.agent === undefined ? {} : { agent: input.agent }),
+            ...(input.model === undefined ? {} : { model: input.model }),
+            ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+          }),
+        ).pipe(Effect.flatMap(json(server, SessionResponse)))
+        const sessionID = created.data.id
+        yield* call(server, postJson(`/api/session/${sessionID}/prompt`, PromptBody, { text: input.prompt })).pipe(
+          Effect.asVoid,
+        )
+        return sessionID
+      })
 
     const running = (server: string, sessionID: SessionSchema.ID) =>
       call(server, get("/api/session/active")).pipe(
@@ -307,31 +357,34 @@ const layer = Layer.effect(
       }),
 
       spawn: Effect.fn("PeerServers.spawn")(function* (server, input) {
-        const created = yield* call(
-          server,
-          postJson("/api/session", CreateBody, {
-            title: input.title,
-            ...(input.agent === undefined ? {} : { agent: input.agent }),
-            ...(input.model === undefined ? {} : { model: input.model }),
-            ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
-          }),
-        ).pipe(Effect.flatMap(json(server, SessionResponse)))
-        const sessionID = created.data.id
-        yield* call(server, postJson(`/api/session/${sessionID}/prompt`, PromptBody, { text: input.prompt })).pipe(
-          Effect.asVoid,
-        )
+        const sessionID = yield* createAndPrompt(server, input)
         // Blocking interruption stops the remote run: the caller gave up on the whole task.
         yield* idleAfterPrompt(server, sessionID).pipe(
           Effect.onInterrupt(() => interruptRemote(server, sessionID).pipe(Effect.ignore)),
         )
-        const [context, outcome] = yield* Effect.all(
-          [
-            call(server, get(`/api/session/${sessionID}/context`)).pipe(Effect.flatMap(json(server, ContextResponse))),
-            outcomeOf(server, sessionID),
-          ],
-          { concurrency: 2 },
-        )
+        const [context, outcome] = yield* Effect.all([contextOf(server, sessionID), outcomeOf(server, sessionID)], {
+          concurrency: 2,
+        })
         return { sessionID, text: lastText(context.data), outcome }
+      }),
+
+      dispatch: Effect.fn("PeerServers.dispatch")(function* (server, input) {
+        return { sessionID: yield* createAndPrompt(server, input) }
+      }),
+
+      watch: Effect.fn("PeerServers.watch")(function* (server, sessionID) {
+        // Interruption of the watcher is the caller's verdict on the whole task,
+        // mirroring a blocking spawn: it stops the remote run too.
+        yield* idleAfterPrompt(server, sessionID).pipe(
+          Effect.onInterrupt(() => interruptRemote(server, sessionID).pipe(Effect.ignore)),
+        )
+        const [context, outcome] = yield* Effect.all([contextOf(server, sessionID), outcomeOf(server, sessionID)], {
+          concurrency: 2,
+        })
+        if (outcome === "failed")
+          return yield* new Failure({ server, detail: `the peer session ended in failure (sessionID: ${sessionID})` })
+        if (outcome === "interrupted") return yield* Effect.interrupt
+        return lastText(context.data) ?? SubagentCompletion.NO_TEXT
       }),
 
       send: Effect.fn("PeerServers.send")(function* (server, input) {

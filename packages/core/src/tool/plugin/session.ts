@@ -11,6 +11,7 @@ import { Config } from "../../config.js"
 import { FileAccess } from "../../file-access.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
+import { PeerPlacements } from "../../peer-placements.js"
 import { PeerServers } from "../../peer-servers.js"
 import { Permission } from "../../permission.js"
 import { AbsolutePath } from "../../schema.js"
@@ -97,7 +98,7 @@ const SpawnInput = Schema.Struct({
   }),
   server: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
     description:
-      'Name of a configured peer OpenCode server (config "servers") to dispatch to. The session runs there in the foreground and its final text is returned; background and directory do not apply.',
+      'Name of a configured peer OpenCode server (config "servers") to dispatch to. The session runs there and its final text is returned; background=true works there too (completion arrives as a <peer> message) and the placement routes later send, stop, and wait calls by session ID; directory does not apply.',
   }),
   workspace: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
     description:
@@ -181,6 +182,7 @@ export const Plugin = {
     const models = yield* Model.Service
     const subagents = yield* SubagentJob.Service
     const peers = yield* PeerServers.Service
+    const placements = yield* PeerPlacements.Service
     const config = yield* Config.Service
     const workspaces = yield* Workspace.Service
 
@@ -211,6 +213,39 @@ export const Plugin = {
           .pipe(Effect.mapError((error) => new ToolFailure({ message: `Unable to pin workspace "${name}"`, error })))
         return { directory: AbsolutePath.make(entry.directory), workspaceID }
       })
+
+    // Target routing for session_send/stop/wait: an explicit server parameter
+    // wins; otherwise the session is local, or a placement recorded by an
+    // earlier dispatch routes it by session ID alone.
+    const resolveServer = (sessionID: SessionSchema.ID, server: string | undefined) =>
+      server !== undefined
+        ? Effect.succeed<string | undefined>(server)
+        : sessions.get(sessionID).pipe(
+            Effect.as(undefined),
+            Effect.catch(() =>
+              placements.locate(sessionID).pipe(
+                Effect.map((entry) => (entry._tag === "Some" ? entry.value.server : undefined)),
+              ),
+            ),
+          )
+
+    // A 404 from the peer disproves the placement record: drop it so a later
+    // call reports the session as simply not found.
+    const forgetIfGone = <A>(
+      server: string,
+      sessionID: SessionSchema.ID,
+      effect: Effect.Effect<A, PeerServers.Failure>,
+    ) =>
+      effect.pipe(
+        Effect.catch((failure) =>
+          failure.notFound === true
+            ? placements.forget(sessionID).pipe(Effect.flatMap(() => Effect.fail(failure)))
+            : Effect.fail(failure),
+        ),
+      )
+
+    const remoteFailure = (server: string) => (error: PeerServers.Failure) =>
+      new ToolFailure({ message: `Unable to reach ${server}: ${error.detail}`, error })
 
     yield* ctx.tool
       .transform((editor) => {
@@ -290,7 +325,8 @@ export const Plugin = {
             "Foreground (default) blocks until the session goes idle and returns its final text.",
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
             "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
-            "Set server to dispatch the whole task to a named peer OpenCode server (config `servers` or registered by the desktop): it runs there in the foreground (background and directory do not apply) and returns its final text.",
+            "Set server to dispatch the whole task to a named peer OpenCode server (config `servers` or registered by the desktop): it runs there and returns its final text. background=true is supported there too: the dispatch returns immediately and its completion arrives as a <peer> message.",
+            "The server parameter is optional for session_send, session_stop, and session_wait on sessions you dispatched: their placement routes the call by session ID alone.",
             "Set workspace to a named ssh workspace from the config `workspaces` map: the session's shell and file tools operate on that remote host inside the entry's directory (directory does not apply).",
           ].join("\n"),
           input: SpawnInput,
@@ -299,10 +335,6 @@ export const Plugin = {
           execute: (input, context) =>
             Effect.gen(function* () {
               if (input.server !== undefined) {
-                if (input.background === true)
-                  return yield* new ToolFailure({
-                    message: "background=true is not supported with server: a dispatched session runs in the foreground and returns its final text.",
-                  })
                 if (input.directory !== undefined)
                   return yield* new ToolFailure({
                     message: "directory does not apply with server: the session runs in the peer server's own project location.",
@@ -313,17 +345,59 @@ export const Plugin = {
                   })
                 yield* assertServer(permission, input.server, context)
                 const remoteModel = input.model === undefined ? undefined : yield* parseModel(input.model)
-                const result = yield* peers
-                  .spawn(input.server, {
+                const remoteInput = {
+                  title: input.title,
+                  prompt: input.prompt,
+                  ...(input.agent === undefined ? {} : { agent: input.agent }),
+                  ...(remoteModel === undefined ? {} : { model: remoteModel }),
+                  ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+                }
+                if (input.background === true) {
+                  const dispatched = yield* peers
+                    .dispatch(input.server, remoteInput)
+                    .pipe(Effect.mapError((error) => new ToolFailure({ message: `Unable to dispatch to ${input.server}`, error })))
+                  yield* placements
+                    .record(input.server, dispatched.sessionID)
+                    .pipe(
+                      Effect.mapError(
+                        (error) => new ToolFailure({ message: `Unable to place the dispatched session: ${error.message}` }),
+                      ),
+                    )
+                  const recovery = {
+                    kind: "peer_remote" as const,
+                    parentSessionID: context.sessionID,
+                    childSessionID: dispatched.sessionID,
+                    server: input.server,
+                    agent: input.agent ?? Agent.defaultID,
+                    description: input.title,
+                  }
+                  // The local job is only the completion observer: its run waits on
+                  // the peer and survives restarts through restart recovery.
+                  yield* jobs.start({
+                    id: dispatched.sessionID,
+                    type: "subagent",
                     title: input.title,
-                    prompt: input.prompt,
-                    ...(input.agent === undefined ? {} : { agent: input.agent }),
-                    ...(remoteModel === undefined ? {} : { model: remoteModel }),
-                    ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+                    recovery,
+                    run: peers.watch(input.server, dispatched.sessionID),
                   })
+                  yield* context.progress({ sessionID: dispatched.sessionID, status: "running" })
+                  yield* subagents.background(recovery)
+                  return spawnResult(dispatched.sessionID)
+                }
+                const result = yield* peers
+                  .spawn(input.server, remoteInput)
                   .pipe(
                     Effect.mapError(
                       (error) => new ToolFailure({ message: `Unable to dispatch to ${input.server}`, error }),
+                    ),
+                  )
+                // Record even for the foreground dispatch: later sends, stops, and
+                // waits route by this session ID alone.
+                yield* placements
+                  .record(input.server, result.sessionID)
+                  .pipe(
+                    Effect.mapError(
+                      (error) => new ToolFailure({ message: `Unable to place the dispatched session: ${error.message}` }),
                     ),
                   )
                 if (result.outcome === "failed")
@@ -463,6 +537,7 @@ export const Plugin = {
             "Sends a follow-up prompt to an existing session by ID, reusing everything it already knows.",
             "The session keeps its current agent and model.",
             "A completion notification is NOT sent for this message; use session_wait to join the run, or session_spawn with background for notified runs.",
+            "A session you dispatched to a peer server earlier is routed by its ID alone; pass server explicitly only for sessions you did not dispatch.",
             "If the session is not found it may be an expired temporary session; spawn a fresh one with the needed context instead.",
           ].join("\n"),
           input: SendInput,
@@ -470,22 +545,21 @@ export const Plugin = {
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
-              if (input.server !== undefined) {
-                yield* assertServer(permission, input.server, context)
-                yield* peers
-                  .send(input.server, {
+              const server = yield* resolveServer(input.sessionID, input.server)
+              if (server !== undefined) {
+                yield* assertServer(permission, server, context)
+                yield* forgetIfGone(
+                  server,
+                  input.sessionID,
+                  peers.send(server, {
                     sessionID: input.sessionID,
                     prompt: input.prompt,
                     ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
-                  })
-                  .pipe(
-                    Effect.mapError(
-                      (error) => new ToolFailure({ message: `Unable to reach ${input.server}: ${error.detail}`, error }),
-                    ),
-                  )
+                  }),
+                ).pipe(Effect.mapError(remoteFailure(server)))
                 return {
                   output: { sessionID: input.sessionID, accepted: true },
-                  content: `Prompt delivered to ${input.sessionID} on ${input.server}.`,
+                  content: `Prompt delivered to ${input.sessionID} on ${server}.`,
                 }
               }
               yield* sessions
@@ -527,29 +601,29 @@ export const Plugin = {
           description: [
             "Interrupts a session's active execution. Queued prompts remain parked; the session's history stays intact and session_send can continue it.",
             "Returns interrupted=true only when a run was actually stopped; false means the session was idle.",
+            "A session you dispatched to a peer server earlier is stopped by its ID alone.",
           ].join("\n"),
           input: StopInput,
           output: Schema.Struct({ sessionID: SessionSchema.ID, interrupted: Schema.Boolean }),
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
-              if (input.server !== undefined) {
-                yield* assertServer(permission, input.server, context)
-                const interrupted = yield* peers
-                  .stop(input.server, {
+              const server = yield* resolveServer(input.sessionID, input.server)
+              if (server !== undefined) {
+                yield* assertServer(permission, server, context)
+                const interrupted = yield* forgetIfGone(
+                  server,
+                  input.sessionID,
+                  peers.stop(server, {
                     sessionID: input.sessionID,
                     ...(input.resume === undefined ? {} : { resume: input.resume }),
-                  })
-                  .pipe(
-                    Effect.mapError(
-                      (error) => new ToolFailure({ message: `Unable to reach ${input.server}: ${error.detail}`, error }),
-                    ),
-                  )
+                  }),
+                ).pipe(Effect.mapError(remoteFailure(server)))
                 return {
                   output: { sessionID: input.sessionID, interrupted },
                   content: interrupted
-                    ? `Interrupted ${input.sessionID} on ${input.server}.`
-                    : `${input.sessionID} on ${input.server} was already idle.`,
+                    ? `Interrupted ${input.sessionID} on ${server}.`
+                    : `${input.sessionID} on ${server} was already idle.`,
                 }
               }
               yield* sessions
@@ -585,6 +659,7 @@ export const Plugin = {
           description: [
             "Waits for a session to go idle, up to the timeout, and reports its last outcome.",
             "Prefer session_spawn with background=true and its completion notification; use this only when you genuinely need to join a run you did not start.",
+            "A session you dispatched to a peer server earlier is awaited by its ID alone.",
           ].join("\n"),
           input: WaitInput,
           output: Schema.Struct({
@@ -595,29 +670,19 @@ export const Plugin = {
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
-              if (input.server !== undefined) {
-                yield* assertServer(permission, input.server, context)
-                const timedOut = yield* peers
-                  .wait(input.server, input.sessionID)
-                  .pipe(
-                    Effect.mapError(
-                      (error) =>
-                        new ToolFailure({ message: `Unable to wait on ${input.server}: ${error.detail}`, error }),
-                    ),
-                  )
-                  .pipe(Effect.timeoutOption((input.timeout ?? 60) * 1000))
-                  .pipe(Effect.map((option) => option._tag === "None"))
-                const outcome = yield* peers
-                  .outcome(input.server, input.sessionID)
-                  .pipe(
-                    Effect.mapError(
-                      (error) =>
-                        new ToolFailure({
-                          message: `Unable to read session ${input.sessionID} on ${input.server}: ${error.detail}`,
-                          error,
-                        }),
-                    ),
-                  )
+              const server = yield* resolveServer(input.sessionID, input.server)
+              if (server !== undefined) {
+                yield* assertServer(permission, server, context)
+                const timedOut = yield* forgetIfGone(server, input.sessionID, peers.wait(server, input.sessionID)).pipe(
+                  Effect.mapError(remoteFailure(server)),
+                  Effect.timeoutOption((input.timeout ?? 60) * 1000),
+                  Effect.map((option) => option._tag === "None"),
+                )
+                const outcome = yield* forgetIfGone(
+                  server,
+                  input.sessionID,
+                  peers.outcome(server, input.sessionID),
+                ).pipe(Effect.mapError(remoteFailure(server)))
                 return {
                   output: {
                     sessionID: input.sessionID,
@@ -668,8 +733,8 @@ export const Plugin = {
         if (!event.tools.session_spawn) return
         const names = yield* peers.names
         const peersLine = names.length
-          ? `Peer OpenCode servers available for the server parameter: ${names.join(", ")}. It lists, dispatches, sends, stops, and waits against that machine.`
-          : "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine."
+          ? `Peer OpenCode servers available for the server parameter: ${names.join(", ")}. It lists, dispatches, sends, stops, and waits against that machine. Sessions dispatched with server remember their placement: send, stop, and wait route to them by session ID alone.`
+          : "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine. Sessions dispatched with server remember their placement: send, stop, and wait route to them by session ID alone."
         const workspaceNames = Object.keys(Config.latest(yield* config.entries(), "workspaces") ?? {})
         const workspacesLine = workspaceNames.length
           ? ` ssh workspaces available for session_spawn's workspace parameter: ${workspaceNames.join(", ")}. A placed session runs its shell and file tools on that remote host inside the configured directory.`
