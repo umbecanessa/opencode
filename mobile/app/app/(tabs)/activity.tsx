@@ -83,7 +83,11 @@ export default function Activity() {
       groups.set(key, [...(groups.get(key) ?? []), item])
     })
     type NavigationItem = { kind: "heading"; key: string; title: string } | { kind: "project"; key: string; title: string; host: string; directory: string; count: number } | { kind: "session"; key: string; item: TreeItem }
-    const result: NavigationItem[] = [{ kind: "heading", key: "recent-heading", title: "Recent" }, ...recent.map((item) => ({ kind: "session" as const, key: `recent/${item.key}`, item }))]
+    // Tapping a Recent row's branch chip expands its subagents inline, matching the grouped Projects rows.
+    const result: NavigationItem[] = [{ kind: "heading", key: "recent-heading", title: "Recent" }, ...recent.flatMap((item) => [
+      { kind: "session" as const, key: `recent/${item.key}`, item },
+      ...(item.open ? flattenFamilies([item.family], new Set([item.key])).slice(1).map((child) => ({ kind: "session" as const, key: `recent/${child.key}`, item: child })) : []),
+    ])]
     result.push({ kind: "heading", key: "projects-heading", title: "Projects" })
     groups.forEach((members, key) => {
       const session = members[0].family.session

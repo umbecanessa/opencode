@@ -50,6 +50,9 @@ export const TreeRow = ({
   if (item.kind === "child") return <ChildRow session={item.session} branchEnd={item.last} last={last} live={live} onOpen={onOpen} />
   const { session, children } = item.family
   const status = familyStatus(live, session.host, [session.id, ...children.map((c) => c.id)])
+  // The chip tracks live activity, like the desktop's background-activity affordance: it counts subagents that
+  // are running or waiting, and an idle family carries no chip once collapsed.
+  const active = children.filter((c) => statusOf(live, c.host, c.id) !== "done")
   return (
     <Row
       first={first}
@@ -60,17 +63,17 @@ export const TreeRow = ({
       detail={showDirectory ? session.location?.directory?.split(/[\\/]/).pop() : undefined}
       onPress={() => onOpen(session)}
       accessory={
-        children.length > 0 && (
+        (active.length > 0 || item.open) && (
           <Pressable
             onPress={() => onToggle(item.key)}
             hitSlop={{ top: 14, bottom: 14, left: 8, right: 8 }}
             style={({ pressed }) => [styles.pill, { backgroundColor: item.open ? t.tint : t.fill.secondary, opacity: pressed ? 0.7 : 1 }]}
             accessibilityRole="button"
-            accessibilityLabel={`${item.open ? "Hide" : "Show"} ${children.length} subagent${children.length === 1 ? "" : "s"}`}
+            accessibilityLabel={`${item.open ? "Hide" : "Show"} ${active.length || children.length} subagent${(active.length || children.length) === 1 ? "" : "s"}`}
           >
             <Ionicons name="git-branch-outline" size={11} color={item.open ? "#FFFFFF" : t.secondaryLabel} />
             <Text style={[t.font.caption, { color: item.open ? "#FFFFFF" : t.secondaryLabel, fontWeight: "600" }]}>
-              {children.length}
+              {active.length || children.length}
             </Text>
             <Ionicons name={item.open ? "chevron-up" : "chevron-down"} size={11} color={item.open ? "#FFFFFF" : t.secondaryLabel} />
           </Pressable>

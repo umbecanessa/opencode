@@ -79,6 +79,7 @@ export default function Session() {
 
   // Subagents raise their own approvals, so the parent screen asks each running child as well.
   const runningChildren = subagents.filter((s) => live.running.has(liveKey(params.host, s.id))).map((s) => s.id).join(",")
+  const activeSubagents = subagents.filter((s) => familyStatus(live, params.host, [s.id]) !== "done")
   useEffect(() => {
     if (!c) return
     let cancelled = false
@@ -425,6 +426,26 @@ export default function Session() {
         setPanel(undefined)
         c.session(params.id).then((s) => setSelectedModel(s.model)).catch(() => {})
       }} />}
+      {activeSubagents.length > 0 && (
+        <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 6, marginHorizontal: 16, marginBottom: 8, marginTop: 8, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 12, backgroundColor: t.surface }}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 6, marginRight: 2 }}>
+            <ActivityIndicator size="small" color={t.tint} />
+            <Text style={[t.font.footnote, { color: t.secondaryLabel }]}>{activeSubagents.length} subagent{activeSubagents.length === 1 ? "" : "s"} running</Text>
+          </View>
+          {activeSubagents.map((s) => (
+            <Pressable
+              key={s.id}
+              onPress={() => router.push({ pathname: "/session", params: { host: params.host, id: s.id, title: s.title } })}
+              accessibilityRole="button"
+              accessibilityLabel={`Open subagent ${s.title}`}
+              style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 4, paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, backgroundColor: pressed ? t.surfaceRaised : t.fill.secondary })}
+            >
+              <Ionicons name="git-branch-outline" size={11} color={t.secondaryLabel} />
+              <Text numberOfLines={1} style={[t.font.caption, { color: t.secondaryLabel, maxWidth: 140 }]}>{s.agent ?? s.title}</Text>
+            </Pressable>
+          ))}
+        </View>
+      )}
       <Composer running={running} disabled={!c} onSend={send} onStop={stop}
         modelLabel={selectedModel ? `${selectedModel.id.split("/").pop()}${selectedModel.variant ? ` · ${selectedModel.variant}` : ""}` : undefined}
         activeModelLabel={messages.find((m) => m.type === "assistant" && m.model)?.model?.id?.split("/").pop()}
