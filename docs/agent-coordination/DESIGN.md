@@ -126,8 +126,9 @@ no configurable retention.
   through `Config.normalize` unchanged.
 - Remaining for this phase: the prose pages in the V2 docs site, which lives
   in the separate `services/www` repository (the skill refers to it via
-  `opencode.ai/v2/docs` links); the TUI temporary-session button (the
-  desktop/app one is implemented, see the Phase 4b note).
+  `opencode.ai/v2/docs` links). The TUI temporary-session button is dropped
+  by decision: the TUI is not used here, and the desktop/app entry is
+  implemented (see the Phase 4b note).
 - `bun run generate` in `packages/client` was run for the Phase 2 protocol
   additions; rerun it after any future Protocol/Server HttpApi change.
 
