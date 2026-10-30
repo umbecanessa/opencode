@@ -474,6 +474,48 @@ context.
 
 See the [references guide](/references) for shorthand, visibility, and path resolution.
 
+### Servers
+
+Name peer OpenCode servers that the session coordination tools may act against.
+Each entry has the server's `url` and, when the peer requires authentication,
+its `credential`, sent as the HTTP Basic password with username `opencode`.
+
+```jsonc
+{
+  "servers": {
+    "lab": {
+      "url": "http://192.168.1.20:4096",
+      "credential": "the-peer-server-password",
+    },
+  },
+}
+```
+
+See [session coordination](/session-coordination#cross-server-dispatch) for
+dispatch, permissions, and the desktop's runtime-registered servers.
+
+### Workspaces
+
+Name remote machines that sessions can be placed on. Each entry connects over
+ssh with the local `ssh` binary, so `~/.ssh/config` aliases work; `directory`
+is the project root ON THE REMOTE HOST.
+
+```jsonc
+{
+  "workspaces": {
+    "buildbox": {
+      "type": "ssh",
+      "host": "build.example.com",
+      "user": "ana",
+      "directory": "/home/ana/projects/app",
+    },
+  },
+}
+```
+
+See [session coordination](/session-coordination#native-placement-ssh-workspaces)
+for placement behavior, permissions, and execution-over-ssh limits.
+
 ### Worktrees
 
 Set the parent directory for new local worktrees. OpenCode appends the requested or generated worktree name.

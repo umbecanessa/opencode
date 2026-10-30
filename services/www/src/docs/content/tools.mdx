@@ -236,6 +236,28 @@ Rename this session to "Timeout cleanup", then move it to the new worktree.
 
 These utilities do not request a built-in permission action.
 
+### Coordination
+
+The same namespace coordinates independent peer sessions:
+
+- `session_list` lists recent sessions with their activity, to find a session
+  the user refers to without an ID.
+- `session_spawn` creates a standalone main-agent session and runs a prompt in
+  it, with `background` and `temporary` variants.
+- `session_send` sends a follow-up prompt to an existing session by ID.
+- `session_stop` interrupts a session's active run.
+- `session_wait` waits for a session to go idle and reports its outcome.
+
+```text
+Spawn a background peer session to update the changelog while you keep working.
+```
+
+Peer completion arrives as a `<peer>` message; never poll before it. The tools
+can also act on other machines through the config `servers` and `workspaces`
+maps. Permissions: `session`, plus the `server` and `workspace` actions for
+remote work. See [session coordination](/session-coordination) for the full
+guide.
+
 ### Worktrees
 
 The same namespace manages worktrees for the session's project:

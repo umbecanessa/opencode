@@ -124,9 +124,12 @@ no configurable retention.
   and both the native `permissions` array and the V1-style `permission` map
   already accept `session` keys, so `permission: { session: ... }` flows
   through `Config.normalize` unchanged.
-- Remaining for this phase: the prose pages in the V2 docs site, which lives
-  in the separate `services/www` repository (the skill refers to it via
-  `opencode.ai/v2/docs` links). The TUI temporary-session button is dropped
+- The V2 docs prose landed in this repository's tracked `services/www`
+  docs feature: a new `session-coordination.mdx` guide plus `servers` and
+  `workspaces` sections in `config.mdx`, the `session` / `server` /
+  `workspace` rows in `permissions.mdx`, a Coordination section in
+  `tools.mdx`, and a sidebar entry in `lib/navigation.ts` (validated with
+  `bun typecheck` and `bun run build` from `services/www`). The TUI temporary-session button is dropped
   by decision: the TUI is not used here, and the desktop/app entry is
   implemented (see the Phase 4b note).
 - `bun run generate` in `packages/client` was run for the Phase 2 protocol
@@ -155,7 +158,8 @@ permission asks; pre-approve in the remote project or keep a client attached.
 Covered by `packages/core/test/tool-session-remote.test.ts` (stubbed
 `PeerServers` routing) plus the existing local tool suite.
 
-Remaining for this phase: the V2 docs prose in `services/www`.
+Docs prose for this phase shipped with the same `services/www` pages noted
+under Phase 3 (cross-server dispatch section and `server` permission row).
 
 ### Desktop registration (implemented here)
 
