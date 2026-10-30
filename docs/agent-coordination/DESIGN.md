@@ -129,17 +129,32 @@ sessions onto the flag, no configurable retention.
 - `bun run generate` in `packages/client` was run for the Phase 2 protocol
   additions; rerun it after any future Protocol/Server HttpApi change.
 
-## Phase 4 — Peer servers (bridging)
+## Phase 4 — Peer servers (bridging) (implemented here)
 
-Config gains server-side `servers: { name: { url, credential } }`.
-`session_spawn` / `session_list` accept `server?: string` and route to the
-peer's own HTTP API — zero new protocol surface, since `session.create`,
-`session.prompt`, `session.interrupt`, `session.wait` all already exist
-remotely. The desktop app syncs its SSH/WSL-registered servers into this
-config (the only genuinely new wire). New permission action `server`, default
-deny. Caveat documented in tool text: a dispatched remote session with no
-attached client has nowhere to surface permission asks; pre-approve in the
-remote project or keep a client attached.
+Config gains server-side `servers: { name: { url, credential } }`
+(`packages/schema/src/config/server.ts`, `Config.Server`; passed through
+`Config.normalize`). All five `session_*` tools accept `server?: string` and
+route to the peer's own HTTP API through the new Location-scoped
+`PeerServers` core service (`packages/core/src/peer-servers.ts`) — zero new
+protocol surface, since `session.list`, `session.create`, `session.prompt`,
+`session.interrupt`, `session.wait`, `session.active`, `session.context`, and
+`session.inbox.list` all already exist remotely. Auth is HTTP Basic with
+username `opencode` and the config `credential` as password
+(`packages/server/src/auth.ts`). New permission action `server`, resource is
+the server name, default ask; remote branches skip the local `session`
+asserts. Remote `session.wait` resolves instantly when a run has not started
+yet, so the spawn/wait paths run a settle loop (re-check `session.active` and
+`session.inbox.list` after every wait) instead of trusting one wait.
+Dispatched sessions are foreground-only (`background` and `directory` are
+rejected with explicit failures). Caveat documented in skill and tool text:
+a dispatched remote session with no attached client has nowhere to surface
+permission asks; pre-approve in the remote project or keep a client attached.
+Covered by `packages/core/test/tool-session-remote.test.ts` (stubbed
+`PeerServers` routing) plus the existing local tool suite.
+
+Remaining for this phase: the desktop app syncing its SSH/WSL-registered
+servers into this config (the only genuinely new wire), and V2 docs prose in
+`services/www`.
 
 ## Phase 5 — Placement (clustering endpoint)
 

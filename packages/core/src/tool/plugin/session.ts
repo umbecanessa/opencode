@@ -3,12 +3,14 @@ export * as SessionTools from "./session.js"
 import { SystemPart, ToolFailure } from "@opencode/ai/effect"
 import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
+import type { Tool } from "@opencode/schema/tool"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { DateTime, Effect, Schema } from "effect"
 import { Agent } from "../../agent.js"
 import { FileAccess } from "../../file-access.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
+import { PeerServers } from "../../peer-servers.js"
 import { Permission } from "../../permission.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
@@ -23,6 +25,30 @@ const spawnResult = (sessionID: SessionSchema.ID) => ({
     "DO NOT sleep, poll for progress, ask the peer for status, or duplicate this peer session's work.",
     "Work on non-overlapping tasks, or briefly tell the user what you launched and end your response.",
   ].join("\n"),
+})
+
+const parseModel = (requested: string) =>
+  Effect.try({
+    try: () => Model.Ref.parse(requested),
+    catch: () => new ToolFailure({ message: `Invalid model "${requested}". Use "providerID/modelID#variant".` }),
+  })
+
+// Remote dispatch gates on its own `server` permission action: talking to another machine
+// is a bigger step than coordinating sessions on this one.
+const assertServer = (permission: Permission.Interface, server: string, context: Tool.Context) =>
+  permission
+    .assert({
+      action: "server",
+      resources: [server],
+      save: [server],
+      sessionID: context.sessionID,
+      agent: context.agent,
+      source: { type: "tool", messageID: context.messageID, id: context.id },
+    })
+    .pipe(Effect.mapError((error) => new ToolFailure({ message: `Cross-server dispatch denied: ${server}`, error })))
+
+const serverField = Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+  description: "Name of a configured peer OpenCode server (config `servers`) to act against instead of this one.",
 })
 
 const SpawnInput = Schema.Struct({
@@ -51,6 +77,10 @@ const SpawnInput = Schema.Struct({
     description:
       "true creates a disposable session: it never appears in session lists and is deleted roughly a day after finishing. Prefer true for spot tasks the user should not see in history. The session's permissions default to no edits, no subagents, and no peer spawning.",
   }),
+  server: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description:
+      'Name of a configured peer OpenCode server (config "servers") to dispatch to. The session runs there in the foreground and its final text is returned; background and directory do not apply.',
+  }),
 })
 
 const SpawnOutput = Schema.Struct({
@@ -68,6 +98,7 @@ const SendInput = Schema.Struct({
   resume: Schema.optionalKey(Schema.Boolean).annotate({
     description: "false admits the prompt without waking an idle session. Default true.",
   }),
+  server: serverField,
 })
 
 const StopInput = Schema.Struct({
@@ -75,6 +106,7 @@ const StopInput = Schema.Struct({
   resume: Schema.optionalKey(Schema.Boolean).annotate({
     description: "true keeps pending steering and queued controls pending after the interrupt. Default false.",
   }),
+  server: serverField,
 })
 
 const WaitInput = Schema.Struct({
@@ -82,6 +114,7 @@ const WaitInput = Schema.Struct({
   timeout: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 600 }))).annotate({
     description: "Maximum seconds to wait for the session to go idle. Defaults to 60.",
   }),
+  server: serverField,
 })
 
 const ListInput = Schema.Struct({
@@ -92,6 +125,7 @@ const ListInput = Schema.Struct({
   temporary: Schema.optionalKey(Schema.Boolean).annotate({
     description: "true lists only the disposable temporary sessions (they are otherwise invisible).",
   }),
+  server: serverField,
 })
 
 const ListOutput = Schema.Struct({
@@ -124,13 +158,14 @@ export const Plugin = {
     const permission = yield* Permission.Service
     const models = yield* Model.Service
     const subagents = yield* SubagentJob.Service
+    const peers = yield* PeerServers.Service
 
     yield* ctx.tool
       .transform((editor) => {
         editor.add({
           name: "session_list",
           description: [
-            "List recent sessions on this OpenCode server with their activity.",
+            "List recent sessions on this OpenCode server with their activity, or on a named peer server with the server parameter.",
             "Use it to find a session the user refers to without an ID.",
           ].join(" "),
           input: ListInput,
@@ -138,6 +173,21 @@ export const Plugin = {
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
+              if (input.server !== undefined) {
+                yield* assertServer(permission, input.server, context)
+                const data = yield* peers
+                  .list(input.server, {
+                    ...(input.limit === undefined ? {} : { limit: input.limit }),
+                    ...(input.search === undefined ? {} : { search: input.search }),
+                    ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) => new ToolFailure({ message: `Unable to list sessions on ${input.server}`, error }),
+                    ),
+                  )
+                return { output: { data } }
+              }
               yield* permission
                 .assert({
                   action: "session",
@@ -188,12 +238,51 @@ export const Plugin = {
             "Foreground (default) blocks until the session goes idle and returns its final text.",
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
             "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
+            "Set server to dispatch the whole task to a peer OpenCode server from the config `servers` map: it runs there in the foreground (background and directory do not apply) and returns its final text.",
           ].join("\n"),
           input: SpawnInput,
           output: SpawnOutput,
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
+              if (input.server !== undefined) {
+                if (input.background === true)
+                  return yield* new ToolFailure({
+                    message: "background=true is not supported with server: a dispatched session runs in the foreground and returns its final text.",
+                  })
+                if (input.directory !== undefined)
+                  return yield* new ToolFailure({
+                    message: "directory does not apply with server: the session runs in the peer server's own project location.",
+                  })
+                yield* assertServer(permission, input.server, context)
+                const remoteModel = input.model === undefined ? undefined : yield* parseModel(input.model)
+                const result = yield* peers
+                  .spawn(input.server, {
+                    title: input.title,
+                    prompt: input.prompt,
+                    ...(input.agent === undefined ? {} : { agent: input.agent }),
+                    ...(remoteModel === undefined ? {} : { model: remoteModel }),
+                    ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) => new ToolFailure({ message: `Unable to dispatch to ${input.server}`, error }),
+                    ),
+                  )
+                if (result.outcome === "failed")
+                  return yield* new ToolFailure({
+                    message: `Peer session failed (sessionID: ${result.sessionID} on ${input.server})`,
+                  })
+                if (result.outcome === "interrupted")
+                  return yield* new ToolFailure({
+                    message: `Peer session was interrupted (sessionID: ${result.sessionID} on ${input.server})`,
+                  })
+                return {
+                  sessionID: result.sessionID,
+                  status: "completed" as const,
+                  output: result.text ?? SubagentCompletion.NO_TEXT,
+                }
+              }
               const parent = yield* sessions
                 .get(context.sessionID)
                 .pipe(Effect.mapError(() => new ToolFailure({ message: "Parent session not found" })))
@@ -217,15 +306,7 @@ export const Plugin = {
                   Effect.mapError((error) => new ToolFailure({ message: `Session coordination denied: ${agentID}`, error })),
                 )
 
-              const requested = input.model
-              const override =
-                requested === undefined
-                  ? undefined
-                  : yield* Effect.try({
-                      try: () => Model.Ref.parse(requested),
-                      catch: () =>
-                        new ToolFailure({ message: `Invalid model "${requested}". Use "providerID/modelID#variant".` }),
-                    })
+              const override = input.model === undefined ? undefined : yield* parseModel(input.model)
               if (override !== undefined && !(yield* models.available()).some((model) => model.providerID === override.providerID && model.id === override.id))
                 return yield* new ToolFailure({
                   message: `Model "${override.providerID}/${override.id}" is not available. Use the models tool to see what is available.`,
@@ -326,6 +407,24 @@ export const Plugin = {
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
+              if (input.server !== undefined) {
+                yield* assertServer(permission, input.server, context)
+                yield* peers
+                  .send(input.server, {
+                    sessionID: input.sessionID,
+                    prompt: input.prompt,
+                    ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) => new ToolFailure({ message: `Unable to reach ${input.server}: ${error.detail}`, error }),
+                    ),
+                  )
+                return {
+                  output: { sessionID: input.sessionID, accepted: true },
+                  content: `Prompt delivered to ${input.sessionID} on ${input.server}.`,
+                }
+              }
               yield* sessions
                 .get(input.sessionID)
                 .pipe(Effect.mapError(() => new ToolFailure({ message: `Session not found: ${input.sessionID}` })))
@@ -371,6 +470,25 @@ export const Plugin = {
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
+              if (input.server !== undefined) {
+                yield* assertServer(permission, input.server, context)
+                const interrupted = yield* peers
+                  .stop(input.server, {
+                    sessionID: input.sessionID,
+                    ...(input.resume === undefined ? {} : { resume: input.resume }),
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) => new ToolFailure({ message: `Unable to reach ${input.server}: ${error.detail}`, error }),
+                    ),
+                  )
+                return {
+                  output: { sessionID: input.sessionID, interrupted },
+                  content: interrupted
+                    ? `Interrupted ${input.sessionID} on ${input.server}.`
+                    : `${input.sessionID} on ${input.server} was already idle.`,
+                }
+              }
               yield* sessions
                 .get(input.sessionID)
                 .pipe(Effect.mapError(() => new ToolFailure({ message: `Session not found: ${input.sessionID}` })))
@@ -414,6 +532,37 @@ export const Plugin = {
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
             Effect.gen(function* () {
+              if (input.server !== undefined) {
+                yield* assertServer(permission, input.server, context)
+                const timedOut = yield* peers
+                  .wait(input.server, input.sessionID)
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ToolFailure({ message: `Unable to wait on ${input.server}: ${error.detail}`, error }),
+                    ),
+                  )
+                  .pipe(Effect.timeoutOption((input.timeout ?? 60) * 1000))
+                  .pipe(Effect.map((option) => option._tag === "None"))
+                const outcome = yield* peers
+                  .outcome(input.server, input.sessionID)
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ToolFailure({
+                          message: `Unable to read session ${input.sessionID} on ${input.server}: ${error.detail}`,
+                          error,
+                        }),
+                    ),
+                  )
+                return {
+                  output: {
+                    sessionID: input.sessionID,
+                    idle: !timedOut,
+                    ...(outcome === undefined ? {} : { outcome }),
+                  },
+                }
+              }
               yield* sessions
                 .get(input.sessionID)
                 .pipe(Effect.mapError(() => new ToolFailure({ message: `Session not found: ${input.sessionID}` })))
@@ -459,6 +608,7 @@ export const Plugin = {
             [
               "You can coordinate other sessions with opencode_session_list, opencode_session_spawn, opencode_session_send, opencode_session_stop, and opencode_session_wait.",
               "Sessions spawned with session_spawn are independent main-agent sessions; their completion arrives as <peer> messages.",
+              "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine.",
             ].join(" "),
           ),
         )

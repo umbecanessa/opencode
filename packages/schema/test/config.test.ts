@@ -38,6 +38,16 @@ describe("Config.Entry", () => {
     expect(() => decode({ worktree: { directory: " " } })).toThrow()
     expect(() => decode({ worktree: { directory: false } })).toThrow()
   })
+  test("round-trips peer server entries and omits absent credentials", () => {
+    const decode = Schema.decodeUnknownSync(Config.Info)
+    const input = { servers: { lab: { url: "http://192.168.1.20:4096" } } }
+    expect(Schema.encodeSync(Config.Info)(decode(input))).toEqual(input)
+    const withCredential = { servers: { lab: { url: "http://localhost:4096", credential: "secret" } } }
+    expect(Schema.encodeSync(Config.Info)(decode(withCredential))).toEqual(withCredential)
+    expect(() => decode({ servers: { lab: {} } })).toThrow()
+    expect(() => decode({ servers: { lab: { url: 1 } } })).toThrow()
+  })
+
   test("round-trips canonical provider IDs without changing config keys", () => {
     const input = { providers: { "console-anthropic": { canonical: "anthropic" } } }
     const decoded = Schema.decodeUnknownSync(Config.Info)(input)

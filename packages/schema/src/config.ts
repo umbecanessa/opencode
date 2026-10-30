@@ -17,6 +17,7 @@ import { ConfigPlugin } from "./config/plugin.js"
 import { ConfigPolicy } from "./config/policy.js"
 import { ConfigProvider } from "./config/provider.js"
 import { ConfigReference } from "./config/reference.js"
+import { ConfigServer } from "./config/server.js"
 import { ConfigWebSearch } from "./config/websearch.js"
 import { ConfigToolOutput } from "./config/tool-output.js"
 import { ConfigWatcher } from "./config/watcher.js"
@@ -96,6 +97,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   references: ConfigReference.Info.pipe(optional).annotate({
     description: "Named local directories or Git repositories available as external context",
+  }),
+  servers: Schema.Record(Schema.String, ConfigServer.Info).pipe(optional).annotate({
+    description: "Named peer OpenCode servers available for cross-server session dispatch",
   }),
   websearch: ConfigWebSearch.Selection.pipe(optional).annotate({
     description: "Web search provider selection",

@@ -34,6 +34,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginSupervisor } from "@opencode/core/plugin/supervisor"
 import { Permission } from "@opencode/core/permission"
+import { PeerServers } from "@opencode/core/peer-servers"
 import { SessionTools } from "@opencode/core/tool/plugin/session"
 import { Tool } from "@opencode/core/tool"
 import { tmpdir } from "./fixture/tmpdir"
@@ -102,6 +103,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     Config.node,
     FileAccess.node,
     Model.node,
+    PeerServers.node,
     Permission.node,
     Session.node,
     Job.node,

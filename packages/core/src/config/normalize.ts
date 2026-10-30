@@ -16,6 +16,7 @@ import { ConfigPlugin } from "@opencode/schema/config/plugin"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
 import { ConfigProvider } from "@opencode/schema/config/provider"
 import { ConfigReference } from "@opencode/schema/config/reference"
+import { ConfigServer } from "@opencode/schema/config/server"
 import { ConfigExperimental } from "@opencode/schema/config/experimental"
 import { Permission } from "@opencode/schema/permission"
 import { ConfigAgentV1 } from "../v1/config/agent.js"
@@ -114,6 +115,9 @@ export function normalize(input: unknown): Result {
     isRecord(input.reference) || isRecord(input.references),
     diagnostics,
   )
+
+  const nativeServers = decodeMap(input.servers, ConfigServer.Info, ["servers"], diagnostics, decodeEncoded)
+  if (Object.keys(nativeServers).length || isRecord(input.servers)) encoded.servers = nativeServers
 
   const legacyCommands = decodeMap(input.command, ConfigCommandV1.Info, ["command"], diagnostics, decodeValue)
   diagnoseSelectionMap(input.command, ["command"], diagnostics)

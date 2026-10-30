@@ -247,8 +247,9 @@ Effect applications. For Cloudflare Durable Objects, use the
 ## Session coordination
 
 Beyond its own conversation and `subagent` children, an orchestrating agent can
-coordinate other sessions on the same OpenCode server through the built-in
-`opencode_session_*` tools. These are peer sessions: independent top-level
+coordinate other sessions on the same OpenCode server, or on peer servers from
+the config `servers` map, through the built-in `opencode_session_*` tools.
+These are peer sessions: independent top-level
 main-agent sessions, not subagent children, with no parent link back to the
 spawner.
 
@@ -305,6 +306,51 @@ The example lets the agent spawn the `general` agent as a peer without
 prompting while other agents still ask. Denying `session` hides the tools
 entirely. Built-in subagents (`general`, `explore`) cannot coordinate peers;
 peer coordination is an orchestrator-level capability.
+
+### Cross-server dispatch
+
+The config `servers` map names peer OpenCode servers the tools may act on.
+Each entry has the server's `url` and, when the peer requires authentication,
+its `credential` (sent as the HTTP Basic password with username `opencode`).
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "servers": {
+    "lab": {
+      "url": "http://192.168.1.20:4096",
+      "credential": "the-peer-server-password"
+    }
+  }
+}
+```
+
+With servers configured, all five `opencode_session_*` tools accept a `server`
+parameter naming one of them, and act against that machine instead of this
+one: `session_list` lists its sessions, `session_spawn` dispatches a whole
+task there, `session_send`, `session_stop`, and `session_wait` address its
+sessions by ID. Cross-server calls gate on a separate `server` permission
+action (resource is the server name) which also defaults to `ask`; the local
+`session` permission does not apply to them.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "server": {
+      "lab": "allow"
+    }
+  }
+}
+```
+
+Remote dispatch is foreground-only: `background` and `directory` do not apply
+with `server` (the session runs in the peer's own project location) and the
+tool blocks until the remote session goes idle, then returns its final text.
+A dispatched remote session with no client attached to the peer server has
+nowhere to surface permission asks, so the peer should be configured to run
+such work unattended. An unknown server name fails with the list of
+configured servers so you can correct it.
 
 ## [Troubleshooting](https://opencode.ai/v2/docs/troubleshooting)
 
