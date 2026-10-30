@@ -25,7 +25,7 @@ export default function Project() {
   const hostID = hosts.find((h) => h.name === host)?.id ?? host
   const c = client(hostID)
   const [open, setOpen] = useState<Set<string>>(new Set())
-  const tree = useMemo(() => flattenFamilies(nestSessions(sessions), open), [sessions, open])
+  const tree = useMemo(() => flattenFamilies(nestSessions(sessions), open, live), [sessions, open, live])
 
   useEffect(() => {
     if (!c) return

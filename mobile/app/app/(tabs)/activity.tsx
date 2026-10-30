@@ -71,7 +71,7 @@ export default function Activity() {
     const outcome = family.session.outcome
     const failed = outcome === "failed" || (typeof outcome === "object" && outcome !== null && "type" in outcome && outcome.type === "failed")
     return status === "done" && (statusFilter === "Failed" ? failed : !failed)
-  }), open), [sessions, open, hostFilter, statusFilter, live])
+  }), open, live), [sessions, open, hostFilter, statusFilter, live])
   const titles = useMemo(() => new Map(sessions.map((s) => [`${s.host}/${s.id}`, s])), [sessions])
   const navigationItems = useMemo(() => {
     const parents = items.filter((item) => item.kind === "parent")
@@ -86,16 +86,16 @@ export default function Activity() {
     // Tapping a Recent row's branch chip expands its subagents inline, matching the grouped Projects rows.
     const result: NavigationItem[] = [{ kind: "heading", key: "recent-heading", title: "Recent" }, ...recent.flatMap((item) => [
       { kind: "session" as const, key: `recent/${item.key}`, item },
-      ...(item.open ? flattenFamilies([item.family], new Set([item.key])).slice(1).map((child) => ({ kind: "session" as const, key: `recent/${child.key}`, item: child })) : []),
+      ...(item.open ? flattenFamilies([item.family], new Set([item.key]), live).slice(1).map((child) => ({ kind: "session" as const, key: `recent/${child.key}`, item: child })) : []),
     ])]
     result.push({ kind: "heading", key: "projects-heading", title: "Projects" })
     groups.forEach((members, key) => {
       const session = members[0].family.session
       result.push({ kind: "project", key, title: session.location.directory.replace(/[\\/]+$/, "").split(/[\\/]/).pop() ?? session.projectID, host: session.host, directory: session.location.directory, count: members.length })
-      if (expandedProjects.has(key)) flattenFamilies(members.map((member) => member.family), open).forEach((item) => result.push({ kind: "session", key: `project/${item.key}`, item }))
+      if (expandedProjects.has(key)) flattenFamilies(members.map((member) => member.family), open, live).forEach((item) => result.push({ kind: "session", key: `project/${item.key}`, item }))
     })
     return result
-  }, [items, expandedProjects, open, showAllRecent])
+  }, [items, expandedProjects, open, showAllRecent, live])
   const hostName = (id: string) => hosts.find((h) => h.id === id)?.name ?? ""
 
   const openSession = (s: Session) =>

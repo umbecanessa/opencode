@@ -10,18 +10,21 @@ export type TreeItem =
   | { kind: "parent"; key: string; family: Family; open: boolean }
   | { kind: "child"; key: string; session: Session; last: boolean }
 
-export const flattenFamilies = (families: Family[], open: Set<string>): TreeItem[] =>
+export const flattenFamilies = (families: Family[], open: Set<string>, live?: Live): TreeItem[] =>
   families.flatMap((family) => {
     const key = `${family.session.host}/${family.session.id}`
     const isOpen = open.has(key)
+    // Live view lists only the subagents that are still working or waiting, matching the chip's count;
+    // finished children stay reachable through the parent's timeline.
+    const children = live ? family.children.filter((session) => statusOf(live, session.host, session.id) !== "done") : family.children
     return [
       { kind: "parent" as const, key, family, open: isOpen },
       ...(isOpen
-        ? family.children.map((session, i) => ({
+        ? children.map((session, i) => ({
             kind: "child" as const,
             key: `${session.host}/${session.id}`,
             session,
-            last: i === family.children.length - 1,
+            last: i === children.length - 1,
           }))
         : []),
     ]
@@ -72,9 +75,11 @@ export const TreeRow = ({
             accessibilityLabel={`${item.open ? "Hide" : "Show"} ${active.length || children.length} subagent${(active.length || children.length) === 1 ? "" : "s"}`}
           >
             <Ionicons name="git-branch-outline" size={11} color={item.open ? "#FFFFFF" : t.secondaryLabel} />
-            <Text style={[t.font.caption, { color: item.open ? "#FFFFFF" : t.secondaryLabel, fontWeight: "600" }]}>
-              {active.length || children.length}
-            </Text>
+            {active.length > 0 && (
+              <Text style={[t.font.caption, { color: item.open ? "#FFFFFF" : t.secondaryLabel, fontWeight: "600" }]}>
+                {active.length}
+              </Text>
+            )}
             <Ionicons name={item.open ? "chevron-up" : "chevron-down"} size={11} color={item.open ? "#FFFFFF" : t.secondaryLabel} />
           </Pressable>
         )

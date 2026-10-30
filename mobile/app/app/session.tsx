@@ -33,6 +33,7 @@ import {
 } from "../src/components/session/Timeline"
 import { useHosts } from "../src/state/hosts"
 import { familyStatus, liveKey, useLive } from "../src/state/live"
+import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../src/theme"
 
 const REFRESH_MS = 900
@@ -62,6 +63,21 @@ export default function Session() {
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   const [subagents, setSubagents] = useState<SessionInfo[]>([])
+  const [parent, setParent] = useState<{ of: string; id: string; title: string }>()
+  const insets = useSafeAreaInsets()
+
+  // A subagent session takes no prompts, like the desktop: the composer slot becomes the way back.
+  useEffect(() => {
+    if (!c) return
+    let cancelled = false
+    c.session(params.id)
+      .then((s) => {
+        if (cancelled || !s.parentID) return
+        c.session(s.parentID).then((p) => { if (!cancelled) setParent({ of: params.id, id: s.parentID!, title: p.title ?? "Parent session" }) }).catch(() => {})
+      })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [c, params.id])
   const [requests, setRequests] = useState<PermissionRequest[]>([])
   const [forms, setForms] = useState<SessionForm[]>([])
   const [changes, setChanges] = useState<Awaited<ReturnType<NonNullable<typeof c>["diff"]>>["data"]>([])
@@ -446,12 +462,27 @@ export default function Session() {
           ))}
         </View>
       )}
-      <Composer running={running} disabled={!c} onSend={send} onStop={stop}
-        modelLabel={selectedModel ? `${selectedModel.id.split("/").pop()}${selectedModel.variant ? ` · ${selectedModel.variant}` : ""}` : undefined}
-        activeModelLabel={messages.find((m) => m.type === "assistant" && m.model)?.model?.id?.split("/").pop()}
-        onModel={() => { setControlDirectory(directory.current); setPanel("model") }}
-        onContext={() => setPanel('context')}
-      />
+      {parent?.of === params.id ? (
+        <View style={{ paddingHorizontal: 12, paddingTop: 10, paddingBottom: Math.max(insets.bottom, 10), borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.separator, backgroundColor: t.background }}>
+          <Pressable
+            onPress={() => router.push({ pathname: "/session", params: { host: params.host, id: parent.id, title: parent.title } })}
+            accessibilityRole="button"
+            accessibilityLabel={`Back to parent session ${parent.title}`}
+            style={({ pressed }) => ({ flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12, paddingVertical: 12, borderRadius: 12, backgroundColor: pressed ? t.surfaceRaised : t.surface })}
+          >
+            <Ionicons name="git-branch-outline" size={15} color={t.secondaryLabel} />
+            <Text numberOfLines={1} style={[t.font.subhead, { color: t.secondaryLabel, flex: 1 }]}>Subagent of {parent.title}</Text>
+            <Text style={[t.font.footnote, { color: t.tint, fontWeight: "600" }]}>Back to parent</Text>
+          </Pressable>
+        </View>
+      ) : (
+        <Composer running={running} disabled={!c} onSend={send} onStop={stop}
+          modelLabel={selectedModel ? `${selectedModel.id.split("/").pop()}${selectedModel.variant ? ` · ${selectedModel.variant}` : ""}` : undefined}
+          activeModelLabel={messages.find((m) => m.type === "assistant" && m.model)?.model?.id?.split("/").pop()}
+          onModel={() => { setControlDirectory(directory.current); setPanel("model") }}
+          onContext={() => setPanel('context')}
+        />
+      )}
     </KeyboardAvoidingView>
   )
 }
