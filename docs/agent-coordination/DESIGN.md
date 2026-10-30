@@ -111,13 +111,23 @@ Deliberate Phase 2 non-goals: no desktop/TUI "New temporary session" button
 yet (the API flag is ready for it), no migration of legacy hidden utility
 sessions onto the flag, no configurable retention.
 
-## Phase 3 — Awareness
+## Phase 3 — Awareness (skill done here)
 
-- opencode skill: "Session coordination" section covering all tools above
-  (V2 docs only).
-- config schema: `session` permission action documented; `temporary` field and
-  `servers` (Phase 4) added when they land.
-- `bun run generate` in `packages/client` after protocol changes.
+- The built-in opencode skill (`core/src/plugin/skill/opencode.md`, imported
+  as text and registered with the built-in skills) gained a self-contained
+  "Session coordination" section: the five tools, when to prefer `subagent`,
+  background/`<peer>` notification discipline, temporary-session semantics
+  including expiry, the `session` permission action with a config example,
+  and the subagent-mode deny.
+- Config schema needs no change: `Permission.Rule.action` is an open string,
+  and both the native `permissions` array and the V1-style `permission` map
+  already accept `session` keys, so `permission: { session: ... }` flows
+  through `Config.normalize` unchanged.
+- Remaining for this phase: the prose pages in the V2 docs site, which lives
+  in the separate `services/www` repository (the skill refers to it via
+  `opencode.ai/v2/docs` links); the desktop/TUI temporary-session button.
+- `bun run generate` in `packages/client` was run for the Phase 2 protocol
+  additions; rerun it after any future Protocol/Server HttpApi change.
 
 ## Phase 4 — Peer servers (bridging)
 

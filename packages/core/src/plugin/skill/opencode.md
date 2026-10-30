@@ -244,6 +244,68 @@ Use the [Effect SDK guide](https://opencode.ai/v2/docs/build/sdk/effect) for
 Effect applications. For Cloudflare Durable Objects, use the
 [Cloudflare SDK guide](https://opencode.ai/v2/docs/build/sdk/cloudflare).
 
+## Session coordination
+
+Beyond its own conversation and `subagent` children, an orchestrating agent can
+coordinate other sessions on the same OpenCode server through the built-in
+`opencode_session_*` tools. These are peer sessions: independent top-level
+main-agent sessions, not subagent children, with no parent link back to the
+spawner.
+
+- `opencode_session_list` — recent sessions with title, agent, model,
+  directory, whether a run is active, and the last outcome. Use it to find a
+  session the user refers to without an ID. Temporary sessions are omitted
+  unless you pass `temporary: true`.
+- `opencode_session_spawn` — create a new top-level session and run a prompt
+  in it. Accepts `agent` (any agent, including primary agents), `model`
+  (`providerID/modelID[#variant]`), `directory` (another project directory),
+  `background`, and `temporary`. The spawned session starts with no context,
+  so the prompt must contain everything it needs. Prefer the `subagent` tool
+  for delegated work inside your own project; use spawning for standalone
+  main-agent work or cross-project work.
+- `opencode_session_send` — a follow-up prompt to an existing session by ID,
+  reusing everything it already knows. `delivery: "steer"` interrupts at the
+  next safe boundary; `delivery: "queue"` parks it until the session would go
+  idle. No completion notification arrives for these messages.
+- `opencode_session_stop` — interrupt a session's active execution. History
+  stays intact and the session remains continuable with `session_send`.
+- `opencode_session_wait` — bounded join: wait for a session to go idle and
+  report its outcome. Prefer background spawning instead of polling.
+
+Foreground spawning blocks until the session goes idle and returns its final
+text. With `background: true` the tool returns immediately and a
+`<peer sessionID=... state=...>` completion message is added to the
+conversation when it finishes — including across a server restart. Never
+sleep, poll, or ask the peer for status before that message arrives.
+
+Temporary sessions (`temporary: true` on spawn) are disposable spot tasks:
+they never appear in session listings or user history, default to stricter
+permissions (no edits, no subagents, no further peer spawning), and are
+deleted about a day after they finish. A session-not-found result from
+`session_send` may be an expired temporary session; spawn a fresh one with
+the needed context instead of retrying.
+
+Peer coordination is gated by the `session` permission action, which defaults
+to `ask`. For `session_spawn` the resource is the spawned agent's name; for
+the other tools it is the target session ID.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "session": {
+      "*": "ask",
+      "general": "allow"
+    }
+  }
+}
+```
+
+The example lets the agent spawn the `general` agent as a peer without
+prompting while other agents still ask. Denying `session` hides the tools
+entirely. Built-in subagents (`general`, `explore`) cannot coordinate peers;
+peer coordination is an orchestrator-level capability.
+
 ## [Troubleshooting](https://opencode.ai/v2/docs/troubleshooting)
 
 OpenCode runs a client and a background server. Start by determining whether a
