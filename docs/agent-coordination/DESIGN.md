@@ -260,8 +260,49 @@ Implementation notes:
   unknown-workspace listing, both mutual-exclusion rejections), and two
   `setBinding` cases in `workspace.test.ts`.
 
-## Phase 5b — remote claims (gated)
+## Phase 5b — remote claims (increment 1 implemented; clustering gated)
 
 The server dimension on `Location`, remote-owned claims, fencing, and
 interruption targeting. Deferred until Phase 4/5a failure modes are known in
 real use.
+
+### Phase 5b increment 1 — dispatch placement (implemented here)
+
+Bounded first increment: durable dispatch bookkeeping instead of clustered
+drains. Sessions stay fully executed by whichever server created them; this
+server only remembers dispatch ownership.
+
+- New global core service `PeerPlacements` (`packages/core/src/peer-placements.ts`):
+  KV-backed durable rows (`peer.placement/<sessionID>` → `{ server }`) for
+  sessions dispatched to a peer. First dispatch of an ID owns it; recording a
+  different owner is a typed `Conflict`, re-recording the same owner refreshes.
+  `session_send`/`stop`/`wait` route a dispatched session by session ID alone
+  (explicit `server` still wins); a peer 404 (`PeerServers.Failure.notFound`)
+  drops the row so the session is simply not found afterward.
+- `session_spawn` with `server` now supports `background: true`:
+  `PeerServers.dispatch` creates and prompts remotely without waiting, the
+  placement is recorded, and a local `Job` (new recovery kind `peer_remote`,
+  carrying the server name) runs `PeerServers.watch` — the remote settle loop
+  whose failed/interrupted outcomes land as job error/cancelled — so the parent
+  gets the same `<peer>` completion notification as a local background peer.
+  Foreground dispatch records the placement too. `PeerServers.spawn` was
+  refactored so spawn = dispatch + watch.
+- Restart recovery (`session/execution/restart.ts`): a pending `peer_remote`
+  background job re-arms its watcher through the PARENT session's placement
+  (`Instance.provide`), so config `servers` resolve as they did at dispatch;
+  a settled background delivers the stored outcome without re-consulting the
+  peer, and a vanished parent just clears the marker.
+- `PeerServers.node` joined the `instance.ts` location graph (it was already a
+  per-location plugin requirement; graph membership lets `Instance.provide`
+  discharge it for the restart watcher).
+- Tests: `peer-placements.test.ts` (record/locate/forget, first-owner conflict,
+  corrupted-row tolerance) and two new `tool-session-remote.test.ts` cases
+  (background dispatch with routed follow-up + `<peer>` notification;
+  404 drops the placement). Root `bun run check` 35/35.
+
+Still gated: making drains themselves run on a remote owner (Location server
+dimension, remote-owned execution claims with fencing tokens, and interruption
+targeting through the `session.interrupt`/`wait`/`active` surfaces, which are
+deliberately process-global today). Chosen deliberately over log replication or
+clustering: dispatched sessions already execute everything (subagents, tools)
+on the peer with the peer's own config.

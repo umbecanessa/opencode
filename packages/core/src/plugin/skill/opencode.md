@@ -344,13 +344,18 @@ action (resource is the server name) which also defaults to `ask`; the local
 }
 ```
 
-Remote dispatch is foreground-only: `background` and `directory` do not apply
-with `server` (the session runs in the peer's own project location) and the
-tool blocks until the remote session goes idle, then returns its final text.
-A dispatched remote session with no client attached to the peer server has
-nowhere to surface permission asks, so the peer should be configured to run
-such work unattended. An unknown server name fails with the list of
-configured servers so you can correct it.
+Remote dispatch supports both run modes: by default the tool blocks until the
+remote session goes idle and returns its final text; with `background: true`
+the dispatch returns immediately and a `<peer>` completion message arrives when
+the remote session finishes — do not sleep or poll before that message.
+`directory` does not apply with `server` (the session runs in the peer's own
+project location). Dispatched sessions remember their placement: later
+`session_send`, `session_stop`, and `session_wait` calls route to the peer by
+session ID alone, without the `server` parameter; the placement is dropped if
+the peer reports the session gone. A dispatched remote session with no client
+attached to the peer server has nowhere to surface permission asks, so the peer
+should be configured to run such work unattended. An unknown server name fails
+with the list of configured servers so you can correct it.
 
 Besides config keys, the desktop app registers its own remote servers at
 runtime — the SSH and WSL tunnels from its server list (named `ssh:<id>` and

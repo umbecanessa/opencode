@@ -84,8 +84,19 @@ tools may act against.
 
 With servers configured, all five tools accept a `server` parameter naming one
 of them. `session_spawn` with `server` dispatches the whole task there: it runs
-in the peer's own project location, in the foreground, and returns its final
-text; `background` and `directory` do not apply.
+in the peer's own project location and returns its final text; `directory` does
+not apply.
+
+Dispatching supports both run modes:
+
+- Foreground (default): the call blocks until the remote session goes idle.
+- With `background: true`: the call returns immediately and the completion
+  arrives as a `<peer>` message, like a local background spawn.
+
+A dispatched session remembers which server owns it, so later `session_send`,
+`session_stop`, and `session_wait` calls route to it by session ID alone; the
+`server` parameter is only needed for sessions you did not dispatch. The
+placement is dropped when the peer reports the session gone.
 
 Cross-server calls gate on a separate `server` permission action (resource is
 the server name) which defaults to `ask`; the local `session` permission does
