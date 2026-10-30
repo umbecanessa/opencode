@@ -1,5 +1,6 @@
 import { useDialog } from "@opencode/ui/context/dialog"
 import { Tooltip } from "@opencode/ui/tooltip"
+import { Badge } from "@opencode/ui/badge"
 import { Icon } from "@opencode/ui/icon"
 import { Slash } from "@opencode/ui/slash"
 import { Keybind } from "@opencode/ui/keybind"
@@ -65,6 +66,7 @@ export function NewSessionView(props: {
   project: PromptProjectController
   workspace: NewSessionWorkspaceController
   location: ReturnType<typeof useNewSessionLocationDialog>
+  temporary: () => boolean
 }) {
   const [onboarding, setOnboarding, , onboardingReady] = persisted(
     Persist.global("workspace-onboarding"),
@@ -73,6 +75,7 @@ export function NewSessionView(props: {
   )
 
   const settings = useSettings()
+  const language = useLanguage()
 
   const [wordmark, setWordmark] = createStore<WordmarkState>({ mode: "flat", game: false })
 
@@ -126,6 +129,11 @@ export function NewSessionView(props: {
                       }
                     />
                   )}
+                </Show>
+                <Show when={props.temporary()}>
+                  <Badge variant="subtle" class="self-start" title={language.t("command.session.newTemporary.description")}>
+                    {language.t("session.new.temporary.badge")}
+                  </Badge>
                 </Show>
               </div>
               <Show when={props.project.empty()}>

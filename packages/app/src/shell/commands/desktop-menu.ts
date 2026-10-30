@@ -113,6 +113,11 @@ export const DESKTOP_MENU: DesktopMenu[] = [
       },
       {
         type: "item",
+        labelKey: "desktop.menu.newTemporarySession",
+        command: "tab.newTemporary",
+      },
+      {
+        type: "item",
         labelKey: "desktop.menu.settings",
         command: "settings.open",
         accelerator: { windows: "Ctrl+," },

@@ -244,6 +244,7 @@ export const DESKTOP_NATIVE_ENGLISH = {
   "desktop.menu.restart": "Restart",
   "desktop.menu.exportLogs": "Export Logs…",
   "desktop.menu.newSession": "New Session",
+  "desktop.menu.newTemporarySession": "New Temporary Session",
   "desktop.menu.openProject": "Open Project…",
   "desktop.menu.newWindow": "New Window",
   "desktop.menu.closeWindow": "Close Window",

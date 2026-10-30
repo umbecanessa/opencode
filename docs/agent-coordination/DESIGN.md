@@ -108,8 +108,9 @@ discovery tool.
   with the needed context instead.
 
 Deliberate Phase 2 non-goals: no desktop/TUI "New temporary session" button
-yet (the API flag is ready for it), no migration of legacy hidden utility
-sessions onto the flag, no configurable retention.
+yet (the API flag is ready for it; the app/desktop entry landed later, see the
+Phase 4b note), no migration of legacy hidden utility sessions onto the flag,
+no configurable retention.
 
 ## Phase 3 — Awareness (skill done here)
 
@@ -125,7 +126,8 @@ sessions onto the flag, no configurable retention.
   through `Config.normalize` unchanged.
 - Remaining for this phase: the prose pages in the V2 docs site, which lives
   in the separate `services/www` repository (the skill refers to it via
-  `opencode.ai/v2/docs` links); the desktop/TUI temporary-session button.
+  `opencode.ai/v2/docs` links); the TUI temporary-session button (the
+  desktop/app one is implemented, see the Phase 4b note).
 - `bun run generate` in `packages/client` was run for the Phase 2 protocol
   additions; rerun it after any future Protocol/Server HttpApi change.
 
@@ -173,6 +175,22 @@ re-pushed from `BackgroundService.connect` so a reconnect with a new password
 re-registers. The session-tools system hook now lists the live names from
 `PeerServers.names()` when any exist. Nothing persists: a server restart
 forgets registrations until the desktop re-pushes.
+
+### Temporary session entry (implemented here)
+
+The Phase 2 non-goal, wired into the app/desktop UI. The draft tab schema gains
+an optional `temporary` flag; `openNewTab(temporary)` (titlebar) threads it
+into `tabs.newDraft`, and the new-session composer adapter passes it to
+`data.session.create` at first prompt (read before `prepareSession` swaps the
+draft tab away). Entry points: command-palette command `tab.newTemporary`
+(owner-exported `newTemporaryTabCommand`, kept honest by the desktop-menu
+ownership test) and the desktop File menu item "New Temporary Session"
+(no accelerator; Cmd+Shift+N stays with New Window). While the draft is open
+the view shows a subtle "Temporary session" badge whose tooltip explains the
+disposable semantics. `client/src/solid/data.ts` `session.create` accepts
+`temporary` and forwards it through the existing payload spread; listings
+already exclude temporary sessions server-side, so the session appears nowhere
+but its own tab once the tab closes.
 
 ## Phase 5 — Placement (clustering endpoint)
 

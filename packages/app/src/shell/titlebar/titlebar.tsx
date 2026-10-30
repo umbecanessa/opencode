@@ -38,6 +38,8 @@ import { TitlebarItems, useTitlebarItems } from "@/runtime/plugin/titlebar-items
 
 export const newTabCommand = { id: "tab.new", keybind: "mod+t,mod+n" }
 
+export const newTemporaryTabCommand = { id: "tab.newTemporary" }
+
 /** Search projects: a draft searches in place; everywhere else it opens a new draft with the project picker open. */
 export const projectSearchCommand = { id: "project.select", keybind: "mod+shift+o" }
 
@@ -343,7 +345,8 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
             })
 
             /** Opens a new session draft for the current context. Returns false when there is nothing to open it in. */
-            const openNewTab = () => {
+            const openNewTab = (temporary = false) => {
+              const draftOptions = temporary ? { temporary: true } : {}
               const route = layout.route()
 
               switch (route.type) {
@@ -352,7 +355,11 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
                   if (pending) {
                     const model = tabs.stateValue<ComposerState>(pending.draft, "prompt")?.model.current()
-                    void tabs.newDraft({ server: route.server, directory: pending.draft.directory }, "", model)
+                    void tabs.newDraft(
+                      { server: route.server, directory: pending.draft.directory, ...draftOptions },
+                      "",
+                      model,
+                    )
 
                     return true
                   }
@@ -369,7 +376,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
                   const model = tabs.stateValue<ComposerState>(sessionTab, "prompt")?.model.current()
                   void tabs.newDraft(
-                    { server: sessionTab.server, directory: activeSession.location.directory },
+                    { server: sessionTab.server, directory: activeSession.location.directory, ...draftOptions },
                     "",
                     model,
                   )
@@ -383,7 +390,11 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   if (activeTab?.type !== "draft") return false
 
                   const model = tabs.stateValue<ComposerState>(activeTab, "prompt")?.model.current()
-                  void tabs.newDraft({ server: activeTab.server, directory: activeTab.directory }, "", model)
+                  void tabs.newDraft(
+                    { server: activeTab.server, directory: activeTab.directory, ...draftOptions },
+                    "",
+                    model,
+                  )
 
                   return true
                 }
@@ -406,7 +417,10 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                     projects?.list()[0]
 
                   if (conn && project) {
-                    void tabs.newDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
+                    void tabs.newDraft(
+                      { server: ServerConnection.key(conn), directory: project.worktree, ...draftOptions },
+                      "",
+                    )
 
                     return true
                   }
@@ -545,7 +559,15 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   category: "tab",
                   title: language.t("command.session.new"),
                   hidden: true,
-                  onSelect: openNewTab,
+                  // Returning false declines the keybind, which is the right fallback when there is nothing to open.
+                  onSelect: () => (openNewTab() ? undefined : false),
+                },
+                {
+                  ...newTemporaryTabCommand,
+                  category: language.t("command.category.session"),
+                  title: language.t("command.session.newTemporary"),
+                  description: language.t("command.session.newTemporary.description"),
+                  onSelect: () => (openNewTab(true) ? undefined : false),
                 },
                 current && {
                   id: "tab.close",
@@ -793,7 +815,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                           onReorder={(keys) => tabsStoreActions.reorder(keys)}
                         />
                         <RecentlyClosedTabsMenu
-                          onNewTab={openNewTab}
+                          onNewTab={() => openNewTab()}
                           tooltip={
                             <>
                               {language.t("command.session.new")}
@@ -853,7 +875,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                               {searchButton(true)}
                               <RecentlyClosedTabsMenu
                                 vertical
-                                onNewTab={openNewTab}
+                                onNewTab={() => openNewTab()}
                                 keybind={command.keybind("tab.new")}
                               />
                             </div>

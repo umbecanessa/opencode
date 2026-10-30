@@ -107,6 +107,9 @@ export const dict = {
   "command.commands.search": "Search commands",
 
   "command.session.new": "New session",
+  "command.session.newTemporary": "New temporary session",
+  "command.session.newTemporary.description":
+    "Opens a disposable session: hidden from session lists and cleaned up a day after it ends",
   "command.session.search": "Search sessions",
   "command.session.previous": "Previous session",
   "command.session.next": "Next session",
@@ -687,6 +690,7 @@ export const dict = {
   "session.new.project.new": "New project",
   "session.new.project.search": "Search projects",
   "session.new.project.add": "Add project",
+  "session.new.temporary.badge": "Temporary session",
   "session.new.worktree.creating": "Creating worktree",
   "session.new.workspace.runIn": "Run session in",
   "session.new.workspace.triggerLocal": "Local",
