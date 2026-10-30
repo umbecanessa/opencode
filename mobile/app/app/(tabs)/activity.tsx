@@ -1,6 +1,6 @@
 import { useRouter } from "expo-router"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native"
+import { AppState, FlatList, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native"
 import Ionicons from "@expo/vector-icons/Ionicons"
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import type { PermissionDecision, PermissionRequest, Session } from "../../src/api/types"
@@ -61,6 +61,15 @@ export default function Activity() {
     return () => {
       cancelled = true
     }
+  }, [fetchAll])
+  // The mount fetch alone cannot survive a cold start on a waking VPN (first requests fail), so the
+  // list re-pulls while foregrounded and self-heals once the tunnel is up.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (AppState.currentState !== "active") return
+      fetchAll().then(setSessions)
+    }, 15_000)
+    return () => clearInterval(timer)
   }, [fetchAll])
 
   const items = useMemo(() => flattenFamilies(nestSessions(sessions.filter((s) => !hostFilter || s.host === hostFilter)).filter((family) => {

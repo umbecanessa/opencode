@@ -30,10 +30,13 @@ export class Client {
   })
 
   private async request<T>(path: string, init?: { method?: string; body?: string }): Promise<T> {
+    // A deadline is essential on flaky tunnels: a request stuck in a half-open VPN path would otherwise
+    // hang the caller's poll cycle forever, pinning the host as unreachable even after the tunnel recovers.
     const res = await fetch(`${this.host.origin}${path}`, {
       method: init?.method ?? "GET",
       body: init?.body,
       headers: init?.body ? { ...this.headers(), "content-type": "application/json" } : this.headers(),
+      signal: AbortSignal.timeout(10_000),
     })
     if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
     if (!res.ok) throw new Error(`${this.host.name}: ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300))
