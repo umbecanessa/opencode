@@ -37,6 +37,7 @@ import { Permission } from "@opencode/core/permission"
 import { PeerServers } from "@opencode/core/peer-servers"
 import { SessionTools } from "@opencode/core/tool/plugin/session"
 import { Tool } from "@opencode/core/tool"
+import { Workspace } from "@opencode/core/workspace"
 import { tmpdir } from "./fixture/tmpdir"
 import { tempGlobalLayer } from "./fixture/global"
 import { offlineModels } from "./fixture/models"
@@ -109,6 +110,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     Job.node,
     SubagentJob.node,
     Tool.node,
+    Workspace.node,
     PluginHooks.node,
   ],
 })

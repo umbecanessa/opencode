@@ -32,6 +32,7 @@ import { ConfigCompatibilityPlugin } from "../config/plugin/compatibility.js"
 import { ConfigToolOutputPlugin } from "../config/plugin/tool-output.js"
 import { ConfigWebSearchPlugin } from "../config/plugin/websearch.js"
 import { ConfigWorktreePlugin } from "../config/plugin/worktree.js"
+import { Workspace } from "../workspace.js"
 import { Worktree } from "../worktree.js"
 import { WorktreeStrategies } from "../worktree/strategies.js"
 import { Bus } from "../bus.js"
@@ -155,6 +156,7 @@ const services = [
   ToolOutput.Service,
   Watcher.Service,
   WellKnown.Service,
+  Workspace.Service,
   Worktree.Service,
   WorktreeStrategies.Service,
 ] as const
@@ -209,6 +211,7 @@ export const requirements = LayerNode.group([
   ToolOutput.node,
   Watcher.node,
   WellKnown.node,
+  Workspace.node,
   Worktree.node,
   WorktreeStrategies.node,
 ])

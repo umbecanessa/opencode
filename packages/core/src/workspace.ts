@@ -43,6 +43,13 @@ export interface Interface {
   readonly provision: (
     workspaceID: ID,
   ) => Effect.Effect<Info, NotFound | WorkspaceDriver.Error | WorkspaceDriver.ProviderNotFound>
+  /**
+   * Re-pins provider data for an existing workspace, evicting any live
+   * connection so the next connect goes through the driver with the new data.
+   * For callers that own the provider resource externally, such as config
+   * entries whose connection data changes with a config edit.
+   */
+  readonly setBinding: (workspaceID: ID, binding: WorkspaceDriver.Binding) => Effect.Effect<void, NotFound>
   readonly connect: (
     workspaceID: ID,
   ) => Effect.Effect<EnvironmentDriver.Driver, NotFound | WorkspaceDriver.Error | WorkspaceDriver.ProviderNotFound>
@@ -258,6 +265,19 @@ const layer = (options: Options) =>
           return workspaceID
         }),
         provision,
+        setBinding: Effect.fn("Workspace.setBinding")(function* (workspaceID, binding) {
+          yield* locks.withLock(workspaceID)(
+            Effect.gen(function* () {
+              yield* load(workspaceID)
+              yield* saveBinding(workspaceID, binding)
+              // Evict the live connection instead of reconnecting in place: the next
+              // connect re-reads the row and re-pins through the driver.
+              const connection = connections.get(workspaceID)
+              connections.delete(workspaceID)
+              if (connection) yield* Scope.close(connection.scope, Exit.void)
+            }),
+          )
+        }),
         connect: Effect.fn("Workspace.connect")(function* (workspaceID) {
           const acquire = Effect.acquireRelease(
             // A live connection implies the binding is already persisted, so skip the provision hop.

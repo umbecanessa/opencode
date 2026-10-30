@@ -21,6 +21,7 @@ import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginSupervisor } from "@opencode/core/plugin/supervisor"
 import { SessionTools } from "@opencode/core/tool/plugin/session"
 import { Tool } from "@opencode/core/tool"
+import { Workspace } from "@opencode/core/workspace"
 import { Global } from "@opencode/util/global"
 import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -111,6 +112,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     Job.node,
     SubagentJob.node,
     Tool.node,
+    Workspace.node,
     PluginHooks.node,
   ],
 })

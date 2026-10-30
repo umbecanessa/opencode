@@ -34,6 +34,8 @@ import { PluginUpdate } from "@opencode/core/plugin/update"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { WellKnown } from "@opencode/core/wellknown"
 import { Workspace } from "@opencode/core/workspace"
+import { WorkspaceDriver } from "@opencode/core/workspace/driver"
+import { WorkspaceDriverSsh } from "@opencode/core/workspace/driver-ssh"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { FileWatch } from "@opencode/core/filesystem/file-watch"
 import { HttpRouter } from "effect/http"
@@ -139,6 +141,9 @@ function makeRoutes<AuthError, AuthServices>(
     ),
     InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: options.config?.project })),
     ShellSelect.node.replace(ShellSelect.configured({ gitbash: options.windows?.gitbash })),
+    // The ssh workspace placement driver (config `workspaces`); the default
+    // production registry is otherwise empty.
+    WorkspaceDriver.node.replace(WorkspaceDriverSsh.node),
     Mcp.node.replace(
       Mcp.configured({
         clientInfo: {

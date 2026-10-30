@@ -202,3 +202,62 @@ genuinely new semantics (remote claims, fencing, interruption targeting) and
 it waits until Phase 4's failure modes are understood. At that point
 `subagent`/`session_spawn` grow a placement argument and inherit cross-machine
 reach for free.
+
+### Phase 5a — ssh workspace placement (implemented here)
+
+Split per the gate above: 5a ships the `WorkspaceDriver` half, which works
+against today's architecture with zero clustering semantics. Drains stay
+process-local (AGENTS-mandated until clustering); what relocates is the
+session's EXECUTION ENVIRONMENT. The other half — the Location server
+dimension with remote claims/fencing — stays gated behind real-world Phase 4
+feedback.
+
+- Config gains `workspaces: { name: { type: "ssh", host, port?, user?,
+  identity?, directory } }`; the entry's `directory` is the project root ON
+  THE REMOTE HOST. Placement id is deterministic: `wrk_cfg_<name>`.
+- The `ssh` driver implements `WorkspaceDriver.Interface` by providing only a
+  `ChildProcessSpawner` that runs each command through the system `ssh`
+  binary (ControlMaster multiplexing, BatchMode). File operations ride
+  `execDefaults` — `Workspace.connect` already derives `Files` from the
+  spawner via `sh` scripts, so a spawner is the whole contract (GNU
+  coreutils/findutils required on the target, same as the exec-defaults
+  contract). `create` fails honestly (ssh hosts are configured, not
+  provisioned); `suspendForIdle`/`destroy` are no-ops.
+- `session_spawn` grows `workspace?: string` (mutually exclusive with
+  `server` and `directory`): the placement helper reads the config entry,
+  commits `Workspace.create({ id: wrk_cfg_<name>, provider: "ssh" })` and
+  `Workspace.setBinding` (new method: re-pins provider data so config edits
+  take effect on next connect). Children inherit the parent's location —
+  subagents and peers of a placed session run remotely for free.
+- New permission action `workspace` (resource = workspace name, default ask),
+  mirroring the `server` action.
+- Known caveats to document in the skill: interactive PTY, filesystem
+  watching, and instruction discovery stay local; the session row lives in
+  THIS server's database.
+
+Implementation notes:
+
+- `packages/schema/src/config/workspace.ts` (`Config.Workspace`, passed through
+  `Config.normalize` beside `servers`); `packages/core/src/workspace/
+  driver-ssh.ts` (driver + exported pure `translate` helper); the ssh registry
+  node registers into the previously empty production registry via a
+  `WorkspaceDriver.node.replace` in `packages/server/src/routes.ts`.
+  `session_spawn` grew `workspace?` with mutual-exclusion failures against
+  `server` and `directory`; the system hook lists configured workspace names.
+- Verified during implementation: connection multiplexing flags are gated to
+  non-Windows local clients (Win32-OpenSSH rejects `ControlPath`); env
+  forwarding is limited to `LANG`, `LC_*`, `TERM`, `TZ` (the remote login
+  environment is authoritative and `execDefaults` needs `LC_ALL=C`); piped
+  commands fail honestly (Core builds none); `LocationServiceMap.canonical`
+  already keeps POSIX remote directories intact on a Windows host (the sandbox
+  precedent); `Location.Ref` gained no server dimension — that stays 5b.
+- Tests: `workspace-driver-ssh.test.ts` (argv translation table + driver
+  behavior), `tool-session-workspace.test.ts` (placement routing, id reuse,
+  unknown-workspace listing, both mutual-exclusion rejections), and two
+  `setBinding` cases in `workspace.test.ts`.
+
+## Phase 5b — remote claims (gated)
+
+The server dimension on `Location`, remote-owned claims, fencing, and
+interruption targeting. Deferred until Phase 4/5a failure modes are known in
+real use.

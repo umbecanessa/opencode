@@ -260,10 +260,10 @@ spawner.
 - `opencode_session_spawn` — create a new top-level session and run a prompt
   in it. Accepts `agent` (any agent, including primary agents), `model`
   (`providerID/modelID[#variant]`), `directory` (another project directory),
-  `background`, and `temporary`. The spawned session starts with no context,
-  so the prompt must contain everything it needs. Prefer the `subagent` tool
-  for delegated work inside your own project; use spawning for standalone
-  main-agent work or cross-project work.
+  `workspace` (a configured ssh workspace), `background`, and `temporary`. The
+  spawned session starts with no context, so the prompt must contain everything
+  it needs. Prefer the `subagent` tool for delegated work inside your own
+  project; use spawning for standalone main-agent work or cross-project work.
 - `opencode_session_send` — a follow-up prompt to an existing session by ID,
   reusing everything it already knows. `delivery: "steer"` interrupts at the
   next safe boundary; `delivery: "queue"` parks it until the session would go
@@ -358,6 +358,63 @@ runtime — the SSH and WSL tunnels from its server list (named `ssh:<id>` and
 the `server` parameter exactly like config keys; they live only in memory, and
 a config key of the same name wins. When peer servers are available your
 system prompt lists their names.
+
+### Native placement (ssh workspaces)
+
+The config `workspaces` map names remote machines sessions can be placed on.
+Each entry has `type: "ssh"`, a `host` resolved by the local ssh binary (so
+`~/.ssh/config` aliases work), optional `port`, `user`, and `identity` (a
+private key file), and a `directory` — the project root ON THE REMOTE HOST.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "workspaces": {
+    "buildbox": {
+      "type": "ssh",
+      "host": "build.example.com",
+      "user": "ana",
+      "directory": "/home/ana/projects/app"
+    }
+  }
+}
+```
+
+`session_spawn` accepts a `workspace` parameter naming one of them. The
+session row stays on THIS server — listing, sending, stopping, and waiting
+work exactly as with local sessions — but its shell and file tools execute on
+the remote host inside the entry's directory. Children of a placed session
+inherit the placement, so its subagents and its own peer spawns run remotely
+for free. `workspace` is mutually exclusive with `server` and `directory`.
+Placement gates on a separate `workspace` permission action (resource is the
+workspace name), which defaults to `ask`; when ssh workspaces are configured
+your system prompt lists their names.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "workspace": {
+      "buildbox": "allow"
+    }
+  }
+}
+```
+
+Caveats of execution-over-ssh:
+
+- File operations run as `sh` scripts through the same connection, so the
+  target needs GNU coreutils and findutils (BSD and busybox userlands do not
+  work), and an interactive PTY, filesystem watching, and instruction
+  discovery stay local.
+- The remote login environment is authoritative: only `LANG`, `LC_*`, `TERM`,
+  and `TZ` are forwarded from this machine.
+- Interrupting a placed run kills the local ssh, but processes already
+  started on the remote host may keep running; and a local ssh failure is
+  indistinguishable from a remote exit code 255.
+- Connection multiplexing is disabled when the local ssh is the Win32 build
+  (no ControlPath support there), so file operations pay a fresh handshake
+  each time.
 
 ## [Troubleshooting](https://opencode.ai/v2/docs/troubleshooting)
 

@@ -7,15 +7,18 @@ import type { Tool } from "@opencode/schema/tool"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { DateTime, Effect, Schema } from "effect"
 import { Agent } from "../../agent.js"
+import { Config } from "../../config.js"
 import { FileAccess } from "../../file-access.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
 import { PeerServers } from "../../peer-servers.js"
 import { Permission } from "../../permission.js"
+import { AbsolutePath } from "../../schema.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SubagentCompletion } from "../../session/subagent-completion.js"
 import { SubagentJob } from "../../session/subagent-job.js"
+import { Workspace } from "../../workspace.js"
 
 const spawnResult = (sessionID: SessionSchema.ID) => ({
   sessionID,
@@ -46,6 +49,20 @@ const assertServer = (permission: Permission.Interface, server: string, context:
       source: { type: "tool", messageID: context.messageID, id: context.id },
     })
     .pipe(Effect.mapError((error) => new ToolFailure({ message: `Cross-server dispatch denied: ${server}`, error })))
+
+// Placing a session's execution on another machine gates on its own `workspace`
+// permission action, mirroring the `server` action for cross-server dispatch.
+const assertWorkspace = (permission: Permission.Interface, workspace: string, context: Tool.Context) =>
+  permission
+    .assert({
+      action: "workspace",
+      resources: [workspace],
+      save: [workspace],
+      sessionID: context.sessionID,
+      agent: context.agent,
+      source: { type: "tool", messageID: context.messageID, id: context.id },
+    })
+    .pipe(Effect.mapError((error) => new ToolFailure({ message: `Remote placement denied: ${workspace}`, error })))
 
 const serverField = Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
   description:
@@ -81,6 +98,10 @@ const SpawnInput = Schema.Struct({
   server: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
     description:
       'Name of a configured peer OpenCode server (config "servers") to dispatch to. The session runs there in the foreground and its final text is returned; background and directory do not apply.',
+  }),
+  workspace: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description:
+      'Name of a configured ssh workspace (config "workspaces") to place the session on: its shell and file tools operate on the remote host inside the entry\'s directory. server and directory do not apply.',
   }),
 })
 
@@ -160,6 +181,36 @@ export const Plugin = {
     const models = yield* Model.Service
     const subagents = yield* SubagentJob.Service
     const peers = yield* PeerServers.Service
+    const config = yield* Config.Service
+    const workspaces = yield* Workspace.Service
+
+    // Placement on a configured ssh workspace: the session row stays in this
+    // server's database; only the location gains a workspace whose driver
+    // relocates shell and file execution to the remote host. Children inherit
+    // the location, so subagents and peers of a placed session run remotely too.
+    const placeOnWorkspace = (name: string, context: Tool.Context) =>
+      Effect.gen(function* () {
+        const entries = Config.latest(yield* config.entries(), "workspaces")
+        const entry = entries?.[name]
+        if (entry === undefined)
+          return yield* new ToolFailure({
+            message: `Workspace "${name}" is not configured. Configured workspaces: ${Object.keys(entries ?? {}).join(", ") || "none"}`,
+          })
+        yield* assertWorkspace(permission, name, context)
+        const workspaceID = Workspace.ID.ascending(`wrk_cfg_${name}`)
+        yield* workspaces
+          .create({ id: workspaceID, provider: entry.type })
+          .pipe(Effect.mapError((error) => new ToolFailure({ message: `Unable to register workspace "${name}"`, error })))
+        yield* workspaces
+          .setBinding(workspaceID, {
+            host: entry.host,
+            ...(entry.port === undefined ? {} : { port: entry.port }),
+            ...(entry.user === undefined ? {} : { user: entry.user }),
+            ...(entry.identity === undefined ? {} : { identity: entry.identity }),
+          })
+          .pipe(Effect.mapError((error) => new ToolFailure({ message: `Unable to pin workspace "${name}"`, error })))
+        return { directory: AbsolutePath.make(entry.directory), workspaceID }
+      })
 
     yield* ctx.tool
       .transform((editor) => {
@@ -240,6 +291,7 @@ export const Plugin = {
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
             "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
             "Set server to dispatch the whole task to a named peer OpenCode server (config `servers` or registered by the desktop): it runs there in the foreground (background and directory do not apply) and returns its final text.",
+            "Set workspace to a named ssh workspace from the config `workspaces` map: the session's shell and file tools operate on that remote host inside the entry's directory (directory does not apply).",
           ].join("\n"),
           input: SpawnInput,
           output: SpawnOutput,
@@ -254,6 +306,10 @@ export const Plugin = {
                 if (input.directory !== undefined)
                   return yield* new ToolFailure({
                     message: "directory does not apply with server: the session runs in the peer server's own project location.",
+                  })
+                if (input.workspace !== undefined)
+                  return yield* new ToolFailure({
+                    message: "workspace does not apply with server: the peer server places the session itself.",
                   })
                 yield* assertServer(permission, input.server, context)
                 const remoteModel = input.model === undefined ? undefined : yield* parseModel(input.model)
@@ -287,6 +343,10 @@ export const Plugin = {
               const parent = yield* sessions
                 .get(context.sessionID)
                 .pipe(Effect.mapError(() => new ToolFailure({ message: "Parent session not found" })))
+              if (input.workspace !== undefined && input.directory !== undefined)
+                return yield* new ToolFailure({
+                  message: "directory does not apply with workspace: the config entry's directory is the remote project root.",
+                })
               const agent =
                 input.agent === undefined
                   ? yield* (parent.agent === undefined ? Effect.succeed(undefined) : agents.resolve(parent.agent))
@@ -314,17 +374,19 @@ export const Plugin = {
                 })
 
               const location =
-                input.directory === undefined
-                  ? parent.location
-                  : {
-                      directory: (yield* access
-                        .resolve({ path: input.directory, kind: "directory" })
-                        .pipe(
-                          Effect.mapError(
-                            () => new ToolFailure({ message: `Unable to resolve directory: ${input.directory}` }),
-                          ),
-                        )).absolute,
-                    }
+                input.workspace !== undefined
+                  ? yield* placeOnWorkspace(input.workspace, context)
+                  : input.directory === undefined
+                    ? parent.location
+                    : {
+                        directory: (yield* access
+                          .resolve({ path: input.directory, kind: "directory" })
+                          .pipe(
+                            Effect.mapError(
+                              () => new ToolFailure({ message: `Unable to resolve directory: ${input.directory}` }),
+                            ),
+                          )).absolute,
+                      }
               const model = override ?? agent?.model ?? parent.model
               const child = yield* sessions
                 .create({
@@ -608,12 +670,17 @@ export const Plugin = {
         const peersLine = names.length
           ? `Peer OpenCode servers available for the server parameter: ${names.join(", ")}. It lists, dispatches, sends, stops, and waits against that machine.`
           : "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine."
+        const workspaceNames = Object.keys(Config.latest(yield* config.entries(), "workspaces") ?? {})
+        const workspacesLine = workspaceNames.length
+          ? ` ssh workspaces available for session_spawn's workspace parameter: ${workspaceNames.join(", ")}. A placed session runs its shell and file tools on that remote host inside the configured directory.`
+          : " When the config `workspaces` map names ssh workspaces, session_spawn accepts a workspace parameter to place a session's execution on that remote host."
         event.system.push(
           SystemPart.make(
             [
               "You can coordinate other sessions with opencode_session_list, opencode_session_spawn, opencode_session_send, opencode_session_stop, and opencode_session_wait.",
               "Sessions spawned with session_spawn are independent main-agent sessions; their completion arrives as <peer> messages.",
               peersLine,
+              workspacesLine,
             ].join(" "),
           ),
         )

@@ -541,3 +541,33 @@ it.effect("surfaces wake failures during file overrides as Environment.Failed", 
     )
   }),
 )
+
+it.effect("setBinding re-pins provider data without calling create", () =>
+  Effect.gen(function* () {
+    const workspace = yield* Workspace.Service
+    const workspaceID = yield* workspace.create({ provider: "fake" })
+    yield* workspace.setBinding(workspaceID, { host: "configured" })
+    const info = yield* workspace.provision(workspaceID)
+    expect(info.binding).toEqual({ host: "configured" })
+    expect(calls.filter((call) => call.operation === "create")).toEqual([])
+
+    yield* workspace.setBinding(workspaceID, { host: "edited" })
+    const environment = yield* workspace.connect(workspaceID)
+    // The memory driver dies on spawn, but connect is recorded during acquire before that.
+    const spawned = yield* Effect.scoped(environment.spawner.spawn(ChildProcess.make("lazy"))).pipe(
+      Effect.forkScoped({ startImmediately: true }),
+    )
+    yield* Fiber.await(spawned)
+    expect(calls.filter((call) => call.operation === "connect").at(-1)?.binding).toEqual({ host: "edited" })
+  }),
+)
+
+it.effect("setBinding fails for unknown workspaces", () =>
+  Effect.gen(function* () {
+    const workspace = yield* Workspace.Service
+    const workspaceID = Workspace.ID.create()
+    expect(yield* workspace.setBinding(workspaceID, {}).pipe(Effect.flip)).toEqual(
+      new Workspace.NotFound({ workspaceID }),
+    )
+  }),
+)
