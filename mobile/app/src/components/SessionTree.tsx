@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import { Pressable, StyleSheet, Text, View } from "react-native"
 import type { Session } from "../api/types"
-import { familyStatus, statusOf, type Live } from "../state/live"
+import { familyStatus, isFailed, isUnread, statusOf, type Live } from "../state/live"
 import type { Family } from "../state/tree"
 import { statusLabel, useTheme } from "../theme"
 import { Row } from "./Rows"
@@ -52,7 +52,7 @@ export const TreeRow = ({
   const t = useTheme()
   if (item.kind === "child") return <ChildRow session={item.session} branchEnd={item.last} last={last} live={live} onOpen={onOpen} />
   const { session, children } = item.family
-  const status = familyStatus(live, session.host, [session.id, ...children.map((c) => c.id)])
+  const status = familyStatus(live, session.host, [session.id, ...children.map((c) => c.id)], { failed: isFailed(session), unread: isUnread(session) })
   // The chip tracks live activity, like the desktop's background-activity affordance: it counts subagents that
   // are running or waiting, and an idle family carries no chip once collapsed.
   const active = children.filter((c) => statusOf(live, c.host, c.id) !== "done")
@@ -102,7 +102,8 @@ const ChildRow = ({
   onOpen: (session: Session) => void
 }) => {
   const t = useTheme()
-  const status = statusOf(live, session.host, session.id)
+  const liveStatus = statusOf(live, session.host, session.id)
+  const status = liveStatus !== "done" ? liveStatus : isFailed(session) ? "failed" : isUnread(session) ? "unread" : "done"
   return (
     <Pressable
       onPress={() => onOpen(session)}

@@ -41,6 +41,7 @@ const light = () => ({
     waiting: "#FF9F0A",
     done: "#8E8E93",
     failed: "#FF3B30",
+    unread: "#007AFF",
   },
   codeBackground: "#F6F6F8",
 })
@@ -65,6 +66,7 @@ const dark = () => ({
     waiting: "#FFD60A",
     done: "#98989D",
     failed: "#FF453A",
+    unread: "#0A84FF",
   },
   codeBackground: "#1C1C1E",
 })
@@ -76,6 +78,8 @@ export const statusLabel = {
   waiting: "Needs you",
   done: "Done",
   failed: "Failed",
+  // Finished turns the user has not opened yet; the blue dot carries the state, the label stays calm.
+  unread: "Done",
 } as const
 
 export type SessionStatus = keyof typeof statusLabel

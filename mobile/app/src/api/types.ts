@@ -25,7 +25,7 @@ export type Session = {
   cost: number
   tokens: { input: number; output: number; reasoning: number }
   outcome?: unknown
-  time: { created: number; updated: number; archived?: number | null }
+  time: { created: number; updated: number; archived?: number | null; idle?: number; viewed?: number }
   host: HostID
 }
 

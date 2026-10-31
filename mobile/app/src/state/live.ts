@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { AppState } from "react-native"
 import type { PermissionRequest, SessionForm } from "../api/types"
+import type { SessionStatus } from "../theme"
 import { useHosts } from "./hosts"
 
 export type Live = {
@@ -79,8 +80,28 @@ export const useLive = (intervalMs = 5000): Live => {
 export const statusOf = (live: Live, host: string, sessionID: string): "running" | "waiting" | "done" =>
   live.waiting.has(liveKey(host, sessionID)) ? "waiting" : live.running.has(liveKey(host, sessionID)) ? "running" : "done"
 
+// A session whose last run ended failed, per the same outcome field the Activity filters read.
+export const isFailed = (session: { outcome?: unknown }) =>
+  session.outcome === "failed" || (typeof session.outcome === "object" && session.outcome !== null && "type" in session.outcome && (session.outcome as { type?: string }).type === "failed")
+
+// The server tracks the idle transition and the last view against each session; a finished turn whose
+// idle postdates the view (or was never viewed) is the desktop's blue unread dot.
+export const isUnread = (session: { time?: { idle?: number; viewed?: number } }) =>
+  session.time?.idle !== undefined && (session.time.viewed === undefined || session.time.idle > session.time.viewed)
+
 // A parent reflects its subagents: a blocked child means the whole task needs you.
-export const familyStatus = (live: Live, host: string, ids: string[]) => {
+// The failed/unread flags carry the root session's own non-live state, ranked like the desktop sidebar:
+// waiting and running outrank a stale failure or unread mark.
+export const familyStatus = (
+  live: Live,
+  host: string,
+  ids: string[],
+  root?: { failed?: boolean; unread?: boolean },
+): SessionStatus => {
   const all = ids.map((id) => statusOf(live, host, id))
-  return all.includes("waiting") ? "waiting" : all.includes("running") ? "running" : "done"
+  if (all.includes("waiting")) return "waiting"
+  if (all.includes("running")) return "running"
+  if (root?.failed) return "failed"
+  if (root?.unread) return "unread"
+  return "done"
 }

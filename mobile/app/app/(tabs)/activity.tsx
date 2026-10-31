@@ -9,7 +9,7 @@ import { flattenFamilies, TreeRow, type TreeItem } from "../../src/components/Se
 import { ApprovalCard } from "../../src/components/session/Approval"
 import { Question } from "../../src/components/session/Question"
 import { useHosts } from "../../src/state/hosts"
-import { familyStatus, useLive } from "../../src/state/live"
+import { familyStatus, isFailed, isUnread, useLive } from "../../src/state/live"
 import { nestSessions } from "../../src/state/tree"
 import { useTheme } from "../../src/theme"
 
@@ -74,12 +74,12 @@ export default function Activity() {
 
   const items = useMemo(() => flattenFamilies(nestSessions(sessions.filter((s) => !hostFilter || s.host === hostFilter)).filter((family) => {
     if (statusFilter === "All") return true
-    const status = familyStatus(live, family.session.host, [family.session.id, ...family.children.map((s) => s.id)])
+    const status = familyStatus(live, family.session.host, [family.session.id, ...family.children.map((s) => s.id)], { failed: isFailed(family.session), unread: isUnread(family.session) })
     if (statusFilter === "Running") return status === "running"
     if (statusFilter === "Needs you") return status === "waiting"
-    const outcome = family.session.outcome
-    const failed = outcome === "failed" || (typeof outcome === "object" && outcome !== null && "type" in outcome && outcome.type === "failed")
-    return status === "done" && (statusFilter === "Failed" ? failed : !failed)
+    if (statusFilter === "Failed") return status === "failed"
+    // Finished families, blue unread or grey read.
+    return status === "done" || status === "unread"
   }), open, live), [sessions, open, hostFilter, statusFilter, live])
   const titles = useMemo(() => new Map(sessions.map((s) => [`${s.host}/${s.id}`, s])), [sessions])
   const navigationItems = useMemo(() => {

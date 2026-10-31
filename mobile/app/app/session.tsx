@@ -32,7 +32,7 @@ import {
   type Message,
 } from "../src/components/session/Timeline"
 import { useHosts } from "../src/state/hosts"
-import { familyStatus, liveKey, useLive } from "../src/state/live"
+import { familyStatus, isFailed, liveKey, useLive } from "../src/state/live"
 import { useSafeAreaInsets } from "react-native-safe-area-context"
 import { useTheme } from "../src/theme"
 
@@ -63,6 +63,7 @@ export default function Session() {
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   const [subagents, setSubagents] = useState<SessionInfo[]>([])
+  const [outcome, setOutcome] = useState<unknown>()
   const [parent, setParent] = useState<{ of: string; id: string; title: string }>()
   const insets = useSafeAreaInsets()
 
@@ -89,7 +90,7 @@ export default function Session() {
     return () => { cancelled = true }
   }, [c, params.id, messages])
 
-  const status = requests.length ? "waiting" : familyStatus(live, params.host, [params.id, ...subagents.map((s) => s.id)])
+  const status = requests.length ? "waiting" : familyStatus(live, params.host, [params.id, ...subagents.map((s) => s.id)], { failed: isFailed({ outcome }) })
   const running = status === "running" || sending
   const hostName = hosts.find((h) => h.id === params.host)?.name ?? ""
 
@@ -164,6 +165,9 @@ export default function Session() {
         directory.current = s.location?.directory ?? ""
         if (s.title) setTitle(s.title)
         setSelectedModel(s.model)
+        setOutcome(s.outcome)
+        // Opening the session is the view: report its idle transition so the unread dot clears server-side.
+        if (s.time?.idle !== undefined) c.markViewed(params.id, s.time.idle)
       })
       .catch(() => {})
     c.messages(params.id)
@@ -295,7 +299,9 @@ export default function Session() {
       ? { text: "Needs your approval", color: t.status.waiting }
       : running
         ? { text: "Working…", color: t.status.running }
-        : { text: hostName ? `Idle · ${hostName}` : "Idle", color: t.tertiaryLabel }
+        : status === "failed"
+          ? { text: hostName ? `Failed · ${hostName}` : "Failed", color: t.status.failed }
+          : { text: hostName ? `Idle · ${hostName}` : "Idle", color: t.tertiaryLabel }
 
   return (
     <KeyboardAvoidingView

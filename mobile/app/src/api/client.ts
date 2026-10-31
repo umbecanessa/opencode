@@ -71,7 +71,11 @@ export class Client {
 
   active = () => this.request<{ data: Record<string, { type: string }> }>("/api/session/active")
 
-  session = (id: string) => this.request<{ data: { id: string; parentID?: string; title?: string; model?: { id: string; providerID: string; variant?: string }; cost?: number; time?: { created: number; updated: number }; location?: { directory: string } } }>(`/api/session/${id}`).then((r) => r.data)
+  session = (id: string) => this.request<{ data: { id: string; parentID?: string; title?: string; model?: { id: string; providerID: string; variant?: string }; cost?: number; time?: { created: number; updated: number; idle?: number; viewed?: number }; outcome?: unknown; location?: { directory: string } } }>(`/api/session/${id}`).then((r) => r.data)
+
+  // Reports the idle transition the viewer observed, so the server marks the finished turn read
+  // (POST returns NoContent; the json read below rejecting on the empty body is expected and ignored).
+  markViewed = (id: string, idle: number) => this.request<never>(`/api/session/${id}/view`, { method: "POST", body: JSON.stringify({ idle }) }).catch(() => {})
 
   messages = (sessionID: string, cursor?: string) =>
     this.request<{ data: Record<string, unknown>[]; cursor: MessagePage["cursor"] }>(
