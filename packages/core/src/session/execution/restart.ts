@@ -355,9 +355,17 @@ export const layer = (options?: Options) =>
               // boot still answers: a live foreign owner is draining right now.
               // A dead, reused-URL, or URL-less owner is adopted under the fence
               // so this boot's drain passes its step-boundary ownership check.
+              // A claim naming one of MY OWN addresses needs no probe: the
+              // stamping boot died the moment this boot bound that socket, and
+              // a probe would only see my own auth wall and read it as alive —
+              // which would strand my predecessor's Sessions forever.
               if (Option.isSome(identity) && claim.owner !== undefined && claim.owner !== identity.value.id) {
+                const mine = claim.url !== undefined && (yield* identity.value.urls).includes(claim.url)
                 const alive =
-                  Option.isSome(wakes) && claim.url !== undefined && (yield* wakes.value.probe(claim.url, claim.owner))
+                  !mine &&
+                  Option.isSome(wakes) &&
+                  claim.url !== undefined &&
+                  (yield* wakes.value.probe(claim.url, claim.owner))
                 if (alive)
                   return yield* Effect.logInfo("restart sweep leaving claim to live owner", {
                     sessionID: claim.sessionID,

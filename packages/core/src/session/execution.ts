@@ -211,7 +211,12 @@ export const layer = Layer.effect(
       if (at !== undefined) {
         const claim = yield* store.attribution(sessionID)
         if (claim?.owner !== undefined && claim.owner !== at.id) {
-          if (Option.isSome(wakes) && claim.url !== undefined) {
+          // A claim naming one of MY addresses was stamped by a boot that died
+          // when I took the socket: no probe can prove it alive, and one would
+          // hit my own auth wall and read as alive. Seize it directly.
+          const mine =
+            claim.url !== undefined && Option.isSome(identity) && (yield* identity.value.urls).includes(claim.url)
+          if (!mine && Option.isSome(wakes) && claim.url !== undefined) {
             if (
               (yield* wakes.value.probe(claim.url, claim.owner)) &&
               (yield* wakes.value.forward(claim.url, sessionID))

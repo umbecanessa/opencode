@@ -1360,11 +1360,12 @@ describe("SessionExecution claim attribution", () => {
     id: string,
     wakes: { readonly probe?: (url: string, bootID: string) => boolean; readonly forward?: (url: string) => boolean } = {},
     calls?: { readonly probes: string[]; readonly forwards: string[] },
+    urls: ReadonlyArray<string> = [],
   ) =>
     Layer.merge(
       Layer.succeed(
         ServerIdentity.Service,
-        ServerIdentity.Service.of({ id, announce: () => Effect.void, urls: Effect.succeed([]) }),
+        ServerIdentity.Service.of({ id, announce: () => Effect.void, urls: Effect.succeed(urls) }),
       ),
       Layer.succeed(
         SessionWakeForward.Service,
@@ -1583,6 +1584,74 @@ describe("SessionExecution claim attribution", () => {
       // The sweep forks resumed drains, so completion is observed through the drain itself.
       yield* Deferred.await(drained)
       yield* execution.awaitIdle(sessionID)
+      expect(drains).toEqual([sessionID])
+    }),
+  )
+
+  it.effect("a wake on an own-address foreign claim seizes without probing", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_ownaddr")
+      yield* seedSessions(database, [sessionID])
+      // A predecessor boot stamped the claim on THIS address before dying.
+      yield* store.claim(sessionID, { id: "boot-before", url: "http://me" })
+
+      const calls = { probes: [] as string[], forwards: [] as string[] }
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => true, forward: () => true }, calls, ["http://me"]),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      yield* execution.wake(sessionID)
+      // Probing is pointless at my own address (an auth wall would read as
+      // alive), so the claim is fenced over directly and drained here.
+      expect(calls.probes).toEqual([])
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-local" })
+      yield* execution.awaitIdle(sessionID)
+      expect(drains).toEqual([sessionID])
+    }),
+  )
+
+  it.effect("the restart sweep seizes an own-address claim without probing", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_sweep_ownaddr")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-before", url: "http://me" })
+
+      const calls = { probes: [] as string[], forwards: [] as string[] }
+      const drained = yield* Deferred.make<void>()
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) =>
+          Effect.sync(() => {
+            drains.push(sessionID)
+            Deferred.doneUnsafe(drained, Effect.void)
+          }),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => true }, calls, ["http://me"]),
+      )
+      const restart = Context.get(context, SessionRestart.Service)
+
+      yield* restart.resumeSuspendedSessions
+      // The predecessor died when this boot bound the address: seize and resume
+      // even though a probe of that URL would answer (it is this server's).
+      expect(calls.probes).toEqual([])
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-local" })
+      yield* Deferred.await(drained)
       expect(drains).toEqual([sessionID])
     }),
   )

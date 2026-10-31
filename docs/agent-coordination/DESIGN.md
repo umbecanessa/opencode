@@ -349,7 +349,12 @@ servers cannot drain one Session in the same step.
   whose foreign owner still answers a probe is left alone (that server owns
   the drain), and every other claim is seized under the fence before
   resuming. This also makes two co-mounted servers' sweeps race-free instead
-  of doubly resuming.
+  of doubly resuming. Claims naming one of the sweeping server's OWN
+  announced addresses skip the probe entirely: the stamping boot died when
+  this boot bound that socket, and probing one's own auth-gated `/api/info`
+  would only return a credential-less 401 that reads as "alive" and strand
+  the predecessor's Sessions forever. The same own-address rule short-circuits
+  wake routing.
 - Protocol: `experimental.session.wake` (`POST
   /api/experimental/session/:sessionID/wake`, SDK
   `client.experimental.session.wake`) runs a routed wake on the receiving
