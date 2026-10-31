@@ -170,12 +170,26 @@ export function createConnection(input: {
           return publish()
         }
 
-        if (event.error === "browser.pane.unsupported" || event.error === "browser.pane.replaced") {
+        if (event.error === "browser.pane.unsupported") {
           blocked = true
           registration.close()
           state.registration = undefined
           state.embeds = {}
           state.browser = null
+          state.error = event.error
+          publish()
+
+          return
+        }
+
+        // Another desktop took control. This window is not broken, so it keeps its tabs and its error
+        // message, and registers again on the next wake - a user interaction here or a Session
+        // execution, which is how control follows whoever is actually using the session.
+        // Only "unsupported" blocks registration permanently; retrying an unsupported server cannot help.
+        if (event.error === "browser.pane.replaced") {
+          registration.close()
+          state.registration = undefined
+          state.embeds = {}
           state.error = event.error
           publish()
 

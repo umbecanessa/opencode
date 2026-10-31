@@ -80,6 +80,52 @@ export const File = Schema.Struct({
   data: Schema.Uint8ArrayFromBase64.check(Schema.isMaxLength(MAX_FILE_BYTES)),
 }).annotate({ identifier: "Browser.File" })
 const files = { files: Schema.Array(FileInfo) }
+const cookieName = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1_024))
+const cookieValue = Schema.String.check(Schema.isMaxLength(8_192))
+const cookieDomain = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(253))
+const cookieURL = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(16_384))
+
+/** What a cookie says about itself, shared by every cookie operation's listing and payload. */
+const cookieFields = {
+  name: cookieName.annotate({ description: "Cookie name." }),
+  domain: optional(cookieDomain).annotate({
+    description: "Domain scope without a leading dot; absent for a host-only cookie.",
+  }),
+  path: optional(short).annotate({ description: "Path scope; absent means /." }),
+  secure: optional(Schema.Boolean).annotate({ description: "Sent only over HTTPS." }),
+  httpOnly: optional(Schema.Boolean).annotate({ description: "Hidden from page JavaScript." }),
+  sameSite: optional(Schema.Literals(["strict", "lax", "no_restriction"])),
+  expirationDate: optional(Schema.Finite).annotate({
+    description: "Unix seconds. Absent for a session cookie, which ends with the browser.",
+  }),
+  session: optional(Schema.Boolean).annotate({ description: "True for a cookie with no expiry." }),
+  hostOnly: optional(Schema.Boolean).annotate({ description: "True when the cookie is exact-host scoped." }),
+}
+export interface CookieInfo extends Schema.Schema.Type<typeof CookieInfo> {}
+export const CookieInfo = Schema.Struct(cookieFields).annotate({ identifier: "Browser.CookieInfo" })
+export interface Cookie extends Schema.Schema.Type<typeof Cookie> {}
+export const Cookie = Schema.Struct({ ...cookieFields, value: cookieValue }).annotate({
+  identifier: "Browser.Cookie",
+})
+const cookieScope = {
+  url: optional(cookieURL).annotate({
+    description: "Restrict to cookies an address would send; localhost means the connected server.",
+  }),
+  domain: optional(cookieDomain).annotate({
+    description: "Restrict to this domain and its subdomains. Ignored when url is given.",
+  }),
+}
+const cookieCount = Schema.Struct({ cookies: count }).annotate({ description: "Cookies left in the jar." })
+const cookieList = Schema.Struct({
+  cookies: Schema.Array(Cookie),
+  total: count.annotate({ description: "Cookies matched before the bound." }),
+  truncated: Schema.Boolean,
+})
+const cookieInfoList = Schema.Struct({
+  cookies: Schema.Array(CookieInfo),
+  total: count.annotate({ description: "Cookies matched before the bound." }),
+  truncated: Schema.Boolean,
+})
 const page = { tab: Tab }
 const saved = Schema.Struct({ ...page, ...files })
 const level = Schema.Literals(["debug", "info", "warning", "error"])
@@ -182,6 +228,65 @@ export const Operations = [
     "Close only this browser tab, abort its work, and release its browser resources.",
     tab,
     State,
+  ),
+  operation(
+    "cookies.list",
+    "List the session's persisted browser cookies for a URL or domain, without values (they are secrets). The jar survives browser and app restarts. Use browser.cookies.get for one exact value.",
+    cookieScope,
+    cookieInfoList,
+  ),
+  operation(
+    "cookies.get",
+    "Read one browser cookie's exact value by name at a URL or domain. Treat the value as a secret: use it, do not echo it into output or files.",
+    { name: cookieName, ...cookieScope },
+    Schema.Struct({ cookie: Cookie }),
+  ),
+  operation(
+    "cookies.set",
+    "Set or overwrite one browser cookie, e.g. inject a session token to log a tab in without a password. Needs url or domain; url must be http(s).",
+    {
+      name: cookieName,
+      value: cookieValue,
+      url: optional(cookieURL),
+      domain: optional(cookieDomain),
+      path: optional(short),
+      secure: optional(Schema.Boolean),
+      httpOnly: optional(Schema.Boolean),
+      sameSite: optional(Schema.Literals(["strict", "lax", "no_restriction"])),
+      expires: optional(Schema.Finite).annotate({
+        description: "Expiry in Unix seconds. Omit for a session cookie that ends with the browser.",
+      }),
+    },
+    cookieCount,
+  ),
+  operation(
+    "cookies.delete",
+    "Delete browser cookies: one name at a URL/domain, or every cookie for a URL/domain when name is omitted. Returns how many were removed.",
+    { name: optional(cookieName), ...cookieScope },
+    Schema.Struct({ removed: count }),
+  ),
+  operation(
+    "cookies.prune",
+    "Delete aged browser cookies: expired ones, those expiring before a Unix-seconds cutoff, or both, for an optional domain. Names in keepNames are spared; session cookies without expiry are never removed.",
+    {
+      expired: optional(Schema.Boolean).annotate({ description: "Remove cookies already past their expiry. Default true when olderThan is omitted." }),
+      olderThan: optional(Schema.Finite).annotate({ description: "Remove cookies expiring before this Unix-seconds time." }),
+      domain: optional(cookieDomain),
+      keepNames: optional(Schema.Array(cookieName).check(Schema.isMaxLength(500))),
+    },
+    Schema.Struct({ removed: count, remaining: count }),
+  ),
+  operation(
+    "cookies.export",
+    "Export this session's browser cookies with values as portable entries, to save or move them to another desktop where browser.cookies.import injects them. The output is secret material: keep it out of transcripts and files the user did not ask for.",
+    cookieScope,
+    cookieList,
+  ),
+  operation(
+    "cookies.import",
+    "Inject exported cookie entries into this session's browser jar, e.g. to reuse a login from another desktop. Reports how many failed.",
+    { cookies: Schema.Array(Cookie).check(Schema.isMinLength(1), Schema.isMaxLength(500)) },
+    Schema.Struct({ imported: count, failed: count }),
   ),
   operation(
     "preview",

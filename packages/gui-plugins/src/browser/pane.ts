@@ -2,12 +2,16 @@ import { NodeHttpClient } from "@effect/platform-node"
 import { Browser } from "@opencode/plugin-browser/rpc"
 import { OpenCode } from "@opencode/client/effect"
 import { SessionID } from "@opencode/schema/session-id"
+import { createHash } from "node:crypto"
+import { readdir } from "node:fs/promises"
+import path from "node:path"
 import electron, { type BrowserWindow } from "electron"
-import { Deferred, Effect, ManagedRuntime, Queue, Schedule, Schema, Stream } from "effect"
+import { Deferred, Effect, ManagedRuntime, Option, Predicate, Queue, Schedule, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import type { BuiltinMainStorage } from "@opencode/plugin/gui/builtin"
 import type { Embeds, Persisted, ServerEndpoints, Windows } from "@opencode/plugin/gui/main"
-import { createBrowserPage, type BrowserPage, type Shared } from "./chromium"
+import { createBrowserPage, type BrowserPage, type ScrollPosition, type Shared } from "./chromium"
+import { runCookieCommand } from "./cookies"
 import { browserFailure } from "./errors"
 import { createBrowserNetwork, type BrowserNetwork } from "./network"
 import { destinationOrigin, fileURLWithin, refusal } from "./policy"
@@ -15,7 +19,19 @@ import { createRefs } from "./refs"
 import type { PaneEvent } from "./ipc"
 import { createBrowserRestoreStore } from "./restore"
 
+/** The cookie actions, which answer from the pane's persisted jar instead of a page. */
+type CookieAction = Extract<Browser.Action, { type: `cookies.${string}` }>
+
 type Target = { readonly server: string; readonly session: string; readonly restore?: Browser.State }
+
+/**
+ * The persisted partition for a server+session pair. The server half is hashed to keep the name
+ * short and legal; the session half stays readable, so the partition sweep can list a server's
+ * partitions on disk and ask it about each one without a stored manifest.
+ */
+function partitionName(server: string, sessionID: string) {
+  return `persist:opencode-browser-${createHash("sha256").update(server).digest("hex").slice(0, 12)}-${sessionID}`
+}
 
 type Entry = {
   binding: string
@@ -28,6 +44,8 @@ type Entry = {
   cleanup?: () => void
   pages: Map<Browser.TabID, BrowserPage>
   tabs: Map<Browser.TabID, Browser.Tab>
+  /** Scroll offsets per tab - window and inner scrollers - from the live pages and the restore store. */
+  scrolls: Map<Browser.TabID, ScrollPosition>
   focusedTabID: Browser.TabID | null
   partition: string
   lastState?: string
@@ -59,6 +77,9 @@ export function createBrowserPane(input: {
   const releasing = new Set<Promise<void>>()
   // Keep long-lived RPC requests off Chromium's shared HTTP connection pool.
   const runtime = ManagedRuntime.make(NodeHttpClient.layerNodeHttp)
+  // When each server's partitions were last swept, so wakes and several windows do not walk the
+  // same server's directory repeatedly.
+  const swept = new Map<string, number>()
   let disposed = false
 
   return {
@@ -78,7 +99,8 @@ export function createBrowserPane(input: {
 
       const previous = target.restore ?? {
         tabs: saved.tabs.map((tab) => ({
-          ...tab,
+          id: tab.id,
+          url: tab.url,
           title: "",
           generation: 0,
         })),
@@ -105,8 +127,20 @@ export function createBrowserPane(input: {
             },
           ]),
         ),
+        // Revived tabs keep the offsets their last page reported, newest of the store and any live report.
+        scrolls: new Map(
+          saved.tabs.flatMap((tab) =>
+            tab.scrollX || tab.scrollY || tab.scrollInner?.length
+              ? ([[tab.id, { x: tab.scrollX ?? 0, y: tab.scrollY ?? 0, inner: tab.scrollInner }]] as const)
+              : [],
+          ),
+        ),
         focusedTabID: previous.focusedTabID,
-        partition: `opencode-browser-${crypto.randomUUID()}`,
+        // A persisted partition named for this server+session pair: its cookies and site data
+        // survive browser and app restarts, like the restored tab list it belongs to. It is
+        // per-session rather than per-server so each attachment's tunnel proxy (set on the whole
+        // partition) stays its own, and it is emptied when the session is deleted (see purge).
+        partition: partitionName(target.server, target.session),
         storageKey,
         fileRoots: [],
       }
@@ -152,7 +186,25 @@ export function createBrowserPane(input: {
               ),
             )
 
-            const session = yield* client.session.get({ sessionID })
+            // A session deleted while no pane was attached: its jar goes now, and the registration
+            // fails exactly as any other get failure does.
+            const session = yield* client.session.get({ sessionID }).pipe(
+              Effect.catchIf(
+                (error) => Predicate.isTagged(error, "SessionNotFoundError"),
+                (error) =>
+                  Effect.sync(() => purge(target.server, target.session)).pipe(Effect.andThen(Effect.fail(error))),
+              ),
+            )
+
+            // Partitions whose sessions were deleted since the last walk do not wait for a wake:
+            // one bounded sweep per server per half hour, beside the attachment's own lifetime.
+            if (Date.now() - (swept.get(target.server) ?? 0) > 30 * 60_000) {
+              swept.set(target.server, Date.now())
+              yield* purgeStale(target.server, (id) => client.session.get({ sessionID: id })).pipe(
+                Effect.catchCause((cause) => Effect.logWarning("Browser partition sweep failed", cause)),
+                Effect.forkScoped,
+              )
+            }
 
             // The agent can already read this workspace, so showing its files adds no access.
             if (server.sameMachine) entry.fileRoots = [session.location.directory]
@@ -212,6 +264,12 @@ export function createBrowserPane(input: {
 
                     return
                   }
+
+                  // Deletions ride this stream: the session's panes close and its jar empties at
+                  // once, without waiting for a wake or a sweep. Forked because purging this very
+                  // session closes the entry and interrupts the fiber running this callback.
+                  if (event.type === "session.deleted")
+                    return yield* Effect.sync(() => purge(target.server, event.data.sessionID)).pipe(Effect.forkScoped)
 
                   if (
                     event.type !== "rpc.experimental.browser.control" ||
@@ -351,6 +409,12 @@ export function createBrowserPane(input: {
       const entry = owned(window, binding)
       restore.remove(entry.storageKey)
       close(entry)
+      // Caches are the bulk of a partition and rebuild themselves, so closing a session's browser
+      // drops them. Cookies and origin storage stay: reopening the session keeps its logins.
+      void electron.session
+        .fromPartition(entry.partition)
+        .clearStorageData({ storages: ["cachestorage", "shadercache"] })
+        .catch(() => undefined)
     },
     /**
      * The plugin is going away (reload, disable, or quit). Windows keep each pane's tabs as a
@@ -397,6 +461,64 @@ export function createBrowserPane(input: {
     entry.abort.abort()
   }
 
+  /**
+   * A deleted session's browser goes with it: panes showing it close, its restored tabs are
+   * forgotten, and its partition is emptied. The directory itself stays - Electron has no
+   * partition-delete API and Chromium owns its files - but no cookie or site data survives.
+   */
+  function purge(server: string, sessionID: string) {
+    const key = `${server}\n${sessionID}`
+
+    entries.forEach((entry) => {
+      if (entry.storageKey === key) close(entry)
+    })
+    restore.remove(key)
+    void electron.session
+      .fromPartition(partitionName(server, sessionID))
+      .clearStorageData()
+      .catch(() => undefined)
+  }
+
+  /**
+   * Deletes a server's stale partitions: a jar goes only when the server itself answers
+   * SessionNotFoundError for the session named in the directory. Any other answer - offline,
+   * auth, a server still loading - fails the walk and keeps every jar, and a partition a live
+   * pane is using is never questioned, only kept.
+   */
+  function purgeStale(
+    server: string,
+    get: (sessionID: SessionID) => Effect.Effect<unknown, unknown>,
+  ) {
+    return Effect.gen(function* () {
+      const prefix = `opencode-browser-${createHash("sha256").update(server).digest("hex").slice(0, 12)}-`
+
+      const names = yield* Effect
+        .promise(() => readdir(path.join(electron.app.getPath("userData"), "Partitions")))
+        .pipe(Effect.catch(() => Effect.succeed<string[]>([])))
+
+      for (const name of names) {
+        if (!name.startsWith(prefix)) continue
+        const decoded = Schema.decodeUnknownOption(SessionID)(name.slice(prefix.length))
+
+        if (Option.isNone(decoded)) continue
+
+        const partition = `persist:${name}`
+
+        if (Array.from(entries.values()).some((entry) => entry.partition === partition)) continue
+
+        const gone = yield* get(decoded.value).pipe(
+          Effect.as(false),
+          Effect.catchIf(
+            (error) => Predicate.isTagged(error, "SessionNotFoundError"),
+            () => Effect.succeed(true),
+          ),
+        )
+
+        if (gone) purge(server, name.slice(prefix.length))
+      }
+    })
+  }
+
   async function closePage(entry: Entry, tabID: Browser.TabID, error?: string) {
     const page = entry.pages.get(tabID)
 
@@ -410,6 +532,7 @@ export function createBrowserPane(input: {
     })
     entry.pages.delete(tabID)
     entry.tabs.delete(tabID)
+    entry.scrolls.delete(tabID)
 
     if (focused) entry.focusedTabID = entry.tabs.keys().next().value ?? null
 
@@ -433,11 +556,23 @@ export function createBrowserPane(input: {
     // Teardown publishes an empty inventory to the renderer, but the saved URLs survive app exit.
     if (entry.report)
       restore.save(entry.storageKey, {
-        tabs: event.state.tabs.map((tab) => ({
-          id: tab.id,
-          // A restored page can publish before Chromium assigns its URL.
-          url: tab.url || entry.tabs.get(tab.id)?.url || "about:blank",
-        })),
+        tabs: event.state.tabs.map((tab) => {
+          const scroll = entry.scrolls.get(tab.id)
+
+          const stored = {
+            id: tab.id,
+            // A restored page can publish before Chromium assigns its URL.
+            url: tab.url || entry.tabs.get(tab.id)?.url || "about:blank",
+          }
+
+          if (scroll) {
+            if (scroll.inner?.length) return { ...stored, scrollX: scroll.x, scrollY: scroll.y, scrollInner: scroll.inner }
+
+            return { ...stored, scrollX: scroll.x, scrollY: scroll.y }
+          }
+
+          return stored
+        }),
         focusedTabID: entry.focusedTabID,
       })
     const next = JSON.stringify(event)
@@ -492,6 +627,12 @@ export function createBrowserPane(input: {
       shared,
       embeds: input.embeds,
       fail,
+      scrolled: (position) => {
+        // A zero read forgets the tab: it navigated, and the new document's own scroll will replace it.
+        if (position.x || position.y || position.inner?.length) entry.scrolls.set(id, position)
+        else entry.scrolls.delete(id)
+      },
+      restoreScroll: initialize ? entry.scrolls.get(id) : undefined,
       publish: (error) => {
         if (entry.pages.has(id)) publishState(entry, error)
       },
@@ -567,6 +708,9 @@ export function createBrowserPane(input: {
       return { value: page.state(), files: [] }
     }
 
+    // The cookie jar belongs to the partition, not a document: no tab, no generation check.
+    if (isCookieAction(action)) return { value: await runCookieCommand(entry.partition, action), files: [] }
+
     const tab = inventory(entry).tabs.find((tab) => tab.id === action.tabID)
 
     if (!tab)
@@ -595,8 +739,22 @@ export function createBrowserPane(input: {
   }
 
   function focus(entry: Entry, tabID: Browser.TabID) {
+    // The outgoing page's scroll goes on the tab's record before the switch is stored.
+    if (entry.focusedTabID && entry.focusedTabID !== tabID) entry.pages.get(entry.focusedTabID)?.captureScroll()
     entry.focusedTabID = tabID
     publishState(entry)
     report(entry, { type: "focus", tabID })
+  }
+
+  function isCookieAction(action: Browser.Action): action is CookieAction {
+    return (
+      action.type === "cookies.list" ||
+      action.type === "cookies.get" ||
+      action.type === "cookies.set" ||
+      action.type === "cookies.delete" ||
+      action.type === "cookies.prune" ||
+      action.type === "cookies.export" ||
+      action.type === "cookies.import"
+    )
   }
 }

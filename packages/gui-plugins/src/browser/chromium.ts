@@ -1,9 +1,10 @@
 import { Browser } from "@opencode/plugin-browser/rpc"
 import electron, { type BrowserWindow, type WebContents } from "electron"
 import type { Protocol } from "devtools-protocol"
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import type { Embeds } from "@opencode/plugin/gui/main"
 import { createCdp, abortError, waitFor } from "./cdp"
+import { cookieURL } from "./cookies"
 import { createBrowserFiles } from "./files"
 import { createDiagnostics } from "./diagnostics"
 import { loadIcon } from "./icon"
@@ -82,6 +83,48 @@ const inspectHighlight: Protocol.Overlay.HighlightConfig = {
 
 const pickedHighlight = { ...inspectHighlight, showInfo: false, showStyles: false, showAccessibilityInfo: false }
 
+/** A scrolled inner container: its DOM path (`#id` root when an ancestor has a usable id, else child indices from the root element) and its offset from the origin. */
+const innerScroll = Schema.Struct({
+  p: Schema.String.check(Schema.isMaxLength(512)),
+  x: Schema.Finite,
+  y: Schema.Finite,
+})
+
+/** A page's window scroll offset and its scrolled inner containers (overflow divs, virtualized lists), as captured from and applied to the page itself. */
+const scrollPosition = Schema.Struct({
+  x: Schema.Finite,
+  y: Schema.Finite,
+  inner: Schema.optional(Schema.Array(innerScroll)),
+})
+
+export type ScrollPosition = typeof scrollPosition.Type
+
+// Reading the window alone misses feeds that scroll an inner div. Elements moved 3px or more from
+// their origin are addressed by path, at most 24 of them; html and body are the window's own scroll.
+const captureScrollScript = `(() => {
+  const clean = (id) => id && !/[\\s>#]/.test(id);
+  const inner = [];
+  for (const el of document.querySelectorAll("*")) {
+    if (inner.length >= 24) break;
+    if (el === document.documentElement || el === document.body) continue;
+    const x = el.scrollLeft;
+    const y = el.scrollTop;
+    if (x < 3 && y < 3) continue;
+    if (clean(el.id)) { inner.push({ p: "#" + el.id, x, y }); continue; }
+    const parts = [];
+    let node = el;
+    while (node && node !== document.documentElement && parts.length < 24) {
+      const parent = node.parentElement;
+      if (!parent) break;
+      if (clean(parent.id)) { parts.unshift("#" + parent.id); break; }
+      parts.unshift(String(Array.prototype.indexOf.call(parent.children, node)));
+      node = parent;
+    }
+    if (parts.length) inner.push({ p: parts.join(">"), x, y });
+  }
+  return { x: window.scrollX, y: window.scrollY, inner };
+})()`
+
 // Chromium rejects mode "none" without a config. A rejected call leaves the picker armed, and the
 // next hideHighlight would put its hover tool back.
 const inspectOff = { mode: "none", highlightConfig: inspectHighlight }
@@ -99,17 +142,6 @@ function zoomKey(input: Electron.Input) {
   if (input.key === "-" || input.code === "NumpadSubtract") return "out"
 
   if (input.key === "0") return "reset"
-}
-
-/**
- * The address a cookie is removed by: its domain without the leading dot, its path, and its scheme. An IPv6 host
- * needs its brackets in a URL.
- */
-function cookieURL(cookie: Electron.Cookie) {
-  const domain = (cookie.domain ?? "").replace(/^\./, "")
-  const host = domain.includes(":") && !domain.startsWith("[") ? `[${domain}]` : domain
-
-  return `${cookie.secure ? "https" : "http"}://${host}${cookie.path ?? "/"}`
 }
 
 /** The next preset in the direction, or 100%; the current factor at either end. */
@@ -136,6 +168,10 @@ export function createBrowserPage(
     detail?: (detail: PageDetail) => void
     /** The page's zoom changed, which Chromium applies to every page of the same origin in the partition. */
     zoomed?: () => void
+    /** Reports the page's scroll offsets - window and inner scrollers - changing; the pane stores them for the tab's next page. */
+    scrolled?: (position: ScrollPosition) => void
+    /** The offsets to restore after this page's first load, from the tab's previous page. */
+    restoreScroll?: ScrollPosition
     /** Hands a browser or shell shortcut to the app window. */
     shortcut?: (shortcut: PageShortcut) => void
     /** The page took keyboard focus. */
@@ -333,6 +369,8 @@ export function createBrowserPage(
     refs.clear()
     picked.clear()
     diagnostics.clear()
+    // A new document starts at the top; its scroll is captured again as the page settles.
+    options.scrolled?.({ x: 0, y: 0 })
 
     if (inspecting) void toggleInspect(false)
     publish()
@@ -384,6 +422,7 @@ export function createBrowserPage(
   contents.on("did-stop-loading", () => {
     settle()
     retitle()
+    void captureScroll()
   })
   contents.on("did-navigate-in-page", retitle)
   contents.on("focus", () => {
@@ -585,6 +624,14 @@ export function createBrowserPage(
     }),
   ]).then(() => undefined)
 
+  // A revived tab returns where its last page left off, unless the loaded document turned out to be
+  // another one (a redirect bumps the generation the restore was captured against). Lazy-loading pages
+  // need another pass once their content grows, so a few attempts follow the first.
+  const revived = options.restoreScroll && options.restore ? { ...options.restoreScroll, at: options.restore.generation } : undefined
+
+  if (revived && (revived.x || revived.y || revived.inner?.length))
+    void ready.catch(() => undefined).then(() => restoreScroll(revived))
+
   return {
     view,
     contents,
@@ -634,6 +681,10 @@ export function createBrowserPage(
     },
     /** Reports the page's icon and zoom when either changed since the last report. */
     detail,
+    /** Reads the current window scroll offset once, reporting it through `scrolled`. Fire and forget. */
+    captureScroll() {
+      void captureScroll()
+    },
     async execute(command: Browser.Command, signal: AbortSignal): Promise<Browser.Result> {
       await ready
       abortError(signal)
@@ -708,6 +759,8 @@ export function createBrowserPage(
     },
     async dispose() {
       if (closed) return
+      // The tab outlives this page; its last scroll offset goes with the tab's saved URL.
+      await captureScroll()
       closed = true
       clearTimeout(flash)
       detachNetwork?.()
@@ -1129,6 +1182,68 @@ export function createBrowserPage(
     abortError(signal)
 
     return result(state())
+  }
+
+  async function captureScroll() {
+    if (closed || contents.isDestroyed()) return
+
+    if (!contents.getURL().startsWith("http")) return
+
+    // Bound the read: a wedged renderer must not hold up the page's disposal.
+    const value: unknown = await Promise.race([
+      contents.executeJavaScript(captureScrollScript),
+      new Promise<undefined>((resolve) => setTimeout(resolve, 150, undefined)),
+    ]).catch(() => undefined)
+
+    if (closed) return
+
+    const position = Schema.decodeUnknownOption(scrollPosition)(value)
+
+    if (Option.isSome(position)) options.scrolled?.(position.value)
+  }
+
+  async function restoreScroll(position: ScrollPosition & { at: number }) {
+    const x = Math.max(0, Math.round(position.x))
+    const y = Math.max(0, Math.round(position.y))
+    // Escaping $ keeps an id or path holding "${" from becoming an interpolation of this source.
+    const targets = JSON.stringify((position.inner ?? []).slice(0, 24)).replaceAll("$", "\\$")
+
+    for (let attempt = 0; attempt < 3 && !closed && generation === position.at; attempt++) {
+      // The script reads back in the same turn, so one round trip decides whether the page reached
+      // every offset. A scroller not grown to height yet (a virtual list still rendering) counts
+      // as not reached, which is what the retries are for.
+      const reached: unknown = await contents
+        .executeJavaScript(
+          `(() => {
+            window.scrollTo(${x}, ${y});
+            let done = window.scrollX >= ${Math.floor(x * 0.9)} && window.scrollY >= ${Math.floor(y * 0.9)};
+            for (const t of ${targets}) {
+              const parts = t.p.split(">");
+              const rooted = parts[0][0] === "#";
+              let node = rooted ? document.getElementById(parts[0].slice(1)) : document.documentElement;
+              for (let i = rooted ? 1 : 0; node && i < parts.length; i++) {
+                const index = Number(parts[i]);
+                node = Number.isInteger(index) && index >= 0 && index < node.children.length ? node.children[index] : null;
+              }
+              if (!node || node === document.documentElement || node === document.body) continue;
+              if (t.y) {
+                if (node.scrollHeight <= node.clientHeight) done = false;
+                else { node.scrollTop = t.y; if (node.scrollTop < Math.floor(t.y * 0.9)) done = false; }
+              }
+              if (t.x) {
+                if (node.scrollWidth <= node.clientWidth) done = false;
+                else { node.scrollLeft = t.x; if (node.scrollLeft < Math.floor(t.x * 0.9)) done = false; }
+              }
+            }
+            return done;
+          })()`,
+        )
+        .catch(() => undefined)
+
+      if (reached === true) return
+
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
+    }
   }
 
   async function inspect(action: Browser.Action): Promise<Browser.Target> {
