@@ -67,7 +67,7 @@ export const info = Skill.Info.make({
     "",
     "## Cookies",
     "",
-    "- This session's cookie jar persists across browser and app restarts, so a login you set up survives. `cookies.list/get/set/delete/prune` manage it; `cookies.export/import` move entries between desktops.",
+    "- This session's cookie jar persists across browser and app restarts, so a login you set up survives. `cookies.list/get/set/delete/prune` manage it; `cookies.export/import` move entries between desktops. Deleting the session deletes its jar.",
     "- Cookie values are credentials. Read one with `cookies.get` when you need it; never echo values into output, files, or URLs. `cookies.list` keeps them out on purpose.",
     "- Prefer `cookies.set`/`cookies.import` over typing a password into a login form when the user offers an existing session.",
     "- `cookies.prune` clears aged cookies safely; `cookies.delete` without a name wipes a whole scope, so scope it with `url` or `domain`.",

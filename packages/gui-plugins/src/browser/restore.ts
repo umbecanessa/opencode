@@ -11,6 +11,11 @@ const Stored = Schema.Struct({
       // Absent means the top of the page; the fields arrived after these rows, so they stay optional.
       scrollX: Schema.optionalKey(Schema.Finite),
       scrollY: Schema.optionalKey(Schema.Finite),
+      // The inner scrollers (overflow divs, virtualized lists) scrolled away from their origin,
+      // addressed by the DOM path the page's capture script builds.
+      scrollInner: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ p: Schema.String.check(Schema.isMaxLength(512)), x: Schema.Finite, y: Schema.Finite })),
+      ),
     }),
   ),
   focusedTabID: Schema.NullOr(Browser.TabID),
@@ -46,7 +51,12 @@ export function createBrowserRestoreStore(storage: BuiltinMainStorage) {
         tabs: state.tabs.map((tab) => {
           const stored = { id: tab.id, url: tab.url }
 
-          if (tab.scrollX || tab.scrollY) return { ...stored, scrollX: tab.scrollX ?? 0, scrollY: tab.scrollY ?? 0 }
+          if (tab.scrollX || tab.scrollY) {
+            if (tab.scrollInner?.length)
+              return { ...stored, scrollX: tab.scrollX ?? 0, scrollY: tab.scrollY ?? 0, scrollInner: tab.scrollInner }
+
+            return { ...stored, scrollX: tab.scrollX ?? 0, scrollY: tab.scrollY ?? 0 }
+          }
 
           return stored
         }),
