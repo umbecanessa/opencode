@@ -51,6 +51,7 @@ export default function RootLayout() {
           />
           <Stack.Screen name="session" options={{ title: "Session" }} />
           <Stack.Screen name="project" options={{ title: "Project" }} />
+          <Stack.Screen name="new-project" options={{ presentation: "modal", title: "New project" }} />
         </Stack>
       </HostsProvider>
     </ThemeProvider>

@@ -66,7 +66,22 @@ export default function Projects() {
           tintColor={t.tint}
         />
       }
-      ListHeaderComponent={<LargeTitle title="Projects" />}
+      ListHeaderComponent={
+        <LargeTitle
+          title="Projects"
+          action={
+            <Pressable
+              onPress={() => router.push("/new-project")}
+              accessibilityRole="button"
+              accessibilityLabel="New project"
+              hitSlop={10}
+              style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+            >
+              <Ionicons name="add-circle-outline" size={28} color={t.tint} />
+            </Pressable>
+          }
+        />
+      }
       ListEmptyComponent={
         !loaded ? undefined : (
           <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
