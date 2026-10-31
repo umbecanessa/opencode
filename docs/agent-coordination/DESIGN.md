@@ -291,7 +291,12 @@ server only remembers dispatch ownership.
   background job re-arms its watcher through the PARENT session's placement
   (`Instance.provide`), so config `servers` resolve as they did at dispatch;
   a settled background delivers the stored outcome without re-consulting the
-  peer, and a vanished parent just clears the marker.
+  peer, and a vanished parent just clears the marker. Upstream installs the
+  boot sweep only for the managed service and embedded runtimes; the fork
+  installs it in every `ServerProcess.start` mode so a crashed foreground
+  `opencode serve` replays orphaned turns the same way (the sweep is a no-op
+  when nothing is suspended). Verified live: a killed-and-restarted server
+  re-armed a mid-flight remote child and delivered its `<peer>` notification.
 - `PeerServers.node` joined the `instance.ts` location graph (it was already a
   per-location plugin requirement; graph membership lets `Instance.provide`
   discharge it for the restart watcher).

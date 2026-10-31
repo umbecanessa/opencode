@@ -236,6 +236,9 @@ export const layer = (options?: Options) =>
         // gates delivery.
         const parent = yield* store.get(recovery.parentSessionID)
         if (!parent) {
+          yield* Effect.logWarning("peer_remote recovery dropping job: parent session gone", {
+            parentSessionID: recovery.parentSessionID,
+          })
           yield* jobs.completeBackground(background.notificationID)
           return
         }
@@ -258,6 +261,11 @@ export const layer = (options?: Options) =>
 
         // Re-arm the watcher through the parent's placement so the config
         // `servers` map resolves as it did at dispatch time.
+        yield* Effect.logInfo("peer_remote dispatch re-arming", {
+          parentSessionID: recovery.parentSessionID,
+          childSessionID: recovery.childSessionID,
+          server: recovery.server,
+        })
         yield* instances
           .provide(parent)(
             Effect.gen(function* () {
@@ -277,7 +285,14 @@ export const layer = (options?: Options) =>
               )
             }),
           )
-          .pipe(Effect.catch((error) => notify({ status: "error", error: String(error) })))
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logError("peer_remote re-arm failed", { error: String(error) }).pipe(
+                Effect.asVoid,
+                Effect.andThen(notify({ status: "error", error: String(error) })),
+              ),
+            ),
+          )
       })
 
       return Service.of({
@@ -290,6 +305,11 @@ export const layer = (options?: Options) =>
           yield* sessions.reapTemporary
           const active = yield* execution.active
           const pending = yield* jobs.pendingBackground
+          if (pending.length > 0)
+            yield* Effect.logInfo("restart recovery sweep", {
+              pending: pending.length,
+              kinds: pending.map((background) => background.recovery.kind).join(","),
+            })
           const children = pending.flatMap((background) =>
             background.status === "running" &&
             (background.recovery.kind === "subagent" || background.recovery.kind === "peer")

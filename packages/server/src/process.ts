@@ -106,11 +106,12 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
       ).pipe(Layer.provideMerge(NodeHttpServer.layerHttpServices)),
       applicationScope,
     )
-    if (lifecycle) {
-      yield* installRestartContinuity(Context.get(context, SessionRestart.Service)).pipe(
-        Effect.provideService(Scope.Scope, applicationScope),
-      )
-    }
+    // Restart continuity is a property of any durable database, not of managed-service
+    // lifecycle: a crashed foreground `serve` must replay orphaned turns exactly like
+    // the service or an embedded runtime. The sweep is a no-op when nothing is suspended.
+    yield* installRestartContinuity(Context.get(context, SessionRestart.Service)).pipe(
+      Effect.provideService(Scope.Scope, applicationScope),
+    )
     // Schedules fire from any server process (`service`, `opencode serve`, or `--standalone`); the table holds all their state.
     yield* Effect.forkIn(Context.get(context, Schedule.Service).run, applicationScope)
     yield* Ref.set(application, Option.some(Context.get(context, HttpRouter.HttpRouter).asHttpEffect()))
