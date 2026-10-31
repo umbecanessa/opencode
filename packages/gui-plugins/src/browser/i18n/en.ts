@@ -16,7 +16,7 @@ export default {
   inspect: "Select an element to comment on",
   "inspect.active": "Click an element in the page to comment on it. Press Escape to cancel.",
   "action.stop": "Stop",
-  replaced: "Browser control moved to another desktop window.",
+  replaced: "Browser control moved to another window or device. Interact here or run the agent to bring it back.",
   unsupported: "This desktop app does not support the browser pane.",
   suspended: "Browser suspended. Interact with this session to reconnect.",
   "home.title": "Open a page",

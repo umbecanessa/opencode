@@ -1,9 +1,10 @@
 import { Browser } from "@opencode/plugin-browser/rpc"
 import electron, { type BrowserWindow, type WebContents } from "electron"
 import type { Protocol } from "devtools-protocol"
-import { Schema } from "effect"
+import { Option, Schema } from "effect"
 import type { Embeds } from "@opencode/plugin/gui/main"
 import { createCdp, abortError, waitFor } from "./cdp"
+import { cookieURL } from "./cookies"
 import { createBrowserFiles } from "./files"
 import { createDiagnostics } from "./diagnostics"
 import { loadIcon } from "./icon"
@@ -82,6 +83,9 @@ const inspectHighlight: Protocol.Overlay.HighlightConfig = {
 
 const pickedHighlight = { ...inspectHighlight, showInfo: false, showStyles: false, showAccessibilityInfo: false }
 
+/** A page's window scroll offset, as captured from and applied to the page itself. */
+const scrollPosition = Schema.Struct({ x: Schema.Finite, y: Schema.Finite })
+
 // Chromium rejects mode "none" without a config. A rejected call leaves the picker armed, and the
 // next hideHighlight would put its hover tool back.
 const inspectOff = { mode: "none", highlightConfig: inspectHighlight }
@@ -99,17 +103,6 @@ function zoomKey(input: Electron.Input) {
   if (input.key === "-" || input.code === "NumpadSubtract") return "out"
 
   if (input.key === "0") return "reset"
-}
-
-/**
- * The address a cookie is removed by: its domain without the leading dot, its path, and its scheme. An IPv6 host
- * needs its brackets in a URL.
- */
-function cookieURL(cookie: Electron.Cookie) {
-  const domain = (cookie.domain ?? "").replace(/^\./, "")
-  const host = domain.includes(":") && !domain.startsWith("[") ? `[${domain}]` : domain
-
-  return `${cookie.secure ? "https" : "http"}://${host}${cookie.path ?? "/"}`
 }
 
 /** The next preset in the direction, or 100%; the current factor at either end. */
@@ -136,6 +129,10 @@ export function createBrowserPage(
     detail?: (detail: PageDetail) => void
     /** The page's zoom changed, which Chromium applies to every page of the same origin in the partition. */
     zoomed?: () => void
+    /** Reports the page's window scroll offset changing; the pane stores it for the tab's next page. */
+    scrolled?: (position: { x: number; y: number }) => void
+    /** The offset to restore after this page's first load, from the tab's previous page. */
+    restoreScroll?: { x: number; y: number }
     /** Hands a browser or shell shortcut to the app window. */
     shortcut?: (shortcut: PageShortcut) => void
     /** The page took keyboard focus. */
@@ -333,6 +330,8 @@ export function createBrowserPage(
     refs.clear()
     picked.clear()
     diagnostics.clear()
+    // A new document starts at the top; its scroll is captured again as the page settles.
+    options.scrolled?.({ x: 0, y: 0 })
 
     if (inspecting) void toggleInspect(false)
     publish()
@@ -384,6 +383,7 @@ export function createBrowserPage(
   contents.on("did-stop-loading", () => {
     settle()
     retitle()
+    void captureScroll()
   })
   contents.on("did-navigate-in-page", retitle)
   contents.on("focus", () => {
@@ -585,6 +585,13 @@ export function createBrowserPage(
     }),
   ]).then(() => undefined)
 
+  // A revived tab returns where its last page left off, unless the loaded document turned out to be
+  // another one (a redirect bumps the generation the restore was captured against). Lazy-loading pages
+  // need another pass once their content grows, so a few attempts follow the first.
+  const revived = options.restoreScroll && options.restore ? { ...options.restoreScroll, at: options.restore.generation } : undefined
+
+  if (revived && (revived.x || revived.y)) void ready.catch(() => undefined).then(() => restoreScroll(revived))
+
   return {
     view,
     contents,
@@ -634,6 +641,10 @@ export function createBrowserPage(
     },
     /** Reports the page's icon and zoom when either changed since the last report. */
     detail,
+    /** Reads the current window scroll offset once, reporting it through `scrolled`. Fire and forget. */
+    captureScroll() {
+      void captureScroll()
+    },
     async execute(command: Browser.Command, signal: AbortSignal): Promise<Browser.Result> {
       await ready
       abortError(signal)
@@ -708,6 +719,8 @@ export function createBrowserPage(
     },
     async dispose() {
       if (closed) return
+      // The tab outlives this page; its last scroll offset goes with the tab's saved URL.
+      await captureScroll()
       closed = true
       clearTimeout(flash)
       detachNetwork?.()
@@ -1129,6 +1142,39 @@ export function createBrowserPage(
     abortError(signal)
 
     return result(state())
+  }
+
+  async function captureScroll() {
+    if (closed || contents.isDestroyed()) return
+
+    if (!contents.getURL().startsWith("http")) return
+
+    // Bound the read: a wedged renderer must not hold up the page's disposal.
+    const value: unknown = await Promise.race([
+      contents.executeJavaScript("({ x: window.scrollX, y: window.scrollY })"),
+      new Promise<undefined>((resolve) => setTimeout(resolve, 150, undefined)),
+    ]).catch(() => undefined)
+
+    if (closed) return
+
+    const position = Schema.decodeUnknownOption(scrollPosition)(value)
+
+    if (Option.isSome(position)) options.scrolled?.(position.value)
+  }
+
+  async function restoreScroll(position: { x: number; y: number; at: number }) {
+    const x = Math.max(0, Math.round(position.x))
+    const y = Math.max(0, Math.round(position.y))
+
+    for (let attempt = 0; attempt < 3 && !closed && generation === position.at; attempt++) {
+      // The script reads back in the same turn, so one round trip decides whether the page reached it.
+      const reached: unknown = await contents
+        .executeJavaScript(`(() => { window.scrollTo(${x}, ${y}); return window.scrollY >= ${Math.floor(y * 0.9)}; })()`)
+        .catch(() => undefined)
+
+      if (reached === true) return
+      await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)))
+    }
   }
 
   async function inspect(action: Browser.Action): Promise<Browser.Target> {

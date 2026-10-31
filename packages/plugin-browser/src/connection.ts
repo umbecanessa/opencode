@@ -99,10 +99,14 @@ export const make = Effect.fn("BrowserConnection.make")(function* (
           const browser = yield* Effect.acquireRelease(
             Effect.gen(function* () {
               if (!active) return yield* Effect.fail(call.error("unavailable", "Browser is unavailable.", {}))
+              // Carry the replaced attachment's inventory until the new desktop reports its own:
+              // tab IDs stay resolvable across a device switch, and the new pane loads a tab's
+              // page on demand, so an agent mid-work is not dropped into an empty browser.
+              const previous = browsers.get(input.sessionID)?.state
               yield* close(input.sessionID, "replaced")
               const browser: Attachment = {
                 connectionID: input.connectionID,
-                state: { tabs: [], focusedTabID: null },
+                state: previous ?? { tabs: [], focusedTabID: null },
                 closed: yield* Deferred.make<"closed" | "replaced">(),
                 pending: new Map(),
                 tunnels: BrowserTunnel.make(),

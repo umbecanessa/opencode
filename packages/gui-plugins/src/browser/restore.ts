@@ -3,7 +3,16 @@ import { Schema } from "effect"
 import type { BuiltinMainStorage, MainStoreFrom } from "@opencode/plugin/gui/builtin"
 
 const Stored = Schema.Struct({
-  tabs: Schema.Array(Schema.Struct({ id: Browser.TabID, url: Browser.Tab.fields.url })),
+  tabs: Schema.Array(
+    Schema.Struct({
+      id: Browser.TabID,
+      url: Browser.Tab.fields.url,
+      // The window scroll offset kept for the tab's next page, captured while its page is alive.
+      // Absent means the top of the page; the fields arrived after these rows, so they stay optional.
+      scrollX: Schema.optionalKey(Schema.Finite),
+      scrollY: Schema.optionalKey(Schema.Finite),
+    }),
+  ),
   focusedTabID: Schema.NullOr(Browser.TabID),
 })
 
@@ -32,7 +41,17 @@ export function createBrowserRestoreStore(storage: BuiltinMainStorage) {
     load: (key: string) => store(key).value,
     save(key: string, state: Stored) {
       const target = store(key)
-      const value = { tabs: state.tabs.map((tab) => ({ id: tab.id, url: tab.url })), focusedTabID: state.focusedTabID }
+
+      const value = {
+        tabs: state.tabs.map((tab) => {
+          const stored = { id: tab.id, url: tab.url }
+
+          if (tab.scrollX || tab.scrollY) return { ...stored, scrollX: tab.scrollX ?? 0, scrollY: tab.scrollY ?? 0 }
+
+          return stored
+        }),
+        focusedTabID: state.focusedTabID,
+      }
 
       if (JSON.stringify(target.value) !== JSON.stringify(value)) target.set(value)
     },

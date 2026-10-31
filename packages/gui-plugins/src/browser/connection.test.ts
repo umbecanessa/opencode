@@ -314,11 +314,9 @@ test("a command wakes its attachment once and is not replayed", async () => {
 
 // Main rejects the register of a binding it closes, and that reply can overtake the closed-state event.
 test.each([
-  { error: "browser.pane.replaced", rejected: false },
   { error: "browser.pane.unsupported", rejected: false },
-  { error: "browser.pane.replaced", rejected: true },
   { error: "browser.pane.unsupported", rejected: true },
-])("$error blocks automatic ownership recovery (register rejected first: $rejected)", async ({ error, rejected }) => {
+])("$error blocks ownership recovery forever (register rejected first: $rejected)", async ({ error, rejected }) => {
   jest.useFakeTimers()
   const app = fixture()
 
@@ -335,6 +333,40 @@ test.each([
     app.connection.wake()
     expect(app.calls).toHaveLength(rejected ? 2 : 1)
     expect(app.states.at(-1)?.error).toBe(error)
+  } finally {
+    app.connection.dispose()
+  }
+})
+
+// Control moved to another desktop: nothing here is broken, so the window keeps its tabs and waits.
+// It must not steal back on a timer, only on a wake: a user interaction here or a Session execution.
+test.each([
+  { error: "browser.pane.replaced", rejected: false },
+  { error: "browser.pane.replaced", rejected: true },
+])("being replaced keeps the tabs and reregisters on the next wake (register rejected first: $rejected)", async ({
+  error,
+  rejected,
+}) => {
+  jest.useFakeTimers()
+  const app = fixture()
+
+  try {
+    if (rejected) {
+      app.emit(0, { type: "state", state: browser, error: "browser.pane.suspended" })
+      app.ipc.reject = new Error("browser.pane.registration.closed")
+      app.connection.wake()
+      await Promise.resolve()
+      app.ipc.reject = undefined
+    }
+
+    app.emit(app.calls.length - 1, { type: "state", state: null, error })
+    expect(app.states.at(-1)).toMatchObject({ registration: undefined, embeds: {}, browser, suspended: false, error })
+    // An idle displaced window never fights the desktop that took control.
+    jest.advanceTimersByTime(60_000)
+    const idle = app.calls.length
+    app.connection.wake()
+    expect(app.calls).toHaveLength(idle + 1)
+    expect(app.calls.at(-1)?.input.restore).toEqual(browser)
   } finally {
     app.connection.dispose()
   }
