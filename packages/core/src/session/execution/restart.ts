@@ -1,16 +1,18 @@
 export * as SessionRestart from "./restart.js"
 
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Bus } from "../../bus.js"
 import { Instance } from "../../instance/service.js"
 import { Job } from "../../job.js"
 import { PeerServers } from "../../peer-servers.js"
+import { ServerIdentity } from "../../server-identity.js"
 import { Session } from "../../session.js"
 import { SessionEvent } from "../event.js"
 import { SessionExecution } from "../execution.js"
 import { SessionSchema } from "../schema.js"
 import { SessionStore } from "../store.js"
+import { SessionWakeForward } from "../wake-forward.js"
 import { ImageNotice } from "../../image/notice.js"
 import { ShellResult } from "../../shell/result.js"
 import { SubagentCompletion } from "../subagent-completion.js"
@@ -55,13 +57,15 @@ export interface Interface {
  * Recovery is at-least-once: local coordination prevents concurrent drains,
  * not repeated external side effects after a crash.
  *
- * The sweep assumes every orphaned claim's owner is dead. The managed-server
- * protocol guarantees this: a successor is only spawned after the previous
- * process is confirmed dead (client service `kill`/`evict` poll the PID), the
- * registration lock admits one managed server at a time, and unregistered
- * servers sharing the database never sweep. The service is inert until called
- * — the managed server invokes it at boot; embedders may call it from their
- * own start-up.
+ * Recovery assumes an orphaned claim is resumable by this boot. Without a
+ * clustering identity that is unconditional: the managed-server protocol
+ * guarantees the previous process died (client service `kill`/`evict` poll the
+ * PID, the registration lock admits one managed server at a time, and
+ * unregistered servers sharing the database never sweep). With a clustering
+ * identity, each claim's stamped owner is consulted first: a live foreign
+ * owner is left to drain its own Session, and a dead one is seized under the
+ * fence before resuming. The service is inert until called — the managed
+ * server invokes it at boot; embedders may call it from their own start-up.
  */
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionRestart") {}
 
@@ -75,6 +79,8 @@ export const layer = (options?: Options) =>
       const bus = yield* Bus.Service
       const jobs = yield* Job.Service
       const sessions = yield* Session.Service
+      const identity = yield* Effect.serviceOption(ServerIdentity.Service)
+      const wakes = yield* Effect.serviceOption(SessionWakeForward.Service)
       const scope = yield* Effect.scope
       const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
 
@@ -343,11 +349,31 @@ export const layer = (options?: Options) =>
           // Background completion can wake a parent, so inspect local ownership only after recovery.
           const resumed = yield* execution.active
           yield* Effect.forEach(
-            (yield* store.listSuspended()).filter((sessionID) => !resumed.has(sessionID)),
-            (sessionID) =>
-              execution
-                .resume(sessionID)
-                .pipe(Effect.ignore, Effect.forkIn(scope), Effect.when(prepareResume(sessionID))),
+            (yield* store.listSuspendedClaims()).filter((claim) => !resumed.has(claim.sessionID)),
+            Effect.fnUntraced(function* (claim) {
+              // A claim stamped by another boot is only left alone when that
+              // boot still answers: a live foreign owner is draining right now.
+              // A dead, reused-URL, or URL-less owner is adopted under the fence
+              // so this boot's drain passes its step-boundary ownership check.
+              if (Option.isSome(identity) && claim.owner !== undefined && claim.owner !== identity.value.id) {
+                const alive =
+                  Option.isSome(wakes) && claim.url !== undefined && (yield* wakes.value.probe(claim.url, claim.owner))
+                if (alive)
+                  return yield* Effect.logInfo("restart sweep leaving claim to live owner", {
+                    sessionID: claim.sessionID,
+                    owner: claim.owner,
+                  })
+                const [url] = yield* identity.value.urls
+                yield* store.seize(
+                  claim.sessionID,
+                  { id: identity.value.id, ...(url === undefined ? {} : { url }) },
+                  claim.owner,
+                )
+              }
+              yield* execution
+                .resume(claim.sessionID)
+                .pipe(Effect.ignore, Effect.forkIn(scope), Effect.when(prepareResume(claim.sessionID)))
+            }),
             { concurrency: "unbounded", discard: true },
           )
           // Async observers consult this set at delivery; later completions wake parents normally.
@@ -360,5 +386,5 @@ export const layer = (options?: Options) =>
 export const node = makeGlobalNode({
   service: Service,
   layer: layer(),
-  deps: [SessionStore.node, SessionExecution.node, Instance.node, Bus.node, Job.node, Session.node],
+  deps: [SessionStore.node, SessionExecution.node, Instance.node, Bus.node, Job.node, Session.node, ServerIdentity.node, SessionWakeForward.node],
 })

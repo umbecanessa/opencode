@@ -101,6 +101,8 @@ import type {
   ExperimentalSessionSkillOutput,
   ExperimentalSessionWaitInput,
   ExperimentalSessionWaitOutput,
+  ExperimentalSessionWakeInput,
+  ExperimentalSessionWakeOutput,
   ExperimentalSessionInstructionsEntryListInput,
   ExperimentalSessionInstructionsEntryListOutput,
   ExperimentalSessionInstructionsEntryPutInput,
@@ -843,6 +845,11 @@ const EndpointExperimentalSessionWait = (raw: RawClient["server.session"]) => (i
     raw["session.wait"]({ params: { sessionID: input["sessionID"] } }).pipe(Effect.mapError(mapClientError)),
   )
 
+const EndpointExperimentalSessionWake = (raw: RawClient["server.session"]) => (input: ExperimentalSessionWakeInput) =>
+  preserveEffect<ExperimentalSessionWakeOutput>()(
+    raw["session.wake"]({ params: { sessionID: input["sessionID"] } }).pipe(Effect.mapError(mapClientError)),
+  )
+
 const EndpointExperimentalSessionInstructionsEntryList =
   (raw: RawClient["server.session"]) => (input: ExperimentalSessionInstructionsEntryListInput) =>
     preserveEffect<ExperimentalSessionInstructionsEntryListOutput>()(
@@ -894,6 +901,7 @@ const adaptGroupExperimentalSession = (raw: RawClient["server.session"]) => ({
   export: EndpointExperimentalSessionExport(raw),
   skill: EndpointExperimentalSessionSkill(raw),
   wait: EndpointExperimentalSessionWait(raw),
+  wake: EndpointExperimentalSessionWake(raw),
   instructions: {
     entry: {
       list: EndpointExperimentalSessionInstructionsEntryList(raw),
@@ -2010,6 +2018,8 @@ const adaptClient = (raw: RawClient) => {
       skill: client.experimental.session.skill,
       /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
       wait: client.experimental.session.wait,
+      /** @deprecated Use `client.experimental.session.wake`. Removed in the next minor. */
+      wake: client.experimental.session.wake,
       /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
       instructions: {
         /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */

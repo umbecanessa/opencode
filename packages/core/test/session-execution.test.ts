@@ -12,6 +12,7 @@ import { LocationServiceMap } from "@opencode/core/location-service-map"
 import type { LocationServices } from "@opencode/core/location-services"
 import { Project } from "@opencode/core/project"
 import { ProjectTable } from "@opencode/core/project/sql"
+import { ServerIdentity } from "@opencode/core/server-identity"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
 import { SessionExecution } from "@opencode/core/session/execution"
@@ -22,6 +23,7 @@ import { SessionMessage } from "@opencode/core/session/message"
 import { SessionRunner } from "@opencode/core/session/runner/index"
 import { SessionInboxTable, SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
+import { SessionWakeForward } from "@opencode/core/session/wake-forward"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, LayerMap, Scope } from "effect"
 import { eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
@@ -1349,6 +1351,243 @@ describe("SessionExecution interrupt continuation", () => {
   )
 })
 
+describe("SessionExecution claim attribution", () => {
+  // Composes the two opt-in clustering services: an identity stub plus a wake
+  // forwarder whose probe/forward return the given verdicts (dead + lost by
+  // default, matching the service-absent behaviour where a foreign claim is
+  // adopted rather than forwarded). `calls` records probe/forward invocations.
+  const boot = (
+    id: string,
+    wakes: { readonly probe?: (url: string, bootID: string) => boolean; readonly forward?: (url: string) => boolean } = {},
+    calls?: { readonly probes: string[]; readonly forwards: string[] },
+  ) =>
+    Layer.merge(
+      Layer.succeed(
+        ServerIdentity.Service,
+        ServerIdentity.Service.of({ id, announce: () => Effect.void, urls: Effect.succeed([]) }),
+      ),
+      Layer.succeed(
+        SessionWakeForward.Service,
+        SessionWakeForward.Service.of({
+          probe: (url, bootID) =>
+            Effect.sync(() => calls?.probes.push(`${url}|${bootID}`)).pipe(Effect.as(wakes.probe?.(url, bootID) ?? false)),
+          forward: (url) =>
+            Effect.sync(() => calls?.forwards.push(url)).pipe(Effect.as(wakes.forward?.(url) ?? false)),
+        }),
+      ),
+    )
+
+  it.effect("claim stamps the owner on the 0→1 transition and increments the fence", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const id = Session.ID.make("ses_attr_claim")
+      yield* seedSessions(database, [id])
+
+      yield* store.claim(id, { id: "boot-a", url: "http://a" })
+      expect(yield* store.attribution(id)).toEqual({ owner: "boot-a", url: "http://a", fence: 1 })
+
+      // Re-claiming an already-claimed Session is a zero-row no-op: attribution and fence hold.
+      yield* store.claim(id, { id: "boot-b" })
+      expect(yield* store.attribution(id)).toEqual({ owner: "boot-a", url: "http://a", fence: 1 })
+
+      // An unattributed claim records the fence with no owner for the sweep to adopt.
+      const orphan = Session.ID.make("ses_attr_orphan")
+      yield* seedSessions(database, [orphan])
+      yield* store.claim(orphan)
+      expect(yield* store.attribution(orphan)).toEqual({ fence: 1 })
+    }),
+  )
+
+  it.effect("seize takes over under the fence and the expectID guard rejects a stale owner", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const id = Session.ID.make("ses_attr_seize")
+      yield* seedSessions(database, [id])
+      yield* store.claim(id, { id: "boot-a" })
+
+      // A stale observation of the owner loses the race and leaves attribution intact.
+      expect(yield* store.seize(id, { id: "boot-c" }, "boot-stale")).toBe(false)
+      expect(yield* store.attribution(id)).toEqual({ owner: "boot-a", fence: 1 })
+
+      expect(yield* store.seize(id, { id: "boot-b" }, "boot-a")).toBe(true)
+      expect(yield* store.attribution(id)).toEqual({ owner: "boot-b", fence: 2 })
+
+      // Seize only converts a held claim; an idle Session acquires via the ordinary claim.
+      yield* store.release(id)
+      expect(yield* store.seize(id, { id: "boot-d" })).toBe(false)
+    }),
+  )
+
+  it.effect("release is owner-guarded so a fenced-away boot cannot clear the new claim", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const id = Session.ID.make("ses_attr_release")
+      yield* seedSessions(database, [id])
+      yield* store.claim(id, { id: "boot-a" })
+
+      // A boot that no longer owns the claim cannot release it.
+      yield* store.release(id, "boot-gone")
+      expect(yield* store.attribution(id)).toEqual({ owner: "boot-a", fence: 1 })
+
+      // The current owner releases cleanly; the fence survives for future acquirers.
+      yield* store.release(id, "boot-a")
+      expect(yield* store.attribution(id)).toEqual({ fence: 1 })
+    }),
+  )
+
+  it.effect("a live foreign owner forwards the wake and never drains locally", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_forward")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const calls = { probes: [] as string[], forwards: [] as string[] }
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => true, forward: () => true }, calls),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      yield* execution.wake(sessionID)
+      expect(calls.probes).toEqual(["http://peer|boot-peer"])
+      expect(calls.forwards).toEqual(["http://peer"])
+      expect(drains).toEqual([])
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-peer" })
+    }),
+  )
+
+  it.effect("a dead foreign owner is fenced away and the wake runs locally", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_seize")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => false, forward: () => false }),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      yield* execution.wake(sessionID)
+      // The foreign owner's death was confirmed, so this boot took the claim and drained.
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-local" })
+      yield* execution.awaitIdle(sessionID)
+      expect(drains).toEqual([sessionID])
+    }),
+  )
+
+  it.effect("a drain yields at its boundary when a foreign owner holds the claim", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_yield")
+      yield* seedSessions(database, [sessionID])
+      // Foreign owner stamps the claim; this boot must not run the drain.
+      yield* store.claim(sessionID, { id: "boot-peer" })
+
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        boot("boot-local"),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      // resume bypasses wake routing and starts the drain directly, exercising the yield check.
+      yield* execution.resume(sessionID).pipe(Effect.catch(() => Effect.void))
+      expect(drains).toEqual([])
+    }),
+  )
+
+  it.effect("the restart sweep leaves a claim to a live foreign owner", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_sweep_live")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const calls = { probes: [] as string[], forwards: [] as string[] }
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => true }, calls),
+      )
+      const restart = Context.get(context, SessionRestart.Service)
+
+      yield* restart.resumeSuspendedSessions
+      // The live owner answers the probe, so its Session is left to drain there.
+      expect(calls.probes).toEqual(["http://peer|boot-peer"])
+      expect(drains).toEqual([])
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-peer" })
+    }),
+  )
+
+  it.effect("the restart sweep seizes a dead owner's claim and resumes under its own fence", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_sweep_dead")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const drains: Session.ID[] = []
+      const drained = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) =>
+          Effect.sync(() => {
+            drains.push(sessionID)
+            Deferred.doneUnsafe(drained, Effect.void)
+          }),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => false }),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+      const restart = Context.get(context, SessionRestart.Service)
+
+      yield* restart.resumeSuspendedSessions
+      // The dead owner's claim was seized before the (forked) resume ran.
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-local" })
+      // The sweep forks resumed drains, so completion is observed through the drain itself.
+      yield* Deferred.await(drained)
+      yield* execution.awaitIdle(sessionID)
+      expect(drains).toEqual([sessionID])
+    }),
+  )
+})
+
 function seedBackground(
   jobs: Job.Interface,
   sessionID: Session.ID,
@@ -1456,6 +1695,7 @@ function buildExecution(
   drain: (input: Parameters<SessionRunner.Interface["drain"]>[0]) => Effect.Effect<void, SessionRunner.RunError>,
   options?: SessionRestart.Options,
   overrideJobs?: Job.Interface,
+  extra?: Layer.Layer<ServerIdentity.Service | SessionWakeForward.Service>,
 ) {
   return Effect.gen(function* () {
     const database = yield* Database.Service
@@ -1491,19 +1731,22 @@ function buildExecution(
           runner as unknown as Layer.Layer<LocationServices, FileSystem.DirectoryNotFoundError>,
       ),
     )
-    return yield* Layer.buildWithScope(
-      SessionRestart.layer(options).pipe(
-        Layer.provideMerge(sessionLayer),
-        Layer.provideMerge(Layer.fresh(SessionExecution.layer)),
-        Layer.provide(Layer.succeed(Database.Service, database)),
-        Layer.provide(Layer.succeed(Bus.Service, bus)),
-        Layer.provide(Layer.succeed(SessionStore.Service, store)),
-        Layer.provide(Layer.succeed(Job.Service, jobs)),
-        // Do not reuse the outer harness's selector with its already-captured Location map.
-        Layer.provide(
-          AppNodeBuilder.build(Instance.node, [LocationServiceMap.node.replace(locations)]).pipe(Layer.fresh),
-        ),
+    const stack = SessionRestart.layer(options).pipe(
+      Layer.provideMerge(sessionLayer),
+      Layer.provideMerge(Layer.fresh(SessionExecution.layer)),
+      Layer.provide(Layer.succeed(Database.Service, database)),
+      Layer.provide(Layer.succeed(Bus.Service, bus)),
+      Layer.provide(Layer.succeed(SessionStore.Service, store)),
+      Layer.provide(Layer.succeed(Job.Service, jobs)),
+      // Do not reuse the outer harness's selector with its already-captured Location map.
+      Layer.provide(
+        AppNodeBuilder.build(Instance.node, [LocationServiceMap.node.replace(locations)]).pipe(Layer.fresh),
       ),
+    )
+    return yield* Layer.buildWithScope(
+      // Clustering services are opt-in per test: an extra layer flips SessionExecution
+      // and SessionRestart from single-server behaviour to attribution-aware routing.
+      extra === undefined ? stack : stack.pipe(Layer.provide(extra)),
       scope,
     )
   })

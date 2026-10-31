@@ -8,11 +8,13 @@ export class Service extends Context.Service<
     readonly urls: () => ReadonlyArray<string>
     readonly app: NonNullable<ServerOptions["app"]>
     readonly paths: { readonly tmp: string }
+    /** Per-boot identifier from ServerIdentity; absent when the host composes no identity. */
+    readonly id?: string
   }
 >()("@opencode/server/ServerInfo") {}
 
-export function layer(urls: () => ReadonlyArray<string>, tmp: string, app: ServerOptions["app"] = {}) {
-  return Layer.succeed(Service, Service.of({ urls, app, paths: { tmp } }))
+export function layer(urls: () => ReadonlyArray<string>, tmp: string, app: ServerOptions["app"] = {}, id?: string) {
+  return Layer.succeed(Service, Service.of({ urls, app, paths: { tmp }, ...(id === undefined ? {} : { id }) }))
 }
 
 export function connectionURLs(value: string, requestedHostname?: string) {

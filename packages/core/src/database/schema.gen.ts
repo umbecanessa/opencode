@@ -293,6 +293,9 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`time_archived\` integer,
           \`time_suspended\` integer,
           \`resume_attempts\` integer DEFAULT 0 NOT NULL,
+          \`execution_owner\` text,
+          \`execution_url\` text,
+          \`execution_fence\` integer DEFAULT 0 NOT NULL,
           \`temporary\` integer DEFAULT false NOT NULL,
           CONSTRAINT \`fk_session_v2_project_id_project_id_fk\` FOREIGN KEY (\`project_id\`) REFERENCES \`project\`(\`id\`) ON DELETE CASCADE
         );

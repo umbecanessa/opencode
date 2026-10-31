@@ -1,11 +1,12 @@
 export * as SessionExecution from "./execution.js"
 
-import { Cause, Context, Effect, Exit, Layer } from "effect"
+import { Cause, Context, Effect, Exit, Layer, Option } from "effect"
 import { Bus } from "../bus.js"
 import { Database } from "../database/database.js"
 import { Job } from "../job.js"
 import { Instance } from "../instance/service.js"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
+import { ServerIdentity } from "../server-identity.js"
 import { SessionEvent } from "./event.js"
 import { SessionRunCoordinator } from "./run-coordinator.js"
 import { SessionRunner } from "./runner/index.js"
@@ -13,6 +14,7 @@ import { SessionSchema } from "./schema.js"
 import { SessionStore } from "./store.js"
 import { toSessionError } from "./to-session-error.js"
 import { SessionInbox } from "./inbox.js"
+import { SessionWakeForward } from "./wake-forward.js"
 
 export interface Interface {
   /** Snapshots active execution owned by this process. */
@@ -21,7 +23,11 @@ export interface Interface {
   readonly isActive: (sessionID: SessionSchema.ID) => Effect.Effect<boolean>
   /** Starts execution while idle or joins the active execution. */
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, SessionRunner.RunError>
-  /** Registers newly recorded work. Repeated wakeups may coalesce. */
+  /**
+   * Registers newly recorded work. Repeated wakeups may coalesce. When the
+   * Session's durable claim names a live foreign owner, the wake is forwarded
+   * there instead; otherwise this server adopts the claim under the fence.
+   */
   readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   /**
    * Interrupt active work owned by this process. Idle interruption is a no-op. Resolves once
@@ -59,6 +65,12 @@ export const layer = Layer.effect(
     const bus = yield* Bus.Service
     const jobs = yield* Job.Service
     const db = (yield* Database.Service).db
+    // Clustering participation is opt-in per composition: a host that
+    // composes ServerIdentity.node claims under its boot identity and routes
+    // wakes by ownership; one that doesn't (embedded tools, unit-test graphs)
+    // keeps the single-server behaviour exactly.
+    const identity = yield* Effect.serviceOption(ServerIdentity.Service)
+    const wakes = yield* Effect.serviceOption(SessionWakeForward.Service)
     const reportLifecycle = <A>(sessionID: SessionSchema.ID, effect: Effect.Effect<A>) =>
       effect.pipe(
         Effect.tapCause((cause) =>
@@ -75,11 +87,19 @@ export const layer = Layer.effect(
     // preserves the claim so the next server start resumes the turn. A claim that survives with no
     // terminal is the signature of a process that died without teardown (crash, SIGKILL, eviction);
     // recovery is a property of the database, never of a shutdown hook that may not run.
+    // The claim carries this process's boot identity so co-mounted servers can
+    // tell whose turn it is; without an identity service the stamp stays empty
+    // and every consumer treats the claim as unattributed.
     const claimOnCommit = (sessionID: SessionSchema.ID) => ({
-      commit: () => store.claim(sessionID),
+      commit: () =>
+        Effect.gen(function* () {
+          if (Option.isNone(identity)) return yield* store.claim(sessionID)
+          const [url] = yield* identity.value.urls
+          yield* store.claim(sessionID, { id: identity.value.id, ...(url === undefined ? {} : { url }) })
+        }),
     })
     const releaseOnCommit = (sessionID: SessionSchema.ID) => ({
-      commit: () => store.release(sessionID),
+      commit: () => store.release(sessionID, Option.isSome(identity) ? identity.value.id : undefined),
     })
     const drain = Effect.fnUntraced(function* (
       sessionID: SessionSchema.ID,
@@ -90,6 +110,14 @@ export const layer = Layer.effect(
     ): Effect.fn.Return<void, SessionRunner.RunError> {
       const session = yield* store.get(sessionID)
       if (!session) return yield* Effect.die(new Error(`Session not found: ${sessionID}`))
+      // Step-boundary ownership: a drain continues only while this boot holds the
+      // claim (or nobody stamped it). A foreign owner means another server fenced
+      // its way in — this turn yields instead of racing on model spend.
+      if (Option.isSome(identity)) {
+        const owner = (yield* store.attribution(sessionID))?.owner
+        if (owner !== undefined && owner !== identity.value.id)
+          return yield* Effect.logInfo("yielding drain to fence owner", { sessionID, owner }).pipe(Effect.asVoid)
+      }
       const result = yield* SessionRunner.Service.use((runner) =>
         runner.drain({ sessionID, force, continuation, promotable, stepped }),
       ).pipe(
@@ -162,6 +190,39 @@ export const layer = Layer.effect(
       })
     const wake = (sessionID: SessionSchema.ID) =>
       coordinator.wake(sessionID).pipe(Effect.andThen(releaseSteerBlock(sessionID)))
+
+    // This boot's claim attribution, or undefined when clustering is not
+    // composed: no identity means neither stamping nor wake routing applies.
+    const self = Option.isSome(identity)
+      ? Effect.gen(function* () {
+          const [url] = yield* identity.value.urls
+          return { id: identity.value.id, ...(url === undefined ? {} : { url }) }
+        })
+      : Effect.succeed(undefined)
+
+    // Wake routing for co-mounted servers. Work recorded against a Session
+    // whose live claim names another boot is forwarded to that owner so its
+    // inbox drains there; a dead or unforwardable owner is fenced away and the
+    // wake runs here instead. A wake is never dropped for placement reasons:
+    // every hop reads the current durable attribution, so forwarding follows
+    // the fence rather than a cached guess and terminates at the owner.
+    const wakeRouted = Effect.fn("SessionExecution.wake")(function* (sessionID: SessionSchema.ID) {
+      const at = yield* self
+      if (at !== undefined) {
+        const claim = yield* store.attribution(sessionID)
+        if (claim?.owner !== undefined && claim.owner !== at.id) {
+          if (Option.isSome(wakes) && claim.url !== undefined) {
+            if (
+              (yield* wakes.value.probe(claim.url, claim.owner)) &&
+              (yield* wakes.value.forward(claim.url, sessionID))
+            )
+              return
+          }
+          yield* store.seize(sessionID, at, claim.owner)
+        }
+      }
+      yield* wake(sessionID)
+    })
     return Service.of({
       active: coordinator.active,
       isActive: coordinator.isActive,
@@ -184,7 +245,7 @@ export const layer = Layer.effect(
           return interrupted
         }),
       resume: coordinator.run,
-      wake,
+      wake: wakeRouted,
       awaitIdle: coordinator.awaitIdle,
     })
   }),
@@ -193,7 +254,7 @@ export const layer = Layer.effect(
 export const node = makeGlobalNode({
   service: Service,
   layer,
-  deps: [SessionStore.node, Instance.node, Bus.node, Database.node, Job.node],
+  deps: [SessionStore.node, Instance.node, Bus.node, Database.node, Job.node, ServerIdentity.node, SessionWakeForward.node],
 })
 
 /** Low-level compatibility layer for callers that only need durable Session recording. */

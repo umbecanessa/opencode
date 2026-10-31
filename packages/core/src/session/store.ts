@@ -73,14 +73,42 @@ export interface Interface {
    */
   readonly listSuspended: () => Effect.Effect<ReadonlyArray<Session.ID>>
   /**
+   * {@link Interface.listSuspended} with each claim's attribution: the boot id
+   * (and advertised wake URL, when known) of the server that acquired the claim.
+   */
+  readonly listSuspendedClaims: () => Effect.Effect<
+    ReadonlyArray<{ readonly sessionID: Session.ID; readonly owner?: string; readonly url?: string }>
+  >
+  /**
    * Records the execution claim: the durable write-ahead intent that a turn is
    * (or was) in flight. Set when execution starts; a claim that survives to the
    * next boot marks a turn that never completed — its process crashed or shut
-   * down mid-turn.
+   * down mid-turn. On the unclaimed→claimed transition the fence increments and
+   * the acquiring server's attribution is stamped (cleared when the acquirer
+   * has no identity).
    */
-  readonly claim: (sessionID: Session.ID) => Effect.Effect<void>
-  /** Releases the claim and resets resume accounting. Terminal events call this on commit. */
-  readonly release: (sessionID: Session.ID) => Effect.Effect<void>
+  readonly claim: (sessionID: Session.ID, owner?: { readonly id: string; readonly url?: string }) => Effect.Effect<void>
+  /**
+   * Fenced takeover of another server's active claim: stamps new attribution and
+   * increments the fence only while the claim is held (and, when `expectID` is
+   * given, still by the observed owner). Returns whether the claim was seized.
+   */
+  readonly seize: (
+    sessionID: Session.ID,
+    owner: { readonly id: string; readonly url?: string },
+    expectID?: string,
+  ) => Effect.Effect<boolean>
+  /** Current claim attribution of a Session; undefined when the row is gone. The fence never resets. */
+  readonly attribution: (
+    sessionID: Session.ID,
+  ) => Effect.Effect<{ readonly owner?: string; readonly url?: string; readonly fence: number } | undefined>
+  /**
+   * Releases the claim and resets resume accounting. Terminal events call this
+   * on commit; a `guardID` restricts the release to rows still attributed to
+   * that boot, so a server whose ownership was fenced away mid-turn cannot clear
+   * the new owner's claim.
+   */
+  readonly release: (sessionID: Session.ID, guardID?: string) => Effect.Effect<void>
   /**
    * Clears orphaned child claims except children owned by recoverable
    * background subagent jobs.
@@ -232,30 +260,115 @@ const layer = Layer.effect(
             Effect.map((rows) => rows.map((row) => row.sessionID)),
           )
       }),
-      claim: Effect.fn("SessionStore.claim")(function* (sessionID) {
+      listSuspendedClaims: Effect.fn("SessionStore.listSuspendedClaims")(function* () {
+        return yield* db
+          .select({
+            sessionID: SessionTable.id,
+            owner: SessionTable.execution_owner,
+            url: SessionTable.execution_url,
+          })
+          .from(SessionTable)
+          .where(and(isNotNull(SessionTable.time_suspended), isNull(SessionTable.parent_id)))
+          .all()
+          .pipe(
+            Effect.orDie,
+            Effect.map((rows) =>
+              rows.map((row) => ({
+                sessionID: row.sessionID,
+                ...(row.owner === null ? {} : { owner: row.owner }),
+                ...(row.url === null ? {} : { url: row.url }),
+              })),
+            ),
+          )
+      }),
+      claim: Effect.fn("SessionStore.claim")(function* (sessionID, owner) {
         // The null guard makes re-claiming a still-claimed Session a zero-row
         // no-op (a resumed turn re-claims through the same started hook).
         // Claim bookkeeping never counts as user activity: time_updated is
         // pinned so session ordering only moves on real changes.
         yield* db
           .update(SessionTable)
-          .set({ time_suspended: Date.now(), time_updated: sql`${SessionTable.time_updated}` })
+          .set({
+            time_suspended: Date.now(),
+            execution_owner: owner?.id ?? null,
+            execution_url: owner?.url ?? null,
+            execution_fence: sql`${SessionTable.execution_fence} + 1`,
+            time_updated: sql`${SessionTable.time_updated}`,
+          })
           .where(and(eq(SessionTable.id, sessionID), isNull(SessionTable.time_suspended)))
           .run()
           .pipe(Effect.orDie)
       }),
-      release: Effect.fn("SessionStore.release")(function* (sessionID) {
+      seize: Effect.fn("SessionStore.seize")(function* (sessionID, owner, expectID) {
+        // Takeover only converts an already-held claim; an idle Session is
+        // acquired through the ordinary started-hook claim instead. RETURNING
+        // reports whether this statement won the race against a concurrent
+        // release or a competing seize.
+        const row = yield* db
+          .update(SessionTable)
+          .set({
+            execution_owner: owner.id,
+            execution_url: owner.url ?? null,
+            execution_fence: sql`${SessionTable.execution_fence} + 1`,
+            time_updated: sql`${SessionTable.time_updated}`,
+          })
+          .where(
+            and(
+              eq(SessionTable.id, sessionID),
+              isNotNull(SessionTable.time_suspended),
+              expectID === undefined ? undefined : eq(SessionTable.execution_owner, expectID),
+            ),
+          )
+          .returning({ fence: SessionTable.execution_fence })
+          .get()
+          .pipe(Effect.orDie)
+        return row !== undefined
+      }),
+      attribution: Effect.fn("SessionStore.attribution")(function* (sessionID) {
+        const row = yield* db
+          .select({ owner: SessionTable.execution_owner, url: SessionTable.execution_url, fence: SessionTable.execution_fence })
+          .from(SessionTable)
+          .where(eq(SessionTable.id, sessionID))
+          .get()
+          .pipe(Effect.orDie)
+        if (row === undefined) return undefined
+        return {
+          ...(row.owner === null ? {} : { owner: row.owner }),
+          ...(row.url === null ? {} : { url: row.url }),
+          fence: row.fence,
+        }
+      }),
+      release: Effect.fn("SessionStore.release")(function* (sessionID, guardID) {
         yield* db
           .update(SessionTable)
-          .set({ time_suspended: null, resume_attempts: 0, time_updated: sql`${SessionTable.time_updated}` })
-          .where(eq(SessionTable.id, sessionID))
+          .set({
+            time_suspended: null,
+            resume_attempts: 0,
+            execution_owner: null,
+            execution_url: null,
+            time_updated: sql`${SessionTable.time_updated}`,
+          })
+          .where(
+            and(
+              eq(SessionTable.id, sessionID),
+              guardID === undefined
+                ? undefined
+                : or(isNull(SessionTable.execution_owner), eq(SessionTable.execution_owner, guardID)),
+            ),
+          )
           .run()
           .pipe(Effect.orDie)
       }),
       releaseChildClaims: Effect.fn("SessionStore.releaseChildClaims")((recoverable) =>
         db
           .update(SessionTable)
-          .set({ time_suspended: null, resume_attempts: 0, time_updated: sql`${SessionTable.time_updated}` })
+          .set({
+            time_suspended: null,
+            resume_attempts: 0,
+            execution_owner: null,
+            execution_url: null,
+            time_updated: sql`${SessionTable.time_updated}`,
+          })
           .where(
             and(
               isNotNull(SessionTable.time_suspended),
@@ -301,7 +414,13 @@ const layer = Layer.effect(
       releaseTemporaryClaims: Effect.suspend(() =>
         db
           .update(SessionTable)
-          .set({ time_suspended: null, resume_attempts: 0, time_updated: sql`${SessionTable.time_updated}` })
+          .set({
+            time_suspended: null,
+            resume_attempts: 0,
+            execution_owner: null,
+            execution_url: null,
+            time_updated: sql`${SessionTable.time_updated}`,
+          })
           .where(and(eq(SessionTable.temporary, true), isNotNull(SessionTable.time_suspended)))
           .run()
           .pipe(Effect.orDie),

@@ -72,6 +72,12 @@ export const SessionTable = sqliteTable(
     /** The execution claim timestamp (historical column name; see SessionStore.claim). */
     time_suspended: integer(),
     resume_attempts: integer().notNull().default(0),
+    /** Server-boot id that acquired the current claim; null when no clustering identity stamped it. */
+    execution_owner: text(),
+    /** URL the claim owner advertised for wake forwarding, when it knew one. */
+    execution_url: text(),
+    /** Monotonic per-acquisition fencing counter; strictly increases on every claim or seize. */
+    execution_fence: integer().notNull().default(0),
     /** Disposable spot-task session: omitted from default listings and garbage-collected after terminal idle. */
     temporary: integer({ mode: "boolean" })
       .notNull()

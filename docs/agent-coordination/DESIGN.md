@@ -212,9 +212,10 @@ reach for free.
 Split per the gate above: 5a ships the `WorkspaceDriver` half, which works
 against today's architecture with zero clustering semantics. Drains stay
 process-local (AGENTS-mandated until clustering); what relocates is the
-session's EXECUTION ENVIRONMENT. The other half — the Location server
-dimension with remote claims/fencing — stays gated behind real-world Phase 4
-feedback.
+session's EXECUTION ENVIRONMENT. The other half — remote execution
+claims/fencing — landed later as Phase 5b increment 2 without needing the
+Location server dimension; a durable server field on `Location` itself stays
+gated behind real-world Phase 4 feedback.
 
 - Config gains `workspaces: { name: { type: "ssh", host, port?, user?,
   identity?, directory } }`; the entry's `directory` is the project root ON
@@ -260,13 +261,13 @@ Implementation notes:
   unknown-workspace listing, both mutual-exclusion rejections), and two
   `setBinding` cases in `workspace.test.ts`.
 
-## Phase 5b — remote claims (increment 1 implemented; clustering gated)
+## Phase 5b - remote claims (increments 1-2 implemented)
 
 The server dimension on `Location`, remote-owned claims, fencing, and
 interruption targeting. Deferred until Phase 4/5a failure modes are known in
 real use.
 
-### Phase 5b increment 1 — dispatch placement (implemented here)
+### Phase 5b increment 1 - dispatch placement (implemented here)
 
 Bounded first increment: durable dispatch bookkeeping instead of clustered
 drains. Sessions stay fully executed by whichever server created them; this
@@ -305,9 +306,66 @@ server only remembers dispatch ownership.
   (background dispatch with routed follow-up + `<peer>` notification;
   404 drops the placement). Root `bun run check` 35/35.
 
-Still gated: making drains themselves run on a remote owner (Location server
-dimension, remote-owned execution claims with fencing tokens, and interruption
-targeting through the `session.interrupt`/`wait`/`active` surfaces, which are
-deliberately process-global today). Chosen deliberately over log replication or
-clustering: dispatched sessions already execute everything (subagents, tools)
-on the peer with the peer's own config.
+### Phase 5b increment 2 - execution ownership and fencing (implemented here)
+
+Drains themselves now follow durable ownership. Servers that share one
+database (co-mounted `serve` processes) attribute each execution claim to the
+boot that acquired it, route wakes to the owner, and fence takeovers so two
+servers cannot drain one Session in the same step.
+
+- `session_v2` gains `execution_owner`, `execution_url`, and
+  `execution_fence` (migration `20261031064708_execution_attribution`).
+  `SessionStore.claim(id, owner?)` stamps attribution only on the
+  unclaimed→claimed transition and increments the fence; `seize(id, owner,
+  expectID?)` converts only a still-held claim (optionally still owned by the
+  observed boot) and reports the race outcome through `RETURNING`;
+  `attribution(id)` and `listSuspendedClaims()` expose it; `release(id,
+  guardID?)` clears attribution only for the boot that still owns it (or an
+  unattributed claim). A release never resets the fence, so stale tokens stay
+  invalid.
+- New global `ServerIdentity` (`packages/core/src/server-identity.ts`): a
+  fresh per-boot UUID plus announced URLs (empty until a server process
+  publishes its listeners; `ServerProcess.start` announces before recovery
+  and serving). `/api/info` now answers with this boot `id`, which lets
+  liveness probes distinguish the advertised server from a different process
+  that reused its address.
+- New global `SessionWakeForward` (`session/wake-forward.ts`): `probe` asks a
+  claim URL's `/api/info` (any HTTP answer means the process lives; a
+  parseable foreign `id` means the address was reused and counts as dead);
+  `forward` posts the new experimental wake endpoint and treats <300 as
+  delivered.
+- `SessionExecution.wake` is routed: a foreign owner that answers is
+  forwarded to; a dead, reused-URL, or unforwardable (e.g. auth-gated) owner
+  is fenced away - seized under the fence - and the wake runs locally, so a
+  wake is never dropped for placement reasons. Each hop re-reads durable
+  attribution, so forwarding follows the fence rather than a cached guess and
+  converges at the owner. Drains re-check attribution at every step boundary
+  and yield when a foreign boot has fenced in mid-turn instead of racing on
+  model spend. Claims carry the boot id and terminal releases are
+  owner-guarded. Participation is composition-gated via `serviceOption`:
+  hosts without `ServerIdentity.node` (embedded tools, unit graphs) keep the
+  single-server behaviour byte-for-byte.
+- The boot sweep's final resume pass reads `listSuspendedClaims`: a claim
+  whose foreign owner still answers a probe is left alone (that server owns
+  the drain), and every other claim is seized under the fence before
+  resuming. This also makes two co-mounted servers' sweeps race-free instead
+  of doubly resuming.
+- Protocol: `experimental.session.wake` (`POST
+  /api/experimental/session/:sessionID/wake`, SDK
+  `client.experimental.session.wake`) runs a routed wake on the receiving
+  server; `ServerInfo` gains the optional boot `id`. Client regenerated.
+- Tests (`session-execution.test.ts`, "SessionExecution claim attribution"):
+  claim/seize/release fence transitions, wake forward-vs-seize-vs-adopt with
+  stubbed probe/forward verdicts, the step-boundary yield under a foreign
+  owner, and the sweep's live-owner skip and dead-owner seize. The identity
+  and forwarder are opt-in layers in the existing `buildExecution` harness,
+  so every pre-existing test still exercises the identity-free path.
+
+Still gated: interruption targeting through the
+`session.interrupt`/`wait`/`active` surfaces, which remain deliberately
+process-global today (a routed wake drains on the owner, but interrupting a
+remote-owned Session by ID alone is not wired yet, and credential plumbing for
+cross-server wake forwarding means an auth-gated owner is fenced rather than
+woken remotely). Chosen deliberately over log replication or full clustering:
+dispatched sessions already execute everything (subagents, tools) on the peer
+with the peer's own config.

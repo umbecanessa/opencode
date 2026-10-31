@@ -2,6 +2,7 @@ export * as ServerProcess from "./process"
 
 import { NodeHttpServer } from "@effect/platform-node"
 import { Bus } from "@opencode/core/bus"
+import { ServerIdentity } from "@opencode/core/server-identity"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
 import { Schedule } from "@opencode/core/schedule"
 import { InstallationEvent } from "@opencode/schema/installation-event"
@@ -106,6 +107,10 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
       ).pipe(Layer.provideMerge(NodeHttpServer.layerHttpServices)),
       applicationScope,
     )
+    // Announce this boot's addresses before any recovery or serving: claims
+    // stamped from now on carry a URL that peer servers can wake this process
+    // on, and the restart sweep's ownership probes read the same identity.
+    yield* Context.get(context, ServerIdentity.Service).announce(urls())
     // Restart continuity is a property of any durable database, not of managed-service
     // lifecycle: a crashed foreground `serve` must replay orphaned turns exactly like
     // the service or an embedded runtime. The sweep is a no-op when nothing is suspended.

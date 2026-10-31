@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "5373a424-a93e-43d7-987e-61ac29dcbd8e",
-  "prevIds": ["4f6e16c6-f070-4545-b9d0-19fcb6e5210c"],
+  "id": "70d11ef2-0276-4c8b-b605-213bda2b3b9f",
+  "prevIds": ["5373a424-a93e-43d7-987e-61ac29dcbd8e"],
   "ddl": [
     {
       "name": "account_state",
@@ -1947,6 +1947,36 @@
       "default": "0",
       "generated": null,
       "name": "resume_attempts",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "execution_owner",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "execution_url",
+      "entityType": "columns",
+      "table": "session_v2"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "0",
+      "generated": null,
+      "name": "execution_fence",
       "entityType": "columns",
       "table": "session_v2"
     },

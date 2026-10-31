@@ -19,6 +19,7 @@ export const ServerHandler = HttpApiBuilder.group(Api, "server.server", (handler
         Effect.gen(function* () {
           const info = yield* ServerInfo.Service
           return {
+            id: info.id,
             version: info.app.version ?? "unknown",
             pid: process.pid ?? 0,
             hostname: hostname() || undefined,

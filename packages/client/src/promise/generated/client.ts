@@ -95,6 +95,8 @@ import type {
   ExperimentalSessionSkillOutput,
   ExperimentalSessionWaitInput,
   ExperimentalSessionWaitOutput,
+  ExperimentalSessionWakeInput,
+  ExperimentalSessionWakeOutput,
   ExperimentalSessionInstructionsEntryListInput,
   ExperimentalSessionInstructionsEntryListOutput,
   ExperimentalSessionInstructionsEntryPutInput,
@@ -1117,6 +1119,17 @@ export function make(options: ClientOptions) {
               path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/wait`,
               successStatus: 204,
               declaredStatuses: [400, 401, 404, 503],
+              empty: true,
+            },
+            requestOptions,
+          ),
+        wake: (input: ExperimentalSessionWakeInput, requestOptions?: RequestOptions) =>
+          request<ExperimentalSessionWakeOutput>(
+            {
+              method: "POST",
+              path: `/api/experimental/session/${encodeURIComponent(input.sessionID)}/wake`,
+              successStatus: 204,
+              declaredStatuses: [400, 401, 404, 500],
               empty: true,
             },
             requestOptions,
@@ -2700,6 +2713,8 @@ export function make(options: ClientOptions) {
       skill: client.experimental.session.skill,
       /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
       wait: client.experimental.session.wait,
+      /** @deprecated Use `client.experimental.session.wake`. Removed in the next minor. */
+      wake: client.experimental.session.wake,
       /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
       instructions: {
         /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */

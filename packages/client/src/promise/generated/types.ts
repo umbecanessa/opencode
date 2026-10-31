@@ -2,6 +2,7 @@ export type JsonValue = null | boolean | number | string | Array<JsonValue> | { 
 
 export type ServerInfo = {
   version: string
+  id?: string | undefined
   pid: number
   hostname?: string | undefined
   urls: Array<string>
@@ -3856,6 +3857,10 @@ export type ExperimentalSessionWaitInput = { readonly sessionID: string }
 
 export type ExperimentalSessionWaitOutput = void
 
+export type ExperimentalSessionWakeInput = { readonly sessionID: string }
+
+export type ExperimentalSessionWakeOutput = void
+
 export type ExperimentalSessionInstructionsEntryListInput = { readonly sessionID: string }
 
 export type ExperimentalSessionInstructionsEntryListOutput = { data: Array<InstructionEntryInfo> }["data"]
@@ -4867,6 +4872,12 @@ export type SessionWaitInput = ExperimentalSessionWaitInput
 
 /** @deprecated Use `ExperimentalSessionWaitOutput`. Removed in the next minor. */
 export type SessionWaitOutput = ExperimentalSessionWaitOutput
+
+/** @deprecated Use `ExperimentalSessionWakeInput`. Removed in the next minor. */
+export type SessionWakeInput = ExperimentalSessionWakeInput
+
+/** @deprecated Use `ExperimentalSessionWakeOutput`. Removed in the next minor. */
+export type SessionWakeOutput = ExperimentalSessionWakeOutput
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
 export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput

@@ -48,6 +48,7 @@ import type { Config } from "@opencode/schema/config"
 
 export type ServerInfoOutput = {
   readonly version: string
+  readonly id?: string | undefined
   readonly pid: number
   readonly hostname?: string | undefined
   readonly urls: ReadonlyArray<string>
@@ -458,6 +459,9 @@ export interface SessionApi<E = never> {
   /** @deprecated Use `client.experimental.session.wait`. Removed in the next minor. */
   readonly wait: ExperimentalSessionWaitOperation<E>
 
+  /** @deprecated Use `client.experimental.session.wake`. Removed in the next minor. */
+  readonly wake: ExperimentalSessionWakeOperation<E>
+
   /** @deprecated Use `client.experimental.session.instructions`. Removed in the next minor. */
   readonly instructions: {
     /** @deprecated Use `client.experimental.session.instructions.entry`. Removed in the next minor. */
@@ -584,6 +588,12 @@ export type ExperimentalSessionWaitOutput = void
 export type ExperimentalSessionWaitOperation<E = never> = (
   input: ExperimentalSessionWaitInput,
 ) => Effect.Effect<ExperimentalSessionWaitOutput, E>
+
+export type ExperimentalSessionWakeInput = { readonly sessionID: Session.ID }
+export type ExperimentalSessionWakeOutput = void
+export type ExperimentalSessionWakeOperation<E = never> = (
+  input: ExperimentalSessionWakeInput,
+) => Effect.Effect<ExperimentalSessionWakeOutput, E>
 
 export type ExperimentalSessionInstructionsEntryListInput = { readonly sessionID: Session.ID }
 export type ExperimentalSessionInstructionsEntryListOutput = ReadonlyArray<InstructionEntry.Info>
@@ -1442,6 +1452,7 @@ export interface ExperimentalSessionApi<E = never> {
   readonly export: ExperimentalSessionExportOperation<E>
   readonly skill: ExperimentalSessionSkillOperation<E>
   readonly wait: ExperimentalSessionWaitOperation<E>
+  readonly wake: ExperimentalSessionWakeOperation<E>
   readonly instructions: {
     readonly entry: {
       readonly list: ExperimentalSessionInstructionsEntryListOperation<E>
@@ -2844,6 +2855,15 @@ export type SessionWaitOutput = ExperimentalSessionWaitOutput
 
 /** @deprecated Use `ExperimentalSessionWaitOperation`. Removed in the next minor. */
 export type SessionWaitOperation<E = never> = ExperimentalSessionWaitOperation<E>
+
+/** @deprecated Use `ExperimentalSessionWakeInput`. Removed in the next minor. */
+export type SessionWakeInput = ExperimentalSessionWakeInput
+
+/** @deprecated Use `ExperimentalSessionWakeOutput`. Removed in the next minor. */
+export type SessionWakeOutput = ExperimentalSessionWakeOutput
+
+/** @deprecated Use `ExperimentalSessionWakeOperation`. Removed in the next minor. */
+export type SessionWakeOperation<E = never> = ExperimentalSessionWakeOperation<E>
 
 /** @deprecated Use `ExperimentalSessionInstructionsEntryListInput`. Removed in the next minor. */
 export type SessionInstructionsEntryListInput = ExperimentalSessionInstructionsEntryListInput
