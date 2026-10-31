@@ -25,6 +25,7 @@ import { SessionInboxTable, SessionTable } from "@opencode/core/session/sql"
 import { SessionStore } from "@opencode/core/session/store"
 import { SessionWakeForward } from "@opencode/core/session/wake-forward"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, LayerMap, Scope } from "effect"
+import { TestClock } from "effect/testing"
 import { eq } from "drizzle-orm"
 import { testEffect } from "./lib/effect"
 
@@ -1358,8 +1359,12 @@ describe("SessionExecution claim attribution", () => {
   // adopted rather than forwarded). `calls` records probe/forward invocations.
   const boot = (
     id: string,
-    wakes: { readonly probe?: (url: string, bootID: string) => boolean; readonly forward?: (url: string) => boolean } = {},
-    calls?: { readonly probes: string[]; readonly forwards: string[] },
+    wakes: {
+      readonly probe?: (url: string, bootID: string) => boolean
+      readonly forward?: (url: string) => boolean
+      readonly forwardInterrupt?: (url: string, resume?: boolean) => { delivered: boolean; interrupted: boolean }
+    } = {},
+    calls?: { readonly probes: string[]; readonly forwards: string[]; readonly interrupts?: string[] },
     urls: ReadonlyArray<string> = [],
   ) =>
     Layer.merge(
@@ -1374,6 +1379,10 @@ describe("SessionExecution claim attribution", () => {
             Effect.sync(() => calls?.probes.push(`${url}|${bootID}`)).pipe(Effect.as(wakes.probe?.(url, bootID) ?? false)),
           forward: (url) =>
             Effect.sync(() => calls?.forwards.push(url)).pipe(Effect.as(wakes.forward?.(url) ?? false)),
+          forwardInterrupt: (url, sessionID, resume) =>
+            Effect.sync(() => calls?.interrupts?.push(`${url}|${resume}`)).pipe(
+              Effect.as(wakes.forwardInterrupt?.(url, resume) ?? { delivered: false, interrupted: false }),
+            ),
         }),
       ),
     )
@@ -1653,6 +1662,158 @@ describe("SessionExecution claim attribution", () => {
       expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-local" })
       yield* Deferred.await(drained)
       expect(drains).toEqual([sessionID])
+    }),
+  )
+
+  it.effect("an interrupt on a live foreign owner is forwarded there", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_interrupt")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const calls = { probes: [] as string[], forwards: [] as string[], interrupts: [] as string[] }
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        () => Effect.void,
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => true, forwardInterrupt: () => ({ delivered: true, interrupted: true }) }, calls),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      // Nothing runs here, so the stop belongs to the owner: forwarded verbatim.
+      expect(yield* execution.interrupt(sessionID, { resume: true })).toBe(true)
+      expect(calls.interrupts).toEqual(["http://peer|true"])
+      // The owner keeps its claim; the local fence is untouched.
+      expect(yield* store.attribution(sessionID)).toMatchObject({ owner: "boot-peer" })
+    }),
+  )
+
+  it.effect("an interrupt clears a dead owner's phantom claim", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_interrupt_dead")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        () => Effect.void,
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => false }),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      expect(yield* execution.interrupt(sessionID)).toBe(false)
+      // The phantom busy marker is gone: the Session reads as idle, and the
+      // fence survives so late writes from the dead boot cannot re-claim.
+      expect(yield* store.attribution(sessionID)).toMatchObject({ fence: 2 })
+      expect((yield* store.listSuspendedClaims()).some((claim) => claim.sessionID === sessionID)).toBe(false)
+    }),
+  )
+
+  it.effect("awaitIdle adopts a dead owner's claim and drains it here", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_waitdead")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const drains: Session.ID[] = []
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        boot("boot-local", { probe: () => false }),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      // Waiting on a lost owner adopts its claim and runs the continuation,
+      // instead of parking forever on a marker nobody will clear.
+      yield* execution.awaitIdle(sessionID)
+      expect(drains).toEqual([sessionID])
+      expect(yield* store.attribution(sessionID)).toMatchObject({ fence: 2 })
+    }),
+  )
+
+  it.effect("awaitIdle polls a live foreign owner until it releases the claim", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const sessionID = Session.ID.make("ses_route_waitlive")
+      yield* seedSessions(database, [sessionID])
+      yield* store.claim(sessionID, { id: "boot-peer", url: "http://peer" })
+
+      const drains: Session.ID[] = []
+      const probed = yield* Deferred.make<void>()
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(
+        scope,
+        ({ sessionID }) => Effect.sync(() => drains.push(sessionID)),
+        undefined,
+        undefined,
+        Layer.merge(
+          Layer.succeed(
+            ServerIdentity.Service,
+            ServerIdentity.Service.of({ id: "boot-local", announce: () => Effect.void, urls: Effect.succeed([]) }),
+          ),
+          Layer.succeed(
+            SessionWakeForward.Service,
+            SessionWakeForward.Service.of({
+              // The first probe answers live and signals that the waiter is watching.
+              probe: () => Effect.sync(() => Deferred.doneUnsafe(probed, Effect.void)).pipe(Effect.as(true)),
+              forward: () => Effect.succeed(false),
+              forwardInterrupt: () => Effect.succeed({ delivered: false, interrupted: false }),
+            }),
+          ),
+        ),
+      )
+      const execution = Context.get(context, SessionExecution.Service)
+
+      const waiter = yield* execution.awaitIdle(sessionID).pipe(Effect.forkIn(scope))
+      yield* Deferred.await(probed)
+      // The owner releasing its claim completes the wait once the poll wakes;
+      // the harness clock is manual, so nudge it past the poll interval.
+      yield* store.release(sessionID)
+      yield* TestClock.adjust("1 second")
+      yield* Fiber.join(waiter)
+      expect(yield* store.attribution(sessionID)).toMatchObject({ fence: 1 })
+      expect(drains).toEqual([])
+    }),
+  )
+
+  it.effect("activeCluster unions local drains with every durable claim", () =>
+    Effect.gen(function* () {
+      const database = yield* Database.Service
+      const store = yield* SessionStore.Service
+      const foreign = Session.ID.make("ses_cluster_foreign")
+      const own = Session.ID.make("ses_cluster_own")
+      yield* seedSessions(database, [foreign, own])
+      yield* store.claim(foreign, { id: "boot-peer", url: "http://peer" })
+      yield* store.claim(own, { id: "boot-local" })
+
+      const scope = yield* Scope.make()
+      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
+      const context = yield* buildExecution(scope, () => Effect.void, undefined, undefined, boot("boot-local"))
+      const execution = Context.get(context, SessionExecution.Service)
+
+      // No drain runs in this test, so the process view is empty while the
+      // cluster view shows both claimed Sessions as busy.
+      expect(yield* execution.active).toEqual(new Set())
+      expect(yield* execution.activeCluster).toEqual(new Set([foreign, own]))
     }),
   )
 })

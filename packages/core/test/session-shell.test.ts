@@ -46,6 +46,7 @@ const executionLayer = Layer.effect(
     })
     return SessionExecution.Service.of({
       active: coordinator.active,
+      activeCluster: coordinator.active,
       isActive: coordinator.isActive,
       resume: coordinator.run,
       interrupt: (sessionID) => coordinator.interrupt(sessionID),

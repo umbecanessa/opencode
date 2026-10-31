@@ -19,6 +19,12 @@ import { SessionWakeForward } from "./wake-forward.js"
 export interface Interface {
   /** Snapshots active execution owned by this process. */
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
+  /**
+   * Cluster-wide active view: this process's drains plus Sessions held by any
+   * server's durable execution claim. Identical to `active` when no clustering
+   * identity is composed.
+   */
+  readonly activeCluster: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   /** Checks process-local ownership, including interruption cleanup and terminal settlement. */
   readonly isActive: (sessionID: SessionSchema.ID) => Effect.Effect<boolean>
   /** Starts execution while idle or joins the active execution. */
@@ -30,10 +36,11 @@ export interface Interface {
    */
   readonly wake: (sessionID: SessionSchema.ID) => Effect.Effect<void>
   /**
-   * Interrupt active work owned by this process. Idle interruption is a no-op. Resolves once
+   * Interrupts work, stopping what this process owns. Idle interruption is a no-op. Resolves once
    * the interruption is accepted; cleanup settles asynchronously in the execution fiber.
    * Returns whether an active execution was interrupted. Compose with `awaitIdle` when
-   * settlement matters.
+   * settlement matters. When nothing runs here and the Session's durable claim names another
+   * server, the interrupt is forwarded there; a dead owner's phantom claim is cleared.
    */
   readonly interrupt: (
     sessionID: SessionSchema.ID,
@@ -41,7 +48,12 @@ export interface Interface {
       readonly resume?: boolean
     },
   ) => Effect.Effect<boolean>
-  /** Resolves once this process owns no active execution for the Session. Returns immediately when idle and never starts work. */
+  /**
+   * Resolves once no execution runs for the Session: this process's drain, or, when a foreign
+   * server holds the claim, once that claim releases. Returns immediately when idle and never
+   * starts work, except that a dead owner's claim is adopted so its continuation runs here
+   * instead of waiting on a process that will never release it.
+   */
   readonly awaitIdle: (sessionID: SessionSchema.ID) => Effect.Effect<void>
 }
 
@@ -191,6 +203,25 @@ export const layer = Layer.effect(
     const wake = (sessionID: SessionSchema.ID) =>
       coordinator.wake(sessionID).pipe(Effect.andThen(releaseSteerBlock(sessionID)))
 
+    const interruptLocal = (sessionID: SessionSchema.ID, options?: { readonly resume?: boolean }) =>
+      Effect.gen(function* () {
+        const interrupted = yield* coordinator.interrupt(sessionID, "user")
+        if (!options?.resume) return interrupted
+        // Resume steering input and between-turn control work from the interrupted
+        // intent. Queued next-turn prompts stay parked: a steer-scoped drain never
+        // promotes them, and a control item behind a queued prompt waits its turn.
+        // Interruption acknowledges before cleanup settles, so this wake usually lands
+        // on the stopping execution's doorbell and starts the successor at settle.
+        // Reading the inbox concurrently with the dying drain is safe: delivery consumes
+        // rows inside uninterruptible publications, so a steer row is either still
+        // promotable here or was fully delivered and needs no resumption.
+        const next = yield* SessionInbox.nextPromotable(db, sessionID, "input")
+        if (next === undefined) return interrupted
+        if (next.delivery === "steer" || next.type === "compaction" || next.type === "move")
+          yield* coordinator.wake(sessionID, "steer")
+        return interrupted
+      })
+
     // This boot's claim attribution, or undefined when clustering is not
     // composed: no identity means neither stamping nor wake routing applies.
     const self = Option.isSome(identity)
@@ -228,30 +259,77 @@ export const layer = Layer.effect(
       }
       yield* wake(sessionID)
     })
+
+    // Interruption routes like waking: this process stops what it owns, and a
+    // Session owned elsewhere is stopped THERE. When the owner is unreachable
+    // its phantom claim is fenced off and cleared, so wait and active views
+    // stop reporting a dead Session as busy. A foreign-owned claim is never
+    // cleared while its owner still answers probes.
+    const interruptRouted = Effect.fn("SessionExecution.interrupt")(function* (
+      sessionID: SessionSchema.ID,
+      options?: { readonly resume?: boolean },
+    ) {
+      const interrupted = yield* interruptLocal(sessionID, options)
+      const at = yield* self
+      if (interrupted || at === undefined) return interrupted
+      const claim = yield* store.attribution(sessionID)
+      if (claim?.owner === undefined || claim.owner === at.id) return interrupted
+      const mine = claim.url !== undefined && Option.isSome(identity) && (yield* identity.value.urls).includes(claim.url)
+      if (!mine && Option.isSome(wakes) && claim.url !== undefined) {
+        const sent = yield* wakes.value.forwardInterrupt(claim.url, sessionID, options?.resume)
+        if (sent.delivered) return sent.interrupted
+      }
+      if (yield* store.seize(sessionID, at, claim.owner)) yield* store.release(sessionID, at.id)
+      return interrupted
+    })
+
+    // Idle waiting follows the claim too: park on a local drain, or poll while
+    // a foreign owner holds the Session. A dead owner's claim is adopted and
+    // drained here instead of waiting forever on a process that will never
+    // release it — the same takeover rule the boot sweep applies.
+    const awaitIdleRouted = Effect.fn("SessionExecution.awaitIdle")(function* (sessionID: SessionSchema.ID) {
+      while (true) {
+        if (yield* coordinator.isActive(sessionID)) {
+          yield* coordinator.awaitIdle(sessionID)
+          continue
+        }
+        const at = yield* self
+        if (at === undefined) return
+        const claim = yield* store.attribution(sessionID)
+        if (claim?.owner === undefined || claim.owner === at.id) return
+        const mine =
+          claim.url !== undefined && Option.isSome(identity) && (yield* identity.value.urls).includes(claim.url)
+        if (
+          !mine &&
+          Option.isSome(wakes) &&
+          claim.url !== undefined &&
+          (yield* wakes.value.probe(claim.url, claim.owner))
+        ) {
+          yield* Effect.sleep("500 millis")
+          continue
+        }
+        if (yield* store.seize(sessionID, at, claim.owner)) {
+          yield* wake(sessionID)
+          continue
+        }
+        // Attribution moved under the decision; next iteration re-reads it.
+        return
+      }
+    })
     return Service.of({
       active: coordinator.active,
+      activeCluster: Effect.gen(function* () {
+        const local = yield* coordinator.active
+        // Cluster view: drains this process owns PLUS every Session held by any
+        // server's durable claim. Without a clustering identity this is exactly `active`.
+        if (Option.isNone(identity)) return local
+        return new Set([...local, ...(yield* store.listSuspendedClaims()).map((claim) => claim.sessionID)])
+      }),
       isActive: coordinator.isActive,
-      interrupt: (sessionID, options) =>
-        Effect.gen(function* () {
-          const interrupted = yield* coordinator.interrupt(sessionID, "user")
-          if (!options?.resume) return interrupted
-          // Resume steering input and between-turn control work from the interrupted
-          // intent. Queued next-turn prompts stay parked: a steer-scoped drain never
-          // promotes them, and a control item behind a queued prompt waits its turn.
-          // Interruption acknowledges before cleanup settles, so this wake usually lands
-          // on the stopping execution's doorbell and starts the successor at settle.
-          // Reading the inbox concurrently with the dying drain is safe: delivery consumes
-          // rows inside uninterruptible publications, so a steer row is either still
-          // promotable here or was fully delivered and needs no resumption.
-          const next = yield* SessionInbox.nextPromotable(db, sessionID, "input")
-          if (next === undefined) return interrupted
-          if (next.delivery === "steer" || next.type === "compaction" || next.type === "move")
-            yield* coordinator.wake(sessionID, "steer")
-          return interrupted
-        }),
+      interrupt: interruptRouted,
       resume: coordinator.run,
       wake: wakeRouted,
-      awaitIdle: coordinator.awaitIdle,
+      awaitIdle: awaitIdleRouted,
     })
   }),
 )
@@ -267,6 +345,7 @@ export const noopLayer = Layer.succeed(
   Service,
   Service.of({
     active: Effect.succeed(new Set()),
+    activeCluster: Effect.succeed(new Set()),
     isActive: () => Effect.succeed(false),
     resume: () => Effect.void,
     wake: () => Effect.void,

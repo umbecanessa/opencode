@@ -261,7 +261,7 @@ Implementation notes:
   unknown-workspace listing, both mutual-exclusion rejections), and two
   `setBinding` cases in `workspace.test.ts`.
 
-## Phase 5b - remote claims (increments 1-2 implemented)
+## Phase 5b - remote claims (increments 1-3 implemented)
 
 The server dimension on `Location`, remote-owned claims, fencing, and
 interruption targeting. Deferred until Phase 4/5a failure modes are known in
@@ -335,8 +335,9 @@ servers cannot drain one Session in the same step.
   `forward` posts the new experimental wake endpoint and treats <300 as
   delivered.
 - `SessionExecution.wake` is routed: a foreign owner that answers is
-  forwarded to; a dead, reused-URL, or unforwardable (e.g. auth-gated) owner
-  is fenced away - seized under the fence - and the wake runs locally, so a
+  forwarded to; a dead, reused-URL, or unforwardable owner (credential-less
+  until increment 3 registered cross-server passwords) is fenced away - seized
+  under the fence - and the wake runs locally, so a
   wake is never dropped for placement reasons. Each hop re-reads durable
   attribution, so forwarding follows the fence rather than a cached guess and
   converges at the owner. Drains re-check attribution at every step boundary
@@ -366,11 +367,54 @@ servers cannot drain one Session in the same step.
   and forwarder are opt-in layers in the existing `buildExecution` harness,
   so every pre-existing test still exercises the identity-free path.
 
-Still gated: interruption targeting through the
-`session.interrupt`/`wait`/`active` surfaces, which remain deliberately
-process-global today (a routed wake drains on the owner, but interrupting a
-remote-owned Session by ID alone is not wired yet, and credential plumbing for
-cross-server wake forwarding means an auth-gated owner is fenced rather than
-woken remotely). Chosen deliberately over log replication or full clustering:
-dispatched sessions already execute everything (subagents, tools) on the peer
-with the peer's own config.
+### Phase 5b increment 3 - remote control surfaces and credentials (implemented here)
+
+The two gaps that increment 2 left gated are now closed.
+
+- **Cross-server credentials.** Each server boot registers its serving URLs
+  in the shared KV store (`cluster.server/<url>` → `{ boot, credential }`)
+  before recovery or serving. `SessionWakeForward` reads that row and sends
+  the password as Basic auth — the same scheme configured peers use — on
+  probes, wake forwards, and interrupt forwards. Consequences: wake
+  forwarding now actually DELIVERS to auth-gated owners (the increment-2
+  fence-on-401 path only remains for unregistered/unreachable owners), and
+  liveness probes read the owner's boot id through the auth wall, so
+  address-reuse detection is exact instead of best-effort. The shared
+  database is the trust domain: it already holds every Session's contents
+  for exactly these servers. Rows from dead boots are inert (their stale
+  credentials only ever meet 401s, the same outcome as no registration).
+- **Routed interruption.** `SessionExecution.interrupt` tries the local
+  coordinator first (a running drain stops here, as before), and on a local
+  miss with a foreign-owned claim forwards the interrupt to the owner's
+  public interrupt endpoint (authenticated, `resume` flag preserved) and
+  reports the owner's verdict. A dead owner's phantom claim is fenced off
+  and cleared so wait and active stop reporting a dead Session as busy.
+  The same `session.interrupt` endpoint serves every server in the cluster;
+  no new endpoint was needed.
+- **Distributed idle waiting.** `SessionExecution.awaitIdle` parks on a
+  local drain, polls (500 ms) while a live foreign owner holds the claim,
+  and adopts a dead owner's claim and drains it here rather than waiting
+  forever on a lost process - the boot sweep's takeover rule applied to
+  waiting. `session.wait` inherits this through `Session.Service`.
+- **Cluster active view.** New `SessionExecution.activeCluster` (and
+  `Session.Service.activeCluster`): this process's drains plus every
+  Session held by any server's durable claim. `GET /api/session/active`
+  now answers with it; internal process-local consumers (`restart`,
+  `location-activity`) keep the plain `active`. Description updated.
+- All three remain composition-gated through `ServerIdentity`: hosts without
+  a clustering identity keep the process-global behavior byte-for-byte.
+- Tests: interrupt-forward-to-live-owner and dead-owner-claim-clear,
+  awaitIdle dead-owner adoption and live-owner polling (Deferred-signaled,
+  TestClock-advanced), and the activeCluster union; existing suites
+  unaffected (stubs gained `activeCluster`). Verified live between two
+  auth-gated co-mounted servers: credentials registered, wake forwarded
+  (fence untouched), interrupt executed on the owner, wait blocked on the
+  foreign claim and completed on release, active listed the other server's
+  claim.
+
+Still gated: nothing structural between co-mounted servers. Remaining
+rough edges are deliberate: wait polls claims rather than subscribing to
+cross-server events (no event bus between processes yet); a configured
+(non-co-mounted) peer's interrupt/wait/active routing still comes from
+Phase 4/5b-1's placement registry, not from claims. Interruption of a
+Session owned by a server sharing no database remains out of scope.

@@ -58,6 +58,7 @@ const execution = Layer.succeed(
   SessionExecution.Service,
   SessionExecution.Service.of({
     active: Effect.sync(() => new Set()),
+    activeCluster: Effect.sync(() => new Set()),
     isActive: () => Effect.succeed(false),
     resume: () => Effect.void,
     interrupt: () => Effect.succeed(false),
