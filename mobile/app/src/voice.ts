@@ -51,6 +51,7 @@ export const useDictation = (onText: (text: string) => void) => {
   const [error, setError] = useState("")
   const [lang, setLang] = useState(voiceLanguages[0])
   const base = useRef("")
+  const muted = useRef(false)
   const subs = useRef<{ remove(): void }[]>([])
   const emit = useRef(onText)
 
@@ -78,12 +79,19 @@ export const useDictation = (onText: (text: string) => void) => {
       }
       const locale = pickLocale(language, await supportedLocales)
       base.current = current.trim() ? `${current.trimEnd()} ` : ""
+      muted.current = false
       subs.current.forEach((s) => s.remove())
       subs.current = [
         speech.addListener("start", () => setListening(true)),
-        speech.addListener("end", () => setListening(false)),
+        speech.addListener("end", () => {
+          setListening(false)
+          muted.current = false
+        }),
         // iOS reports the whole utterance so far on each result, so replace rather than append.
         speech.addListener("result", (e) => {
+          // After a send discards the box, the recognizer still delivers its final results; emitting
+          // those would refill the cleared composer with the text that was just sent.
+          if (muted.current) return
           const text = e.results[0]?.transcript ?? ""
           emit.current(base.current + text)
         }),
@@ -110,7 +118,12 @@ export const useDictation = (onText: (text: string) => void) => {
     [lang],
   )
 
-  const stop = useCallback(() => speech?.stop(), [])
+  // discard=true mutes further transcript emission until the session's end (or next start),
+  // so a send can stop dictation without its final results refilling the cleared box.
+  const stop = useCallback((discard = false) => {
+    if (discard) muted.current = true
+    speech?.stop()
+  }, [])
 
   const switchLanguage = useCallback(
     (current: string) => {

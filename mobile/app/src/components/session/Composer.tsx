@@ -125,7 +125,7 @@ export const Composer = ({
 
   const send = async () => {
     if (!canSend) return
-    if (voice.listening) voice.stop()
+    if (voice.listening) voice.stop(true)
     const value = text.trim()
     const attachments = files
     setBusy(true)

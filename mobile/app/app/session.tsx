@@ -366,12 +366,17 @@ export default function Session() {
           scrollEventThrottle={64}
           onStartReached={older}
           onStartReachedThreshold={0.5}
-          maintainVisibleContentPosition={atBottom ? undefined : { minIndexForVisible: 0 }}
+          // Constant, not toggled: flipping the prop between undefined and an object reconfigures the
+          // scroll view mid-scroll and jumps the content. It only stabilizes prepend (older pages), never
+          // growth at the bottom, so it is safe to keep always on.
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          // A user's touch owns the scroll: never scrollToEnd while a drag or momentum is in flight,
+          // or a streaming delta snaps the list back out from under the finger.
           onLayout={() => {
-            if (pinned.current) list.current?.scrollToEnd({ animated: false })
+            if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
           }}
           onContentSizeChange={() => {
-            if (pinned.current) list.current?.scrollToEnd({ animated: false })
+            if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
           }}
           ListHeaderComponent={
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
