@@ -1,5 +1,7 @@
 import { Instance } from "@opencode/core/instance/service"
+import { PeerServers } from "@opencode/core/peer-servers"
 import { Session } from "@opencode/core/session"
+import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionStats } from "@opencode/core/session/stats"
 import { SessionTitle } from "@opencode/core/session/title"
 import { SessionTransfer } from "@opencode/core/session/transfer"
@@ -37,6 +39,8 @@ function missingForm(id: Form.ID) {
 export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handlers) =>
   Effect.gen(function* () {
     const session = yield* Session.Service
+    const execution = yield* SessionExecution.Service
+    const peers = yield* PeerServers.Registry
     const transfer = yield* SessionTransfer.Service
     const instructions = yield* InstructionEntry.Service
     const instances = yield* Instance.Service
@@ -110,6 +114,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 model: ctx.payload.model,
                 metadata: ctx.payload.metadata,
                 permissions: ctx.payload.permissions,
+                ...(ctx.payload.temporary === undefined ? {} : { temporary: ctx.payload.temporary }),
                 ...(ctx.payload.parentID === undefined
                   ? { location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) } }
                   : { parentID: ctx.payload.parentID }),
@@ -157,10 +162,17 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
       .handle(
         "session.active",
         Effect.fn(function* () {
-          const active = yield* session.active
+          const active = yield* session.activeCluster
           return {
             data: Object.fromEntries(Array.from(active, (sessionID) => [sessionID, { type: "running" as const }])),
           }
+        }),
+      )
+      .handle(
+        "peer.servers",
+        Effect.fn(function* (ctx) {
+          yield* peers.set(ctx.payload.servers)
+          return HttpApiSchema.NoContent.make()
         }),
       )
       .handle(
@@ -438,6 +450,19 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
         "session.wait",
         Effect.fn(function* (ctx) {
           yield* session.wait(ctx.params.sessionID).pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+          return HttpApiSchema.NoContent.make()
+        }),
+      )
+      .handle(
+        "session.wake",
+        Effect.fn(function* (ctx) {
+          // Existence is answered here: the wake itself dies on a missing
+          // Session only after the fact, so check first like the other routes.
+          yield* requireSession(ctx.params.sessionID)
+          // Routed wake: the execution service forwards on to the current claim
+          // owner if ownership moved since the forwarding server probed, and
+          // adopts the claim under the fence otherwise. A wake is never lost.
+          yield* execution.wake(ctx.params.sessionID)
           return HttpApiSchema.NoContent.make()
         }),
       )

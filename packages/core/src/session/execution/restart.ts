@@ -1,14 +1,19 @@
 export * as SessionRestart from "./restart.js"
 
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Option } from "effect"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
 import { Bus } from "../../bus.js"
+import { Instance } from "../../instance/service.js"
 import { Job } from "../../job.js"
+import { PeerServers } from "../../peer-servers.js"
+import { ServerIdentity } from "../../server-identity.js"
 import { Session } from "../../session.js"
 import { SessionEvent } from "../event.js"
 import { SessionExecution } from "../execution.js"
 import { SessionSchema } from "../schema.js"
 import { SessionStore } from "../store.js"
+import { SessionWakeForward } from "../wake-forward.js"
+import { ImageNotice } from "../../image/notice.js"
 import { ShellResult } from "../../shell/result.js"
 import { SubagentCompletion } from "../subagent-completion.js"
 
@@ -52,13 +57,15 @@ export interface Interface {
  * Recovery is at-least-once: local coordination prevents concurrent drains,
  * not repeated external side effects after a crash.
  *
- * The sweep assumes every orphaned claim's owner is dead. The managed-server
- * protocol guarantees this: a successor is only spawned after the previous
- * process is confirmed dead (client service `kill`/`evict` poll the PID), the
- * registration lock admits one managed server at a time, and unregistered
- * servers sharing the database never sweep. The service is inert until called
- * — the managed server invokes it at boot; embedders may call it from their
- * own start-up.
+ * Recovery assumes an orphaned claim is resumable by this boot. Without a
+ * clustering identity that is unconditional: the managed-server protocol
+ * guarantees the previous process died (client service `kill`/`evict` poll the
+ * PID, the registration lock admits one managed server at a time, and
+ * unregistered servers sharing the database never sweep). With a clustering
+ * identity, each claim's stamped owner is consulted first: a live foreign
+ * owner is left to drain its own Session, and a dead one is seized under the
+ * fence before resuming. The service is inert until called — the managed
+ * server invokes it at boot; embedders may call it from their own start-up.
  */
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionRestart") {}
 
@@ -68,9 +75,12 @@ export const layer = (options?: Options) =>
     Effect.gen(function* () {
       const store = yield* SessionStore.Service
       const execution = yield* SessionExecution.Service
+      const instances = yield* Instance.Service
       const bus = yield* Bus.Service
       const jobs = yield* Job.Service
       const sessions = yield* Session.Service
+      const identity = yield* Effect.serviceOption(ServerIdentity.Service)
+      const wakes = yield* Effect.serviceOption(SessionWakeForward.Service)
       const scope = yield* Effect.scope
       const maxAttempts = options?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
 
@@ -98,24 +108,22 @@ export const layer = (options?: Options) =>
         return true
       })
 
-      const recoverShell = Effect.fnUntraced(function* (
+      // Peer kinds are recovered by recoverSubagent/recoverRemote, not here.
+      const restartMessage = (
         background: Job.Background,
-        recovery: Extract<Job.Recovery, { kind: "shell" }>,
-      ) {
+        recovery: Exclude<Job.Recovery, { kind: "subagent" | "peer" | "peer_remote" }>,
+      ) => {
         const state = background.status === "running" ? "cancelled" : background.status
-        const text =
-          background.status === "running"
-            ? "Command cancelled because the server restarted"
-            : state === "completed"
-              ? (background.output ?? "Command completed")
-              : state === "error"
-                ? (background.error ?? "Command failed")
-                : "Command cancelled"
-
-        yield* sessions
-          .synthetic({
-            id: background.notificationID,
-            sessionID: recovery.sessionID,
+        if (recovery.kind === "shell") {
+          const text =
+            background.status === "running"
+              ? "Command cancelled because the server restarted"
+              : state === "completed"
+                ? (background.output ?? "Command completed")
+                : state === "error"
+                  ? (background.error ?? "Command failed")
+                  : "Command cancelled"
+          return {
             description: recovery.command,
             ...ShellResult.notification({
               jobID: background.id,
@@ -124,7 +132,38 @@ export const layer = (options?: Options) =>
               state,
               text,
             }),
-            // Restart notices must not revive idle owners of long-lived shells.
+          }
+        }
+        const body =
+          background.status === "running"
+            ? `Image request for ${recovery.path} was cancelled because the server restarted.`
+            : state === "completed"
+              ? (background.output ?? `Image request finished. Saved image: ${recovery.path} (${recovery.model}).`)
+              : state === "error"
+                ? (background.error ?? `Image request failed for ${recovery.path}.`)
+                : `Image request for ${recovery.path} was cancelled.`
+        return {
+          description: "Image generation",
+          text: ImageNotice.text({ id: background.id, state, body }),
+          metadata: {
+            source: "experimental_image_generate",
+            jobID: background.id,
+            state,
+            path: recovery.path,
+          },
+        }
+      }
+
+      const recoverToolJob = Effect.fnUntraced(function* (
+        background: Job.Background,
+        recovery: Exclude<Job.Recovery, { kind: "subagent" | "peer" | "peer_remote" }>,
+      ) {
+        yield* sessions
+          .synthetic({
+            id: background.notificationID,
+            sessionID: recovery.sessionID,
+            ...restartMessage(background, recovery),
+            // Restart notices must not revive idle owners of long-lived background tools.
             // Interrupted executions resume separately after their notices are admitted.
             resume: false,
           })
@@ -137,11 +176,16 @@ export const layer = (options?: Options) =>
 
       const recoverSubagent = Effect.fnUntraced(function* (
         background: Job.Background,
-        recovery: Extract<Job.Recovery, { kind: "subagent" }>,
+        recovery: Extract<Job.Recovery, { kind: "subagent" | "peer" }>,
         suspended: ReadonlySet<SessionSchema.ID>,
       ) {
         const child = yield* store.get(recovery.childSessionID)
-        if (!child || child.parentID !== recovery.parentSessionID || !(yield* store.get(recovery.parentSessionID))) {
+        // A peer child has no parent link; only its own existence is required.
+        if (
+          !child ||
+          (recovery.kind === "subagent" && child.parentID !== recovery.parentSessionID) ||
+          !(yield* store.get(recovery.parentSessionID))
+        ) {
           yield* jobs.completeBackground(background.notificationID)
           return
         }
@@ -167,7 +211,7 @@ export const layer = (options?: Options) =>
 
         yield* jobs.start({
           id: background.id,
-          type: "subagent",
+          type: recovery.kind,
           title: recovery.description,
           notificationID: background.notificationID,
           recovery,
@@ -189,12 +233,92 @@ export const layer = (options?: Options) =>
         )
       })
 
+      const recoverRemote = Effect.fnUntraced(function* (
+        background: Job.Background,
+        recovery: Extract<Job.Recovery, { kind: "peer_remote" }>,
+        suspended: ReadonlySet<SessionSchema.ID>,
+      ) {
+        // The child row lives on the peer server; only the parent's existence
+        // gates delivery.
+        const parent = yield* store.get(recovery.parentSessionID)
+        if (!parent) {
+          yield* Effect.logWarning("peer_remote recovery dropping job: parent session gone", {
+            parentSessionID: recovery.parentSessionID,
+          })
+          yield* jobs.completeBackground(background.notificationID)
+          return
+        }
+
+        const notify = Effect.fnUntraced(function* (result: Pick<Job.Background, "status" | "output" | "error">) {
+          yield* SubagentCompletion.deliver(sessions, jobs, {
+            ...result,
+            recovery,
+            notificationID: background.notificationID,
+            resume: suspended.has(recovery.parentSessionID) ? false : undefined,
+          }).pipe(Effect.orDie)
+        })
+
+        // The dispatch settled before the restart: deliver the stored outcome
+        // without re-consulting the peer.
+        if (background.status !== "running") {
+          yield* notify(background)
+          return
+        }
+
+        // Re-arm the watcher through the parent's placement so the config
+        // `servers` map resolves as it did at dispatch time.
+        yield* Effect.logInfo("peer_remote dispatch re-arming", {
+          parentSessionID: recovery.parentSessionID,
+          childSessionID: recovery.childSessionID,
+          server: recovery.server,
+        })
+        yield* instances
+          .provide(parent)(
+            Effect.gen(function* () {
+              const peers = yield* PeerServers.Service
+              yield* jobs.start({
+                id: background.id,
+                type: recovery.kind,
+                title: recovery.description,
+                notificationID: background.notificationID,
+                recovery,
+                run: peers.watch(recovery.server, recovery.childSessionID),
+              })
+              yield* jobs.background(background.id)
+              yield* jobs.wait({ id: background.id }).pipe(
+                Effect.flatMap((result) => (result.info ? notify(result.info) : Effect.void)),
+                Effect.forkIn(scope),
+              )
+            }),
+          )
+          .pipe(
+            Effect.catch((error) =>
+              Effect.logError("peer_remote re-arm failed", { error: String(error) }).pipe(
+                Effect.asVoid,
+                Effect.andThen(notify({ status: "error", error: String(error) })),
+              ),
+            ),
+          )
+      })
+
       return Service.of({
         resumeSuspendedSessions: Effect.gen(function* () {
+          // Disposable sessions are never resumed: release crashed-turn claims so
+          // reclamation sweeps them, then delete expired ones before recovery
+          // accounting runs. Peer jobs observing a reclaimed child complete
+          // silently through the existing vanished-child path.
+          yield* store.releaseTemporaryClaims
+          yield* sessions.reapTemporary
           const active = yield* execution.active
           const pending = yield* jobs.pendingBackground
+          if (pending.length > 0)
+            yield* Effect.logInfo("restart recovery sweep", {
+              pending: pending.length,
+              kinds: pending.map((background) => background.recovery.kind).join(","),
+            })
           const children = pending.flatMap((background) =>
-            background.status === "running" && background.recovery.kind === "subagent"
+            background.status === "running" &&
+            (background.recovery.kind === "subagent" || background.recovery.kind === "peer")
               ? [background.recovery.childSessionID]
               : [],
           )
@@ -205,13 +329,19 @@ export const layer = (options?: Options) =>
           yield* store.releaseChildClaims(children)
           yield* Effect.forEach(
             // Admit shell outcomes before a recovered child can start its first model request.
-            pending.toSorted((a, b) => Number(a.recovery.kind === "subagent") - Number(b.recovery.kind === "subagent")),
+            pending.toSorted((a, b) => Number(a.recovery.kind !== "shell") - Number(b.recovery.kind !== "shell")),
             Effect.fnUntraced(function* (background) {
               if ((yield* jobs.get(background.id))?.status === "running") return
               const recovery = background.recovery
-              yield* recovery.kind === "shell"
-                ? recoverShell(background, recovery)
-                : recoverSubagent(background, recovery, suspended)
+              if (recovery.kind === "peer_remote") {
+                yield* recoverRemote(background, recovery, suspended)
+                return
+              }
+              if (recovery.kind === "subagent" || recovery.kind === "peer") {
+                yield* recoverSubagent(background, recovery, suspended)
+                return
+              }
+              yield* recoverToolJob(background, recovery)
             }),
             { discard: true },
           )
@@ -219,11 +349,39 @@ export const layer = (options?: Options) =>
           // Background completion can wake a parent, so inspect local ownership only after recovery.
           const resumed = yield* execution.active
           yield* Effect.forEach(
-            (yield* store.listSuspended()).filter((sessionID) => !resumed.has(sessionID)),
-            (sessionID) =>
-              execution
-                .resume(sessionID)
-                .pipe(Effect.ignore, Effect.forkIn(scope), Effect.when(prepareResume(sessionID))),
+            (yield* store.listSuspendedClaims()).filter((claim) => !resumed.has(claim.sessionID)),
+            Effect.fnUntraced(function* (claim) {
+              // A claim stamped by another boot is only left alone when that
+              // boot still answers: a live foreign owner is draining right now.
+              // A dead, reused-URL, or URL-less owner is adopted under the fence
+              // so this boot's drain passes its step-boundary ownership check.
+              // A claim naming one of MY OWN addresses needs no probe: the
+              // stamping boot died the moment this boot bound that socket, and
+              // a probe would only see my own auth wall and read it as alive —
+              // which would strand my predecessor's Sessions forever.
+              if (Option.isSome(identity) && claim.owner !== undefined && claim.owner !== identity.value.id) {
+                const mine = claim.url !== undefined && (yield* identity.value.urls).includes(claim.url)
+                const alive =
+                  !mine &&
+                  Option.isSome(wakes) &&
+                  claim.url !== undefined &&
+                  (yield* wakes.value.probe(claim.url, claim.owner))
+                if (alive)
+                  return yield* Effect.logInfo("restart sweep leaving claim to live owner", {
+                    sessionID: claim.sessionID,
+                    owner: claim.owner,
+                  })
+                const [url] = yield* identity.value.urls
+                yield* store.seize(
+                  claim.sessionID,
+                  { id: identity.value.id, ...(url === undefined ? {} : { url }) },
+                  claim.owner,
+                )
+              }
+              yield* execution
+                .resume(claim.sessionID)
+                .pipe(Effect.ignore, Effect.forkIn(scope), Effect.when(prepareResume(claim.sessionID)))
+            }),
             { concurrency: "unbounded", discard: true },
           )
           // Async observers consult this set at delivery; later completions wake parents normally.
@@ -236,5 +394,5 @@ export const layer = (options?: Options) =>
 export const node = makeGlobalNode({
   service: Service,
   layer: layer(),
-  deps: [SessionStore.node, SessionExecution.node, Bus.node, Job.node, Session.node],
+  deps: [SessionStore.node, SessionExecution.node, Instance.node, Bus.node, Job.node, Session.node, ServerIdentity.node, SessionWakeForward.node],
 })

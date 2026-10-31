@@ -2,7 +2,11 @@ export * as ServerProcess from "./process"
 
 import { NodeHttpServer } from "@effect/platform-node"
 import { Bus } from "@opencode/core/bus"
+import { KV } from "@opencode/core/kv"
+import { ServerIdentity } from "@opencode/core/server-identity"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
+import { SessionWakeForward } from "@opencode/core/session/wake-forward"
+import { Schedule } from "@opencode/core/schedule"
 import { InstallationEvent } from "@opencode/schema/installation-event"
 import { hasPtyConnectTicketURL } from "@opencode/protocol/groups/pty"
 import { hasPersistentPtyConnectTicketURL } from "@opencode/protocol/groups/persistent-pty"
@@ -105,11 +109,34 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
       ).pipe(Layer.provideMerge(NodeHttpServer.layerHttpServices)),
       applicationScope,
     )
-    if (lifecycle) {
-      yield* installRestartContinuity(Context.get(context, SessionRestart.Service)).pipe(
-        Effect.provideService(Scope.Scope, applicationScope),
-      )
-    }
+    // Announce this boot's addresses before any recovery or serving: claims
+    // stamped from now on carry a URL that peer servers can wake this process
+    // on, and the restart sweep's ownership probes read the same identity.
+    const identity = Context.get(context, ServerIdentity.Service)
+    yield* identity.announce(urls())
+    // Register the serving URLs' credential in the shared KV store so peer
+    // servers on this database can reach the wake and interrupt endpoints with
+    // auth. The shared database is the trust domain: it already holds every
+    // Session's contents for exactly these servers. Stale rows from dead boots
+    // are inert — their credentials only ever meet 401s, the same outcome as
+    // no registration at all.
+    yield* Effect.forEach(
+      urls(),
+      (url) =>
+        Context.get(context, KV.Service).set(SessionWakeForward.serverKey(url), {
+          boot: identity.id,
+          credential: password,
+        }),
+      { discard: true },
+    )
+    // Restart continuity is a property of any durable database, not of managed-service
+    // lifecycle: a crashed foreground `serve` must replay orphaned turns exactly like
+    // the service or an embedded runtime. The sweep is a no-op when nothing is suspended.
+    yield* installRestartContinuity(Context.get(context, SessionRestart.Service)).pipe(
+      Effect.provideService(Scope.Scope, applicationScope),
+    )
+    // Schedules fire from any server process (`service`, `opencode serve`, or `--standalone`); the table holds all their state.
+    yield* Effect.forkIn(Context.get(context, Schedule.Service).run, applicationScope)
     yield* Ref.set(application, Option.some(Context.get(context, HttpRouter.HttpRouter).asHttpEffect()))
     yield* status.ready
     const bus = Context.get(context, Bus.Service)

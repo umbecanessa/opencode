@@ -5,6 +5,7 @@ import { BackgroundServiceState } from "./background-service-state"
 import { cleanStages } from "./cli-stages"
 import { keptStages, serviceVersion, shouldRetryEnsure } from "./cli-version"
 import { DesktopCli } from "./desktop-cli"
+import { PeerServers } from "./peer-servers"
 import { SidecarCredentials } from "./sidecar-credentials"
 import { sidecarProbe } from "./sidecar-probe"
 
@@ -116,6 +117,8 @@ const connect = Effect.fn("BackgroundService.connect")(function* (mode: "initial
 
   const ready = { url: url.origin, password: service.auth.password } satisfies SidecarCredentials.Data
   SidecarCredentials.set(ready)
+  // A sidecar that just became reachable (or rotated its password) re-gets the retained peer list.
+  runFork(PeerServers.republish())
 
   return ready
 })

@@ -16,11 +16,13 @@ import { PersistentPty } from "@opencode/core/persistent-pty"
 import { Project } from "@opencode/core/project"
 import { Worktree } from "@opencode/core/worktree"
 import { Session } from "@opencode/core/session"
+import { SessionExecution } from "@opencode/core/session/execution"
 import { Instance } from "@opencode/core/instance/service"
 import { SessionTransfer } from "@opencode/core/session/transfer"
 import { InstructionEntry } from "@opencode/core/session/instruction-entry"
 import { ShellSelect } from "@opencode/core/shell/select"
 import { Job } from "@opencode/core/job"
+import { KV } from "@opencode/core/kv"
 import { Mcp } from "@opencode/core/mcp/index"
 import { Global } from "@opencode/util/global"
 import { FSUtil } from "@opencode/util/fs-util"
@@ -28,11 +30,16 @@ import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { LocationActivity } from "@opencode/core/location-activity"
 import { ModelsDev } from "@opencode/core/models-dev"
+import { PeerServers } from "@opencode/core/peer-servers"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
+import { Schedule } from "@opencode/core/schedule"
 import { PluginUpdate } from "@opencode/core/plugin/update"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { WellKnown } from "@opencode/core/wellknown"
 import { Workspace } from "@opencode/core/workspace"
+import { WorkspaceDriver } from "@opencode/core/workspace/driver"
+import { WorkspaceDriverSsh } from "@opencode/core/workspace/driver-ssh"
+import { ServerIdentity } from "@opencode/core/server-identity"
 import { Watcher } from "@opencode/core/filesystem/watcher"
 import { FileWatch } from "@opencode/core/filesystem/file-watch"
 import { HttpRouter } from "effect/http"
@@ -55,6 +62,7 @@ const applicationServiceNodes = [
   Global.node,
   FSUtil.node,
   Database.node,
+  KV.node,
   Bus.node,
   EventLogger.node,
   httpClient,
@@ -63,6 +71,7 @@ const applicationServiceNodes = [
   Project.sweepNode,
   Worktree.node,
   Session.node,
+  SessionExecution.node,
   Instance.node,
   SessionTransfer.node,
   InstructionEntry.node,
@@ -74,9 +83,12 @@ const applicationServiceNodes = [
   Credential.node,
   WellKnown.node,
   ServerPairing.node,
+  PeerServers.registryNode,
   LocationServiceMap.node,
   LocationActivity.node,
   SessionRestart.node,
+  ServerIdentity.node,
+  Schedule.node,
   Workspace.node,
   FileWatch.node,
 ] as const
@@ -137,6 +149,9 @@ function makeRoutes<AuthError, AuthServices>(
     ),
     InstructionDiscovery.node.replace(InstructionDiscovery.configured({ project: options.config?.project })),
     ShellSelect.node.replace(ShellSelect.configured({ gitbash: options.windows?.gitbash })),
+    // The ssh workspace placement driver (config `workspaces`); the default
+    // production registry is otherwise empty.
+    WorkspaceDriver.node.replace(WorkspaceDriverSsh.node),
     Mcp.node.replace(
       Mcp.configured({
         clientInfo: {
@@ -178,7 +193,12 @@ function makeRoutes<AuthError, AuthServices>(
             WellKnown.Service,
           )(context),
         ),
-        ServerInfo.layer(serviceURLs, Context.get(context, Global.Service).tmp, options.app),
+        ServerInfo.layer(
+          serviceURLs,
+          Context.get(context, Global.Service).tmp,
+          options.app,
+          Option.getOrUndefined(Context.getOption(context, ServerIdentity.Service))?.id,
+        ),
       )
       const api = HttpApiBuilder.layer(Api, { openapiPath: "/openapi.json" }).pipe(
         Layer.provide(handlers.pipe(Layer.provide(services), Layer.provide(Layer.succeed(CorsConfig, options)))),

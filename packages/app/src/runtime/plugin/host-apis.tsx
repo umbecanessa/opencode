@@ -16,6 +16,7 @@ import { useDialog } from "@opencode/ui/context/dialog"
 import { useTheme } from "@opencode/ui/theme/context"
 import { toaster } from "@opencode/ui/toast"
 import { base64Encode } from "@opencode/util/encode"
+import { uuid } from "@opencode/util/uuid"
 import {
   type App,
   type Layout,
@@ -537,7 +538,7 @@ export function createPluginAttachment(apis: HostApis) {
         return live().data
       },
       get local() {
-        return ServerConnection.local(listed())
+        return servers.local(listed())
       },
       get builtin() {
         return ServerConnection.builtin(listed())
@@ -1025,7 +1026,7 @@ export function createPluginAttachment(apis: HostApis) {
       id: error ? settings.sounds.errors() : settings.sounds.agent(),
     }))
 
-    const key = `plugin:${plugin}\0${options.id ?? crypto.randomUUID()}`
+    const key = `plugin:${plugin}\0${options.id ?? uuid()}`
     const result = { notification: false, sound: false }
     const session = options.session
 

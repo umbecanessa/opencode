@@ -1,5 +1,6 @@
 import { SessionMessage } from "@opencode/schema/session-message"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { ConfigServer } from "@opencode/schema/config/server"
 import { PromptInput } from "@opencode/schema/prompt-input"
 import { Session } from "@opencode/schema/session"
 import { SessionStats } from "@opencode/schema/session-stats"
@@ -172,6 +173,10 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           location: Location.PublicRef.pipe(Schema.optional),
           metadata: Session.Metadata.pipe(Schema.optional),
           permissions: Permission.Ruleset.pipe(Schema.optional),
+          temporary: Schema.Boolean.pipe(Schema.optional).annotate({
+            description:
+              "Create a disposable spot-task session: omitted from default listings and garbage-collected after terminal idle.",
+          }),
         }),
         success: Schema.Struct({ data: PublicSessionInfo }),
         error: SessionNotFoundError,
@@ -224,7 +229,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "session.active",
           summary: "List active sessions",
           description:
-            "Retrieve foreground Session drains currently owned by this OpenCode process. Sessions absent from the result are inactive.",
+            "Retrieve foreground Session drains currently owned by this OpenCode process, plus Sessions held by an execution claim on a server sharing its database. Sessions absent from the result are inactive.",
         }),
       ),
     )
@@ -471,6 +476,20 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
       ),
     )
     .add(
+      HttpApiEndpoint.post("session.wake", "/api/experimental/session/:sessionID/wake", {
+        params: { sessionID: Session.ID },
+        success: HttpApiSchema.NoContent,
+        error: [SessionNotFoundError, UnknownError],
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "experimental.session.wake",
+          summary: "Wake session",
+          description:
+            "Experimental: may change without compatibility guarantees. Schedules execution for newly recorded session work on the server that owns the session's execution claim.",
+        }),
+      ),
+    )
+    .add(
       HttpApiEndpoint.post("session.revert.stage", "/api/session/:sessionID/revert/stage", {
         params: { sessionID: Session.ID },
         payload: Schema.Struct({ messageID: SessionMessage.ID, files: Schema.Boolean.pipe(Schema.optional) }),
@@ -665,7 +684,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
         error: SessionNotFoundError,
       }).annotateMerge(
         OpenApi.annotations({
-          identifier: "session.log",
+          identifier: "experimental.session.log",
           summary: "Read the session log",
           description:
             "Experimental durable session event log. Reads events after an exclusive aggregate sequence and continues with live events when follow=true.",
@@ -821,6 +840,24 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "session.view",
           summary: "View session",
           description: "Mark the idle transition observed by the viewer as viewed.",
+        }),
+      ),
+    )
+    .add(
+      HttpApiEndpoint.put("peer.servers", "/api/experimental/peer-servers", {
+        payload: Schema.Struct({
+          servers: Schema.Record(Schema.String, ConfigServer.Info).annotate({
+            description:
+              "Peer OpenCode servers the session tools may dispatch to. Replaces the whole runtime map; in memory only, and config `servers` keys of the same name win.",
+          }),
+        }),
+        success: HttpApiSchema.NoContent,
+      }).annotateMerge(
+        OpenApi.annotations({
+          identifier: "peer.servers",
+          summary: "Register peer servers",
+          description:
+            "Replace the runtime-registered peer OpenCode server map used by cross-server session dispatch. Entries live in memory only and are forgotten on process exit.",
         }),
       ),
     )

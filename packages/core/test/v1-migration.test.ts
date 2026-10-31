@@ -66,6 +66,7 @@ const session = (
   model: null,
   time_created: 1,
   time_updated: 2,
+  time_busy: null,
   time_idle: null,
   time_viewed: null,
   idle_outcome: null,
@@ -73,6 +74,10 @@ const session = (
   time_archived: null,
   time_suspended: null,
   resume_attempts: 0,
+  temporary: false,
+  execution_owner: null,
+  execution_url: null,
+  execution_fence: 0,
   ...overrides,
 })
 

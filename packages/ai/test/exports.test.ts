@@ -1,30 +1,22 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import {
+  ai,
   AIClient,
   AIError,
-  Decision,
   DecisionClient,
   Generation,
-  Image,
   ImageClient,
   LanguageModel,
-  LLM,
   LLMClient,
   Media,
-  Speech,
-  SpeechClient,
-  SpeechEvent,
-  TranscriptionClient,
-  Video,
-  VideoClient,
 } from "@opencode/ai/effect"
+import { Speech, SpeechClient, SpeechEvent, TranscriptionClient, Video, VideoClient } from "@opencode/ai/experimental"
 import { Route, Protocol, RequestExecutor, WebSocketTransport } from "@opencode/ai/route"
 import {
   Alibaba,
   AssemblyAI,
   Baseten,
-  BlackForestLabs,
   Cartesia,
   CloudflareAIGateway,
   CloudflareWorkersAI,
@@ -32,7 +24,6 @@ import {
   DeepSeek,
   DigitalOcean,
   ElevenLabs,
-  Fal,
   Fireworks,
   Google,
   Meta,
@@ -41,9 +32,7 @@ import {
   OpenAI,
   OpenAICompatible,
   OpenRouter,
-  Replicate,
   Runway,
-  Stability,
   TypeSafeAI,
   VercelAIGateway,
   XAI,
@@ -75,13 +64,13 @@ describe("public exports", () => {
   })
 
   test("root exposes app-facing runtime APIs", () => {
-    expect(LLM.request).toBeFunction()
+    expect(ai.request).toBeFunction()
     expect(LLMClient.Service).toBeFunction()
     expect(LLMClient.layer).toBeDefined()
     expect(AIError).toBeFunction()
     expect(LanguageModel.make).toBeFunction()
     expect(Media.bytes).toBeFunction()
-    expect(Image.generate).toBeFunction()
+    expect(ai.image.generate).toBeFunction()
     expect(Video.start).toBeFunction()
     expect(Video.resume).toBeFunction()
     expect(VideoClient.layer).toBeDefined()
@@ -92,7 +81,7 @@ describe("public exports", () => {
     expect(Generation).toBeFunction()
     expect(TestLLM.testLayer).toBeFunction()
     expect(TestLLM.Test.of).toBeFunction()
-    expect(Decision.generate).toBeFunction()
+    expect(ai.decision.generate).toBeFunction()
     expect(DecisionClient.layer).toBeDefined()
     expect(DecisionClient.fetchLayer).toBeDefined()
   })
@@ -164,18 +153,6 @@ describe("public exports", () => {
     expect(Google.provider.image).toBe(Google.image)
     expect(XAI.configure({ apiKey: "fixture" }).image("grok-imagine-image").route.id).toBe("xai-images")
     expect(XAI.provider.image).toBe(XAI.image)
-    expect(Fal.configure({ apiKey: "fixture" }).image("fal-ai/flux/dev").route.id).toBe("fal-images")
-    expect(Fal.provider.image).toBe(Fal.image)
-    expect(BlackForestLabs.configure({ apiKey: "fixture" }).image("flux-2-pro").route.id).toBe("bfl-images")
-    expect(BlackForestLabs.provider.image).toBe(BlackForestLabs.image)
-    expect(Replicate.configure({ apiKey: "fixture" }).image("black-forest-labs/flux-schnell").route.id).toBe(
-      "replicate-images",
-    )
-    expect(Replicate.provider.image).toBe(Replicate.image)
-    expect(Stability.configure({ apiKey: "fixture" }).image("sd3.5-large").route.id).toBe("stability-images")
-    expect(Stability.provider.image).toBe(Stability.image)
-    expect(Stability.configure({ apiKey: "fixture" }).upscale().route.id).toBe("stability-upscale")
-    expect(Stability.provider.upscale).toBe(Stability.upscale)
     expect(Meta.configure({ apiKey: "fixture" }).image("muse-image").route.id).toBe("meta-images")
     expect(Meta.provider.image).toBe(Meta.image)
     expect(ZAI.configure({ apiKey: "fixture" }).image("glm-image").route.id).toBe("zai-images")
@@ -196,8 +173,6 @@ describe("public exports", () => {
     expect(XAI.provider.video).toBe(XAI.video)
     expect(Google.configure({ apiKey: "fixture" }).video("veo-3.1-generate-preview").route.id).toBe("google-video")
     expect(Google.provider.video).toBe(Google.video)
-    expect(Fal.configure({ apiKey: "fixture" }).video("fal-ai/veo3.1").route.id).toBe("fal-video")
-    expect(Fal.provider.video).toBe(Fal.video)
     expect(Runway.configure({ apiKey: "fixture" }).video("gen4.5").route.id).toBe("runway-video")
     expect(Runway.provider.video).toBe(Runway.video)
     expect(OpenAI.configure({ apiKey: "fixture" }).speech("gpt-4o-mini-tts").route.id).toBe("openai-speech")

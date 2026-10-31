@@ -1619,7 +1619,6 @@ it.live("discovers and reads MCP resources through Code Mode", () =>
         'return await tools.opencode.read_mcp_resource({ server: "resources", uri: "docs://gone" })',
       )
       expect(gone.metadata?.error).toBe(true)
-      expect(gone.output.output).toContain("Unable to read MCP resource resources:docs://gone")
       expect(gone.output.output).toContain("Resource not found")
       const missing = yield* run(
         'return await tools.opencode.read_mcp_resource({ server: "missing", uri: "docs://readme" })',
@@ -1880,6 +1879,39 @@ test("isolates nested configured MCP mutations and reconciles them", async () =>
         expect(config.headers?.Authorization).toBe("original")
         expect(published.filter((type) => type === McpEvent.StatusChanged.type)).toHaveLength(2)
       }).pipe(Effect.provide(resourceMcpLayer(config, undefined, undefined, { published }))),
+    ),
+  )
+})
+
+test("publishes MCP changes while live but not while the location shuts down", async () => {
+  const published: string[] = []
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const server = yield* resourceServer({ listChanged: true })
+        const scope = yield* Scope.make()
+        const context = yield* Layer.buildWithScope(
+          resourceMcpLayer(server.url, undefined, undefined, { published }),
+          scope,
+        )
+        yield* Effect.gen(function* () {
+          const service = yield* Mcp.Service
+          expect(yield* settled(service)).toEqual({ status: "connected" })
+          published.length = 0
+          yield* Effect.promise(server.sendResourceListChanged)
+          yield* Effect.sync(() => published).pipe(
+            Effect.filterOrFail(
+              (types) => types.includes(McpEvent.ResourcesChanged.type),
+              () => new Error("resource change was not published"),
+            ),
+            Effect.retry({ times: 200, schedule: Schedule.spaced("10 millis") }),
+          )
+        }).pipe(Effect.provide(context))
+        published.length = 0
+        // Location shutdown closes plugin registrations under State.shutdown, so config does not reconcile.
+        yield* State.shutdown(Scope.close(scope, Exit.void))
+        expect(published.filter((type) => type.startsWith("mcp."))).toEqual([])
+      }),
     ),
   )
 })
@@ -2684,7 +2716,14 @@ it.effect("does not call MCP when permission is blocked", () =>
   Effect.gen(function* () {
     calls = 0
     assertion = yield* Deferred.make<Permission.AssertInput>()
-    decision = Effect.fail(new Permission.BlockedError({ rules: [], permission: "demo_search", resources: ["*"] }))
+    decision = Effect.fail(
+      new Permission.BlockedError({
+        rules: [],
+        permission: "demo_search",
+        resources: ["*"],
+        reason: "Search is disabled in this workspace",
+      }),
+    )
     const registry = yield* Tool.Service
     const registration = yield* McpTool.Service
     yield* registration.flush
@@ -2701,10 +2740,55 @@ it.effect("does not call MCP when permission is blocked", () =>
         input: { code: "return await tools.demo.search({})" },
       },
     })
-    expect(execution.content).toEqual([{ type: "text", text: "Unable to execute demo_search" }])
+    expect(execution.content).toEqual([{ type: "text", text: "Search is disabled in this workspace" }])
     expect(execution.metadata).toEqual({
       toolCalls: [{ tool: "demo.search", status: "error" }],
       error: true,
+    })
+    expect(
+      yield* executeTool(registry, {
+        sessionID: Session.ID.make("ses_mcp_blocked"),
+        ...toolIdentity,
+        call: { type: "tool-call", id: "call_mcp_blocked_direct", name: "direct_lookup", input: {} },
+      }),
+    ).toEqual({
+      status: "error",
+      error: { type: "permission.rejected", message: "Search is disabled in this workspace" },
+    })
+    expect(calls).toBe(0)
+  }),
+)
+
+it.effect("returns permission feedback instead of calling MCP", () =>
+  Effect.gen(function* () {
+    calls = 0
+    assertion = yield* Deferred.make<Permission.AssertInput>()
+    decision = Effect.fail(new Permission.CorrectedError({ feedback: "Search the docs folder instead" }))
+    const registry = yield* Tool.Service
+    const registration = yield* McpTool.Service
+    yield* registration.flush
+    const toolSet = yield* registry.snapshot()
+
+    const execution = yield* toolSet.execute({
+      sessionID: Session.ID.make("ses_mcp_corrected"),
+      ...toolIdentity,
+      call: {
+        type: "tool-call",
+        id: "call_mcp_corrected",
+        name: "execute",
+        input: { code: "return await tools.demo.search({})" },
+      },
+    })
+    expect(execution.content).toEqual([{ type: "text", text: "Search the docs folder instead" }])
+    expect(
+      yield* executeTool(registry, {
+        sessionID: Session.ID.make("ses_mcp_corrected"),
+        ...toolIdentity,
+        call: { type: "tool-call", id: "call_mcp_corrected_direct", name: "direct_lookup", input: {} },
+      }),
+    ).toEqual({
+      status: "error",
+      error: { type: "permission.rejected", message: "Search the docs folder instead" },
     })
     expect(calls).toBe(0)
   }),
@@ -2738,7 +2822,7 @@ for (const modern of [false, true]) {
       }).pipe(
         Effect.provide(
           resourceMcpLayer(server.url, undefined, undefined, {
-            policies: [{ action: "integration.use", resource: "mcp:*", effect: "deny" }],
+            policies: [{ action: "mcp.use", resource: "*", effect: "deny" }],
           }),
         ),
       )
@@ -2762,7 +2846,7 @@ for (const source of ["config", "organization"] as const) {
               mcp: new ConfigMCP.Info({
                 servers: { resources: new ConfigMCP.Remote({ type: "remote", url: server.url, oauth: false }) },
               }),
-              policies: [{ action: "integration.use", resource: "mcp:*", effect }],
+              policies: [{ action: "mcp.use", resource: "*", effect }],
             }),
           })
         yield* test.setEntries([document("allow")])
@@ -2772,7 +2856,7 @@ for (const source of ["config", "organization"] as const) {
           expect((yield* service.tools()).length).toBeGreaterThan(0)
           if (source === "config") yield* test.setEntries([document("deny")])
           if (source === "organization")
-            yield* setOrganizationPolicy([{ action: "integration.use", resource: "mcp:*", effect: "deny" }])
+            yield* setOrganizationPolicy([{ action: "mcp.use", resource: "*", effect: "deny" }])
           yield* PubSub.publish(updates, { type: Event.Updated.type })
           yield* service.servers().pipe(
             Effect.filterOrFail(

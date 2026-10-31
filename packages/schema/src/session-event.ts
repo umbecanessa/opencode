@@ -52,6 +52,8 @@ export const Created = Event.durable({
     /** Host-supplied annotations resolved at creation, including any inherited from a parent. */
     metadata: SessionMetadata.pipe(optional),
     permissions: Permission.Ruleset.pipe(optional),
+    /** Disposable spot-task session: never listed by default and garbage-collected after terminal idle. */
+    temporary: Schema.Boolean.pipe(optional),
     version: Schema.String,
   },
 })

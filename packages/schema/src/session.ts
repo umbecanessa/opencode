@@ -43,9 +43,19 @@ export const Info = Schema.Struct({
   tokens: TokenUsage.Info,
   /** Outcome of the last completed execution, recorded at `time.idle`. Absent until a run reaches a terminal transition. */
   outcome: Schema.Literals(["succeeded", "failed", "interrupted"]).pipe(optional),
+  /**
+   * Disposable session created for a spot task: omitted from session listings
+   * unless the query asks for temporary sessions, excluded from restart
+   * resume claims, and hard-deleted after terminal idle once the retention
+   * window passes. Behaves like any other session while alive.
+   */
+  temporary: Schema.Boolean.pipe(optional),
   time: Schema.Struct({
     created: DateTimeUtcFromMillis,
     updated: DateTimeUtcFromMillis,
+    /** Start of the most recent execution. While it runs, `idle` still holds the previous execution's end. Resuming after a restart starts a new execution. */
+    busy: DateTimeUtcFromMillis.pipe(optional),
+    /** End of the most recent completed execution. */
     idle: DateTimeUtcFromMillis.pipe(optional),
     viewed: DateTimeUtcFromMillis.pipe(optional),
     archived: DateTimeUtcFromMillis.pipe(optional),
@@ -94,6 +104,18 @@ const ListFilterFields = {
     .annotate({
       description:
         "Filter by archive state. Use true to return only archived sessions or false to exclude them. Omit to include both.",
+    })
+    .pipe(Schema.optional),
+  temporary: Schema.Literals(["true", "false"])
+    .pipe(
+      Schema.decodeTo(Schema.Boolean, {
+        decode: SchemaGetter.transform((value) => value === "true"),
+        encode: SchemaGetter.transform((value): "true" | "false" => (value ? "true" : "false")),
+      }),
+    )
+    .annotate({
+      description:
+        "Filter by temporary state. Temporary sessions are disposable spot-task sessions. Omit to exclude them, or use true to return only temporary sessions.",
     })
     .pipe(Schema.optional),
 }

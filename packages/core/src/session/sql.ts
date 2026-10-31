@@ -23,6 +23,7 @@ type SessionMessageData = DistributiveOmit<
   Exclude<(typeof SessionMessage.Info)["Encoded"], { readonly type: "user" }> | (typeof SessionStored.User)["Encoded"],
   "type" | "id"
 >
+export type SessionPartData = SessionMessage.AssistantContentEncoded
 
 export const SessionTable = sqliteTable(
   "session_v2",
@@ -62,6 +63,7 @@ export const SessionTable = sqliteTable(
       variant?: string
     }>(),
     ...Timestamps,
+    time_busy: integer(),
     time_idle: integer(),
     time_viewed: integer(),
     idle_outcome: text().$type<NonNullable<Session.Info["outcome"]>>(),
@@ -70,6 +72,16 @@ export const SessionTable = sqliteTable(
     /** The execution claim timestamp (historical column name; see SessionStore.claim). */
     time_suspended: integer(),
     resume_attempts: integer().notNull().default(0),
+    /** Server-boot id that acquired the current claim; null when no clustering identity stamped it. */
+    execution_owner: text(),
+    /** URL the claim owner advertised for wake forwarding, when it knew one. */
+    execution_url: text(),
+    /** Monotonic per-acquisition fencing counter; strictly increases on every claim or seize. */
+    execution_fence: integer().notNull().default(0),
+    /** Disposable spot-task session: omitted from default listings and garbage-collected after terminal idle. */
+    temporary: integer({ mode: "boolean" })
+      .notNull()
+      .default(false),
   },
   (table) => [
     index("session_v2_project_idx").on(table.project_id),
@@ -99,6 +111,29 @@ export const SessionMessageTable = sqliteTable(
     index("session_message_session_type_seq_idx").on(table.session_id, table.type, table.seq),
     index("session_message_session_time_created_id_idx").on(table.session_id, table.time_created, table.id),
     index("session_message_time_created_idx").on(table.time_created),
+  ],
+)
+
+export const SessionPartTable = sqliteTable(
+  "session_part",
+  {
+    message_id: text()
+      .$type<SessionMessage.ID>()
+      .notNull()
+      .references(() => SessionMessageTable.id, { onDelete: "cascade" }),
+    session_id: text()
+      .$type<SessionSchema.ID>()
+      .notNull()
+      .references(() => SessionTable.id, { onDelete: "cascade" }),
+    ordinal: integer().notNull(),
+    type: text().$type<SessionMessage.AssistantContent["type"]>().notNull(),
+    call_id: text(),
+    ...Timestamps,
+    data: text({ mode: "json" }).notNull().$type<SessionPartData>(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.message_id, table.ordinal] }),
+    index("session_part_session_message_idx").on(table.session_id, table.message_id, table.ordinal),
   ],
 )
 

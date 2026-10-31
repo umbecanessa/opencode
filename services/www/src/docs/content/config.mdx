@@ -363,10 +363,12 @@ Control automatic context compaction and how much recent context it preserves.
     "keep": {
       "tokens": 15000,
     },
-    "buffer": 20000,
+    "buffer": "15%",
   },
 }
 ```
+
+`buffer` is the share of the model's context window kept free before automatic compaction starts.
 
 Local summaries remain the default. Opt into native provider compaction for both
 automatic and manual requests with a provider or model policy:
@@ -473,6 +475,48 @@ context.
 ```
 
 See the [references guide](/references) for shorthand, visibility, and path resolution.
+
+### Servers
+
+Name peer OpenCode servers that the session coordination tools may act against.
+Each entry has the server's `url` and, when the peer requires authentication,
+its `credential`, sent as the HTTP Basic password with username `opencode`.
+
+```jsonc
+{
+  "servers": {
+    "lab": {
+      "url": "http://192.168.1.20:4096",
+      "credential": "the-peer-server-password",
+    },
+  },
+}
+```
+
+See [session coordination](/session-coordination#cross-server-dispatch) for
+dispatch, permissions, and the desktop's runtime-registered servers.
+
+### Workspaces
+
+Name remote machines that sessions can be placed on. Each entry connects over
+ssh with the local `ssh` binary, so `~/.ssh/config` aliases work; `directory`
+is the project root ON THE REMOTE HOST.
+
+```jsonc
+{
+  "workspaces": {
+    "buildbox": {
+      "type": "ssh",
+      "host": "build.example.com",
+      "user": "ana",
+      "directory": "/home/ana/projects/app",
+    },
+  },
+}
+```
+
+See [session coordination](/session-coordination#native-placement-ssh-workspaces)
+for placement behavior, permissions, and execution-over-ssh limits.
 
 ### Worktrees
 
@@ -625,8 +669,8 @@ All experimental settings live under the `experimental` key:
   "experimental": {
     "todo": true,
     "subagent_depth": 2,
-    "portable_shell_scanner": true,
     "background_compaction": true,
+    "image_generate": { "model": "openai/gpt-image-2" },
     "location_idle_timeout": "4 hours",
   },
 }
@@ -641,11 +685,6 @@ Set `todo` to `true` to give agents a `todowrite` tool for tracking multi-step w
 `subagent_depth` sets how deeply subagents can start their own subagents. Defaults to `1`, so a subagent cannot
 start another subagent.
 
-### Portable shell scanner
-
-Set `portable_shell_scanner` to `true` to replace the default tree-sitter shell scanner used by permission checks.
-Defaults to `false`. See [Permissions](/permissions#scanner) for how it behaves.
-
 ### Background compaction
 
 Set `background_compaction` to `true` to write the compaction summary in the background before it is needed, so
@@ -656,6 +695,22 @@ automatic compaction doesn't pause the session. Defaults to `false`. See
 {
   "experimental": {
     "background_compaction": true,
+  },
+}
+```
+
+### Image generation
+
+`image_generate` sets the default model for the [`experimental_image_generate`](/tools#image-generate) tool, as
+`providerID/modelID`, optionally with `#variant`. When that model isn't available or can't handle a request, OpenCode
+picks another image model automatically.
+
+```jsonc
+{
+  "experimental": {
+    "image_generate": {
+      "model": "openai/gpt-image-2",
+    },
   },
 }
 ```

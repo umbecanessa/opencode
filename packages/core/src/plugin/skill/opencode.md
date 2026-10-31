@@ -244,6 +244,183 @@ Use the [Effect SDK guide](https://opencode.ai/v2/docs/build/sdk/effect) for
 Effect applications. For Cloudflare Durable Objects, use the
 [Cloudflare SDK guide](https://opencode.ai/v2/docs/build/sdk/cloudflare).
 
+## Session coordination
+
+Beyond its own conversation and `subagent` children, an orchestrating agent can
+coordinate other sessions on the same OpenCode server, or on peer servers from
+the config `servers` map, through the built-in `opencode_session_*` tools.
+These are peer sessions: independent top-level
+main-agent sessions, not subagent children, with no parent link back to the
+spawner.
+
+- `opencode_session_list` — recent sessions with title, agent, model,
+  directory, whether a run is active, and the last outcome. Use it to find a
+  session the user refers to without an ID. Temporary sessions are omitted
+  unless you pass `temporary: true`.
+- `opencode_session_spawn` — create a new top-level session and run a prompt
+  in it. Accepts `agent` (any agent, including primary agents), `model`
+  (`providerID/modelID[#variant]`), `directory` (another project directory),
+  `workspace` (a configured ssh workspace), `background`, and `temporary`. The
+  spawned session starts with no context, so the prompt must contain everything
+  it needs. Prefer the `subagent` tool for delegated work inside your own
+  project; use spawning for standalone main-agent work or cross-project work.
+- `opencode_session_send` — a follow-up prompt to an existing session by ID,
+  reusing everything it already knows. `delivery: "steer"` interrupts at the
+  next safe boundary; `delivery: "queue"` parks it until the session would go
+  idle. No completion notification arrives for these messages.
+- `opencode_session_stop` — interrupt a session's active execution. History
+  stays intact and the session remains continuable with `session_send`.
+- `opencode_session_wait` — bounded join: wait for a session to go idle and
+  report its outcome. Prefer background spawning instead of polling.
+
+Foreground spawning blocks until the session goes idle and returns its final
+text. With `background: true` the tool returns immediately and a
+`<peer sessionID=... state=...>` completion message is added to the
+conversation when it finishes — including across a server restart. Never
+sleep, poll, or ask the peer for status before that message arrives.
+
+Temporary sessions (`temporary: true` on spawn) are disposable spot tasks:
+they never appear in session listings or user history, default to stricter
+permissions (no edits, no subagents, no further peer spawning), and are
+deleted about a day after they finish. A session-not-found result from
+`session_send` may be an expired temporary session; spawn a fresh one with
+the needed context instead of retrying.
+
+Peer coordination is gated by the `session` permission action, which defaults
+to `ask`. For `session_spawn` the resource is the spawned agent's name; for
+the other tools it is the target session ID.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "session": {
+      "*": "ask",
+      "general": "allow"
+    }
+  }
+}
+```
+
+The example lets the agent spawn the `general` agent as a peer without
+prompting while other agents still ask. Denying `session` hides the tools
+entirely. Built-in subagents (`general`, `explore`) cannot coordinate peers;
+peer coordination is an orchestrator-level capability.
+
+### Cross-server dispatch
+
+The config `servers` map names peer OpenCode servers the tools may act on.
+Each entry has the server's `url` and, when the peer requires authentication,
+its `credential` (sent as the HTTP Basic password with username `opencode`).
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "servers": {
+    "lab": {
+      "url": "http://192.168.1.20:4096",
+      "credential": "the-peer-server-password"
+    }
+  }
+}
+```
+
+With servers configured, all five `opencode_session_*` tools accept a `server`
+parameter naming one of them, and act against that machine instead of this
+one: `session_list` lists its sessions, `session_spawn` dispatches a whole
+task there, `session_send`, `session_stop`, and `session_wait` address its
+sessions by ID. Cross-server calls gate on a separate `server` permission
+action (resource is the server name) which also defaults to `ask`; the local
+`session` permission does not apply to them.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "server": {
+      "lab": "allow"
+    }
+  }
+}
+```
+
+Remote dispatch supports both run modes: by default the tool blocks until the
+remote session goes idle and returns its final text; with `background: true`
+the dispatch returns immediately and a `<peer>` completion message arrives when
+the remote session finishes — do not sleep or poll before that message.
+`directory` does not apply with `server` (the session runs in the peer's own
+project location). Dispatched sessions remember their placement: later
+`session_send`, `session_stop`, and `session_wait` calls route to the peer by
+session ID alone, without the `server` parameter; the placement is dropped if
+the peer reports the session gone. A dispatched remote session with no client
+attached to the peer server has nowhere to surface permission asks, so the peer
+should be configured to run such work unattended. An unknown server name fails
+with the list of configured servers so you can correct it.
+
+Besides config keys, the desktop app registers its own remote servers at
+runtime — the SSH and WSL tunnels from its server list (named `ssh:<id>` and
+`wsl:<distro>`), plus servers added manually by URL. Registered names work in
+the `server` parameter exactly like config keys; they live only in memory, and
+a config key of the same name wins. When peer servers are available your
+system prompt lists their names.
+
+### Native placement (ssh workspaces)
+
+The config `workspaces` map names remote machines sessions can be placed on.
+Each entry has `type: "ssh"`, a `host` resolved by the local ssh binary (so
+`~/.ssh/config` aliases work), optional `port`, `user`, and `identity` (a
+private key file), and a `directory` — the project root ON THE REMOTE HOST.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "workspaces": {
+    "buildbox": {
+      "type": "ssh",
+      "host": "build.example.com",
+      "user": "ana",
+      "directory": "/home/ana/projects/app"
+    }
+  }
+}
+```
+
+`session_spawn` accepts a `workspace` parameter naming one of them. The
+session row stays on THIS server — listing, sending, stopping, and waiting
+work exactly as with local sessions — but its shell and file tools execute on
+the remote host inside the entry's directory. Children of a placed session
+inherit the placement, so its subagents and its own peer spawns run remotely
+for free. `workspace` is mutually exclusive with `server` and `directory`.
+Placement gates on a separate `workspace` permission action (resource is the
+workspace name), which defaults to `ask`; when ssh workspaces are configured
+your system prompt lists their names.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "workspace": {
+      "buildbox": "allow"
+    }
+  }
+}
+```
+
+Caveats of execution-over-ssh:
+
+- File operations run as `sh` scripts through the same connection, so the
+  target needs GNU coreutils and findutils (BSD and busybox userlands do not
+  work), and an interactive PTY, filesystem watching, and instruction
+  discovery stay local.
+- The remote login environment is authoritative: only `LANG`, `LC_*`, `TERM`,
+  and `TZ` are forwarded from this machine.
+- Interrupting a placed run kills the local ssh, but processes already
+  started on the remote host may keep running; and a local ssh failure is
+  indistinguishable from a remote exit code 255.
+- Connection multiplexing is disabled when the local ssh is the Win32 build
+  (no ControlPath support there), so file operations pay a fresh handshake
+  each time.
+
 ## [Troubleshooting](https://opencode.ai/v2/docs/troubleshooting)
 
 OpenCode runs a client and a background server. Start by determining whether a

@@ -39,6 +39,7 @@ export default function NewSessionPage(props: { draftId: string }) {
     draftID: props.draftId,
     worktree: workspace.selection.value,
     branch: workspace.bar.branch,
+    temporary: () => draftTab()?.temporary === true,
     submitted: workspace.selection.remember,
     mcp,
   })
@@ -92,7 +93,13 @@ export default function NewSessionPage(props: { draftId: string }) {
     <div class="relative size-full overflow-hidden flex flex-col">
       {suspendUntilPromptReady()}
       <div class="flex-1 min-h-0 flex flex-col gap-2 px-[var(--shell-inline-inset,8px)] pb-[var(--shell-bottom-inset,8px)] pt-[var(--shell-top-inset,8px)]">
-        <NewSessionView composer={model} project={project} workspace={workspace} location={location} />
+        <NewSessionView
+          composer={model}
+          project={project}
+          workspace={workspace}
+          location={location}
+          temporary={() => draftTab()?.temporary === true}
+        />
       </div>
     </div>
   )

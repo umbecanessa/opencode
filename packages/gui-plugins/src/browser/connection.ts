@@ -1,5 +1,6 @@
 import type { Browser } from "@opencode/plugin-browser/rpc"
 import type { IpcClient } from "@opencode/plugin/gui"
+import { uuid } from "@opencode/util/uuid"
 import type { BrowserPane, PaneEvent } from "./ipc"
 
 type Client = IpcClient<(typeof BrowserPane)["spec"]>
@@ -28,6 +29,7 @@ export type Registration = {
 
 type ConnectionState = {
   registration?: Registration
+  ready: boolean
   browser: Browser.State | null
   /** Host embed per tab page of the current registration. */
   embeds: Readonly<Record<string, string>>
@@ -63,7 +65,7 @@ export function createConnection(input: {
   /** The user put keyboard focus in a page. */
   focused: () => void
 }) {
-  const state: ConnectionState = { browser: null, embeds: {}, suspended: false }
+  const state: ConnectionState = { ready: false, browser: null, embeds: {}, suspended: false }
   let disposed = false
   let blocked = false
   let attempts = 0
@@ -74,6 +76,12 @@ export function createConnection(input: {
   let known: readonly Browser.TabID[] | undefined
   // A native inventory the strip has not received yet; the next mirror that runs prunes with it.
   let pruning = false
+
+  const clearRetry = () => {
+    if (retry === undefined) return
+    clearTimeout(retry)
+    retry = undefined
+  }
 
   // Mirrors the tabs into the strip, applied after the state so closing a strip tab already finds the desktop's answer.
   // Only tabs new since the last mirrored inventory are added, so a tab the user just closed is not reopened before
@@ -111,8 +119,10 @@ export function createConnection(input: {
   const suspend = (registration: Registration) => {
     if (disposed || state.registration !== registration) return
     lost = true
+    clearRetry()
     registration.close()
     state.registration = undefined
+    state.ready = false
     state.embeds = {}
     state.suspended = true
     state.error = undefined
@@ -123,13 +133,21 @@ export function createConnection(input: {
   // Keep the tabs and register again with backoff; commands sent through it already failed and are not replayed.
   const reopen = (registration: Registration) => {
     if (disposed || state.registration !== registration) return
+    clearRetry()
     registration.close()
     state.registration = undefined
+    state.ready = false
     state.embeds = {}
     state.suspended = false
     state.error = undefined
     publish()
-    retry = setTimeout(register, Math.min(30_000, 1_000 * 2 ** attempts++))
+    retry = setTimeout(
+      () => {
+        retry = undefined
+        register()
+      },
+      Math.min(30_000, 1_000 * 2 ** attempts++),
+    )
   }
 
   const register = () => {
@@ -143,12 +161,17 @@ export function createConnection(input: {
     }
 
     lost = false
-    clearTimeout(retry)
+    clearRetry()
 
     const registration: Registration = open(
       current,
       input.listen,
       state.browser ? { ...input.target(), restore: state.browser } : input.target(),
+      () => {
+        if (disposed || state.registration !== registration || state.ready) return
+        state.ready = true
+        publish()
+      },
       (event) => {
         if (disposed || state.registration !== registration) return
 
@@ -170,13 +193,14 @@ export function createConnection(input: {
           return publish()
         }
 
-        if (event.error === "browser.pane.unsupported") {
+        if (event.error === "browser.pane.unsupported" || event.error === "browser.pane.missing") {
           blocked = true
           registration.close()
           state.registration = undefined
+          state.ready = false
           state.embeds = {}
           state.browser = null
-          state.error = event.error
+          state.error = event.error === "browser.pane.missing" ? undefined : event.error
           publish()
 
           return
@@ -185,7 +209,8 @@ export function createConnection(input: {
         // Another desktop took control. This window is not broken, so it keeps its tabs and its error
         // message, and registers again on the next wake - a user interaction here or a Session
         // execution, which is how control follows whoever is actually using the session.
-        // Only "unsupported" blocks registration permanently; retrying an unsupported server cannot help.
+        // Only "unsupported" and "missing" block registration permanently; retrying an unsupported
+        // server cannot help, and a missing session has nothing left to attach to.
         if (event.error === "browser.pane.replaced") {
           registration.close()
           state.registration = undefined
@@ -201,6 +226,7 @@ export function createConnection(input: {
         if (event.error === "browser.pane.suspended") {
           registration.close()
           state.registration = undefined
+          state.ready = false
           state.embeds = {}
           state.suspended = true
 
@@ -213,6 +239,7 @@ export function createConnection(input: {
         }
 
         if (event.state) attempts = 0
+        state.ready = true
         state.browser = event.state
         state.error = event.error
         publish(true)
@@ -227,6 +254,7 @@ export function createConnection(input: {
     )
 
     state.registration = registration
+    state.ready = false
     state.embeds = {}
     state.suspended = false
     state.error = undefined
@@ -234,11 +262,21 @@ export function createConnection(input: {
   }
 
   return {
-    wake: register,
+    wake(unblock = false) {
+      if (unblock) blocked = false
+
+      // Passive focus, pointer, and key edges wake an idle-evicted pane without bypassing transport backoff.
+      if (retry === undefined) register()
+    },
     /** Follows the pane's Ipc going away and coming back. */
     refresh() {
       if (!input.client()) {
-        if (state.registration) suspend(state.registration)
+        if (state.registration) return suspend(state.registration)
+
+        if (retry !== undefined) {
+          clearRetry()
+          lost = true
+        }
 
         return
       }
@@ -274,9 +312,10 @@ export function createConnection(input: {
     clearSite: (tabID: Browser.TabID) => state.registration?.clearSite(tabID),
     dispose() {
       disposed = true
-      clearTimeout(retry)
+      clearRetry()
       state.registration?.close()
       state.registration = undefined
+      state.ready = false
     },
   }
 }
@@ -285,10 +324,11 @@ function open(
   client: Client,
   listen: (binding: string, listener: (event: PaneEvent) => void) => () => void,
   target: { server: string; session: string; restore?: Browser.State },
+  accepted: () => void,
   listener: (event: PaneEvent) => void,
   failed: (cause: unknown) => void,
 ): Registration {
-  const binding = crypto.randomUUID()
+  const binding = uuid()
   const status = { closed: false }
 
   const stop = listen(binding, (event) => {
@@ -297,7 +337,12 @@ function open(
 
   const ready = client.register({ binding, ...target })
   // Other failures reach the owner through the closed-state event; keep the bare promise handled.
-  void ready.catch(failed)
+  void ready.then(
+    () => {
+      if (!status.closed) accepted()
+    },
+    failed,
+  )
 
   return {
     load(tabID) {

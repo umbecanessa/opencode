@@ -1,5 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 import { Agent } from "./agent.js"
+import { Artifact } from "./artifact.js"
 import { AISDK } from "./aisdk.js"
 import { Model } from "./model.js"
 import { Provider } from "./provider.js"
@@ -24,6 +25,7 @@ import { LocationLifecycle } from "./location-lifecycle.js"
 import { FileAccess } from "./file-access.js"
 import { ModelResolver } from "./model-resolver.js"
 import { Mcp } from "./mcp/index.js"
+import { PeerServers } from "./peer-servers.js"
 import { Permission } from "./permission.js"
 import { Plugin } from "./plugin.js"
 import { PluginHooks } from "./plugin/hooks.js"
@@ -63,11 +65,13 @@ const nodes = [
   Environment.node,
   Config.node,
   Agent.node,
+  Artifact.node,
   Command.node,
   Reference.node,
   Rpc.node,
   WebSearch.node,
   Integration.node,
+  PeerServers.node,
   Provider.node,
   Model.node,
   ModelResolver.node,

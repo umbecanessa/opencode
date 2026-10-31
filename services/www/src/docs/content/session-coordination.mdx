@@ -1,0 +1,176 @@
+---
+title: "Session coordination"
+description: "Let an agent orchestrate other sessions locally, on peer servers, and on ssh workspaces."
+---
+
+Beyond its own conversation and `subagent` children, an orchestrating agent can
+coordinate other sessions through the built-in `opencode_session_*` tools. A
+coordinated session is a peer: an independent top-level main-agent session, not
+a child, with no parent link back to the spawner. Two config maps extend the
+reach: the [`servers`](/config#servers) map for cross-server dispatch and the
+[`workspaces`](/config#workspaces) map for native ssh placement.
+
+## Peer sessions
+
+The tools cover the whole lifecycle:
+
+- `opencode_session_list` — recent sessions with title, agent, model, directory,
+  activity, and outcome. Use it to find a session the user refers to without an
+  ID.
+- `opencode_session_spawn` — create a new top-level session and run a prompt in
+  it. Accepts `agent`, `model`, `directory`, `workspace`, `background`, and
+  `temporary`.
+- `opencode_session_send` — a follow-up prompt to an existing session by ID,
+  reusing everything it already knows.
+- `opencode_session_stop` — interrupt a session's active run. History stays
+  intact and the session remains continuable.
+- `opencode_session_wait` — wait for a session to go idle and report its
+  outcome.
+
+```text
+Spawn a peer session that reviews the release notes and reports what changed.
+```
+
+Spawned sessions start with no context, so the prompt must contain everything
+they need. Foreground spawning blocks until the session goes idle and returns
+its final text. With `background: true` the tool returns immediately and a
+`<peer>` completion message arrives when it finishes — never sleep or poll
+before that message.
+
+Permission: the `session` action defaults to `ask`. For `session_spawn` the
+resource is the spawned agent's name; for the other tools it is the target
+session ID.
+
+```jsonc
+{
+  "permission": {
+    "session": {
+      "*": "ask",
+      "general": "allow",
+    },
+  },
+}
+```
+
+## Temporary sessions
+
+`temporary: true` on spawn creates a disposable spot task: it never appears in
+session listings or user history, defaults to stricter permissions (no edits,
+no subagents, no further peer spawning), and is deleted about a day after it
+finishes.
+
+```text
+Run a quick temporary session to summarize this log file, then report back.
+```
+
+A session-not-found result from `session_send` may be an expired temporary
+session; spawn a fresh one with the needed context instead of retrying.
+
+## Cross-server dispatch
+
+The config [`servers`](/config#servers) map names peer OpenCode servers the
+tools may act against.
+
+```jsonc
+{
+  "servers": {
+    "lab": {
+      "url": "http://192.168.1.20:4096",
+      "credential": "the-peer-server-password",
+    },
+  },
+}
+```
+
+With servers configured, all five tools accept a `server` parameter naming one
+of them. `session_spawn` with `server` dispatches the whole task there: it runs
+in the peer's own project location and returns its final text; `directory` does
+not apply.
+
+Dispatching supports both run modes:
+
+- Foreground (default): the call blocks until the remote session goes idle.
+- With `background: true`: the call returns immediately and the completion
+  arrives as a `<peer>` message, like a local background spawn.
+
+A dispatched session remembers which server owns it, so later `session_send`,
+`session_stop`, and `session_wait` calls route to it by session ID alone; the
+`server` parameter is only needed for sessions you did not dispatch. The
+placement is dropped when the peer reports the session gone.
+
+Cross-server calls gate on a separate `server` permission action (resource is
+the server name) which defaults to `ask`; the local `session` permission does
+not apply to them.
+
+```jsonc
+{
+  "permission": {
+    "server": {
+      "lab": "allow",
+    },
+  },
+}
+```
+
+A dispatched remote session has nowhere to surface permission asks while no
+client is attached to the peer, so configure the peer to run such work
+unattended. An unknown server name fails with the list of configured servers.
+
+The desktop app also registers its own remote servers at runtime — the SSH and
+WSL tunnels from its server list (named `ssh:<id>` and `wsl:<distro>`) and any
+server added by URL. Registered names behave exactly like config keys; they
+live only in memory, and a config key of the same name wins.
+
+## Native placement (ssh workspaces)
+
+The config [`workspaces`](/config#workspaces) map names remote machines that
+sessions can be placed on.
+
+```jsonc
+{
+  "workspaces": {
+    "buildbox": {
+      "type": "ssh",
+      "host": "build.example.com",
+      "user": "ana",
+      "directory": "/home/ana/projects/app",
+    },
+  },
+}
+```
+
+`session_spawn` with `workspace` places the session on the named entry. The
+session row stays on this server — listing, sending, stopping, and waiting work
+as with local sessions — but the placed session runs its shell and file tools on
+the remote host inside the entry's directory. Children of a placed session
+inherit the placement, so its subagents and its own peer spawns run remotely
+too. `workspace` is mutually exclusive with `server` and `directory`.
+
+```text
+Place a session on the buildbox workspace to run the failing tests there.
+```
+
+Placement gates on a separate `workspace` permission action (resource is the
+workspace name), which defaults to `ask`.
+
+```jsonc
+{
+  "permission": {
+    "workspace": {
+      "buildbox": "allow",
+    },
+  },
+}
+```
+
+Execution over ssh has limits worth knowing:
+
+- The remote host needs GNU coreutils and findutils; BSD and busybox userlands
+  do not work.
+- The remote login environment is authoritative: only `LANG`, `LC_*`, `TERM`,
+  and `TZ` are forwarded from this machine.
+- Interrupting a placed run stops the local ssh connection, but processes
+  already started remotely may keep running; a local ssh failure is
+  indistinguishable from a remote exit code 255.
+- Interactive terminals, filesystem watching, and ambient instruction discovery
+  stay local.

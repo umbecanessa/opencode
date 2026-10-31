@@ -22,6 +22,7 @@ export function createNewSessionComposerAdapter(props: {
   draftID: string
   worktree: () => string
   branch: () => string | undefined
+  temporary: () => boolean
   submitted: () => void
   mcp: DraftMcpControls
 }) {
@@ -46,6 +47,8 @@ export function createNewSessionComposerAdapter(props: {
     submitted: props.submitted,
     async start(selection, submission, message) {
       const draftID = props.draftID
+      // Read the flag before prepareSession swaps the draft tab out of the store.
+      const temporary = props.temporary()
       const currentDirectory = location().directory
 
       const projectDirectory =
@@ -102,6 +105,7 @@ export function createNewSessionComposerAdapter(props: {
           variant: selection.variant,
         },
         location: { directory: sessionDirectory },
+        ...(temporary ? { temporary: true } : {}),
       })
 
       const creation = created.request.then(

@@ -3,7 +3,7 @@ import { terminalToggleCommand } from "@opencode/gui-plugins/terminal"
 import { settingsOpenCommand } from "@/settings/command"
 import { sidebarToggleCommand } from "@/shell/shell"
 import { previousSessionCommand, nextSessionCommand } from "@/shell/titlebar/tab-strip"
-import { goBackCommand, goForwardCommand, newTabCommand } from "@/shell/titlebar/titlebar"
+import { goBackCommand, goForwardCommand, newTabCommand, newTemporaryTabCommand } from "@/shell/titlebar/titlebar"
 import { exportLogsCommand } from "./desktop"
 import { DESKTOP_MENU, nextDesktopZoomLevel } from "./desktop-menu"
 
@@ -12,6 +12,7 @@ test("every desktop menu command is one its owner registers", () => {
     settingsOpenCommand.id,
     exportLogsCommand.id,
     newTabCommand.id,
+    newTemporaryTabCommand.id,
     sidebarToggleCommand.id,
     goBackCommand.id,
     goForwardCommand.id,

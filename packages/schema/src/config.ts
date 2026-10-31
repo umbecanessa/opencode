@@ -17,6 +17,8 @@ import { ConfigPlugin } from "./config/plugin.js"
 import { ConfigPolicy } from "./config/policy.js"
 import { ConfigProvider } from "./config/provider.js"
 import { ConfigReference } from "./config/reference.js"
+import { ConfigServer } from "./config/server.js"
+import { ConfigWorkspace } from "./config/workspace.js"
 import { ConfigWebSearch } from "./config/websearch.js"
 import { ConfigToolOutput } from "./config/tool-output.js"
 import { ConfigWatcher } from "./config/watcher.js"
@@ -51,6 +53,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
     }),
   username: Schema.String.pipe(optional).annotate({
     description: "Username displayed in conversations and used for telemetry identity",
+  }),
+  timezone: Schema.String.pipe(optional).annotate({
+    description: "IANA time zone for schedules, e.g. America/Los_Angeles. Defaults to the server's local zone",
   }),
   permissions: Permission.Ruleset.pipe(optional).annotate({
     description: "Ordered tool permission rules applied to agent tool use",
@@ -96,6 +101,12 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   references: ConfigReference.Info.pipe(optional).annotate({
     description: "Named local directories or Git repositories available as external context",
+  }),
+  servers: Schema.Record(Schema.String, ConfigServer.Info).pipe(optional).annotate({
+    description: "Named peer OpenCode servers available for cross-server session dispatch",
+  }),
+  workspaces: Schema.Record(Schema.String, ConfigWorkspace.Info).pipe(optional).annotate({
+    description: "Named remote workspaces that sessions can be placed on",
   }),
   websearch: ConfigWebSearch.Selection.pipe(optional).annotate({
     description: "Web search provider selection",

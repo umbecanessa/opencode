@@ -1,7 +1,7 @@
 export * as Session from "./session.js"
 export * from "./session/schema.js"
 
-import { DateTime, Effect, Layer, Context, Option, Stream } from "effect"
+import { Clock, DateTime, Effect, Layer, Context, Option, Stream } from "effect"
 import { LLMClient } from "@opencode/ai/effect"
 import { ListAnchor, ListCursor, ListFilter } from "@opencode/schema/session"
 import { and, desc, eq } from "drizzle-orm"
@@ -84,6 +84,20 @@ export type ListInput = SessionStore.ListInput
 
 const DefaultListLimit = 50
 
+// Temporary sessions are disposable: kept for a day after their terminal idle
+// so follow-up prompts can still reuse them, then hard-deleted by the boot and
+// spawn-time sweeps.
+const TemporaryRetentionMillis = 24 * 60 * 60 * 1000
+
+// Disposable sessions read and search freely through their agent's own rules
+// but cannot fan out or change the workspace: no edits, no subagents, no peer
+// coordination. Explicit caller-supplied permissions still override this.
+const TemporaryPermissions: Permission.Ruleset = [
+  { action: "edit", resource: "*", effect: "deny" },
+  { action: "subagent", resource: "*", effect: "deny" },
+  { action: "session", resource: "*", effect: "deny" },
+]
+
 type CreateBaseInput = {
   id?: SessionSchema.ID
   title?: string
@@ -91,6 +105,8 @@ type CreateBaseInput = {
   model?: Model.Ref
   metadata?: SessionSchema.Metadata
   permissions?: Permission.Ruleset
+  /** Disposable spot-task session: never listed by default, reclaimed after terminal idle. */
+  temporary?: boolean
 }
 type CreateInput = CreateBaseInput &
   ({ location: Location.Ref; parentID?: never } | { parentID: SessionSchema.ID; location?: never })
@@ -141,6 +157,13 @@ export interface Interface {
   }) => Effect.Effect<SessionEnvironment.Variables | undefined, NotFoundError>
   readonly view: (input: { sessionID: SessionSchema.ID; idle: number }) => Effect.Effect<void, NotFoundError>
   readonly remove: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
+  /**
+   * Hard-deletes expired temporary Sessions: terminal-idle ones past the
+   * retention window and never-idled ones without a live execution claim.
+   * Actively running temporary sessions are left alone. Called at boot and
+   * opportunistically when new temporary sessions are created.
+   */
+  readonly reapTemporary: Effect.Effect<void>
   readonly messages: (
     input: SessionStore.MessagesInput,
   ) => Effect.Effect<SessionMessage.Info[], NotFoundError | MessageDecodeError>
@@ -238,6 +261,8 @@ export interface Interface {
   ) => Effect.Effect<SessionInbox.Compaction, NotFoundError | CompactionConflictError>
   readonly wait: (id: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
   readonly active: Effect.Effect<ReadonlySet<SessionSchema.ID>>
+  /** This process's drains plus Sessions claimed by any server sharing the database. */
+  readonly activeCluster: Effect.Effect<ReadonlySet<SessionSchema.ID>>
   readonly background: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError>
   readonly resume: (sessionID: SessionSchema.ID) => Effect.Effect<void, NotFoundError | SessionRunner.RunError>
   readonly interrupt: (sessionID: SessionSchema.ID, options?: { readonly resume?: boolean }) => Effect.Effect<boolean>
@@ -280,16 +305,7 @@ const layer = Layer.effect(
     const environments = yield* SessionEnvironment.Service
     const locations = yield* LocationServiceMap.Service
     const sessions = yield* Session.make()
-    // `experimental.media_blob` as the session's own location configures it, where its media is written.
-    const keepsMediaRefs = (session: SessionSchema.Info) =>
-      SessionBlob.enabled.pipe(
-        instances.provide(session),
-        Effect.catch((cause) =>
-          Effect.logWarning("could not resolve experimental.media_blob; serving media inline", { cause }).pipe(
-            Effect.as(false),
-          ),
-        ),
-      )
+    const mediaBlob = (session: SessionSchema.Info) => SessionBlob.enabledFor(instances, session)
     const isDurableSessionEvent = (item: Bus.LogItem): item is SessionEvent.DurableEvent =>
       Object.hasOwn(SessionEvent.Durable.cases, item.type)
 
@@ -298,6 +314,9 @@ const layer = Layer.effect(
         const sessionID = input.id ?? SessionSchema.ID.create()
         const recorded = yield* store.get(sessionID)
         if (recorded) return recorded
+        // Making room for a new disposable session is the natural moment to
+        // sweep expired ones; the fresh row cannot be a reap candidate yet.
+        if (input.temporary === true) yield* result.reapTemporary
         const parent = input.parentID ? yield* store.get(input.parentID) : undefined
         if (input.parentID && parent === undefined) return yield* new NotFoundError({ sessionID: input.parentID })
         const location = parent?.location ?? (input.location && LocationServiceMap.canonical(input.location))
@@ -320,8 +339,9 @@ const layer = Layer.effect(
               // Children inherit metadata and permissions the way they inherit
               // location, so host policies that read them treat the family uniformly.
               metadata: input.metadata ?? parent?.metadata,
-              permissions: input.permissions ?? parent?.permissions,
+              permissions: input.permissions ?? (input.temporary === true ? TemporaryPermissions : parent?.permissions),
               model: input.model,
+              temporary: input.temporary === true ? true : undefined,
             },
             { location },
           )
@@ -378,12 +398,16 @@ const layer = Layer.effect(
         // The fork adopts the parent's newest instruction values rather than the
         // values in effect at the boundary; copied history may contain frozen
         // instruction-update text the initial baseline already reflects.
-        yield* bus.publish(SessionEvent.Forked, {
-          sessionID,
-          parentID: parent.id,
-          boundary: { type: input.before ? "before" : "through", messageID: boundary.id },
-          ...inherited,
-        })
+        // The parent's location, not the caller's, decides whether the copy's media is stored as blobs.
+        const media = yield* mediaBlob(parent)
+        yield* bus
+          .publish(SessionEvent.Forked, {
+            sessionID,
+            parentID: parent.id,
+            boundary: { type: input.before ? "before" : "through", messageID: boundary.id },
+            ...inherited,
+          })
+          .pipe(Effect.provideService(SessionBlob.ForkMedia, media))
         return yield* result.get(sessionID).pipe(Effect.orDie)
       }),
       get: (sessionID) => sessions.forSession(sessionID).get(),
@@ -397,6 +421,7 @@ const layer = Layer.effect(
         yield* result.get(sessionID)
         yield* execution.interrupt(sessionID)
         yield* execution.awaitIdle(sessionID)
+        yield* jobs.cancelSession(sessionID)
         yield* transport.close(sessionID)
         const children = yield* store.list({ parentID: sessionID })
         yield* Effect.forEach(children, (child) => result.remove(child.id), { concurrency: 1, discard: true })
@@ -404,6 +429,16 @@ const layer = Layer.effect(
         yield* bus.publish(SessionEvent.Deleted, { sessionID })
         yield* bus.remove(sessionID)
       }),
+      reapTemporary: Effect.suspend(() =>
+        Effect.gen(function* () {
+          const cutoff = (yield* Clock.currentTimeMillis) - TemporaryRetentionMillis
+          const expired = yield* store.listExpiredTemporary(cutoff)
+          yield* Effect.forEach(expired, (sessionID) => result.remove(sessionID).pipe(Effect.ignore), {
+            concurrency: 1,
+            discard: true,
+          })
+        }),
+      ),
       list: Effect.fn("Session.list")(function* (input = {}) {
         const filter =
           input.cursor === undefined
@@ -437,13 +472,13 @@ const layer = Layer.effect(
       message: (input) => sessions.forSession(input.sessionID).message(input.messageID),
       messagesWithRefs: Effect.fn("Session.messagesWithRefs")(function* (input) {
         const session = yield* result.get(input.sessionID)
-        if (!(yield* keepsMediaRefs(session))) return yield* store.messages(input)
+        if (!(yield* mediaBlob(session))) return yield* store.messages(input)
         return yield* store.messagesWithRefs(input)
       }),
       messageWithRefs: Effect.fn("Session.messageWithRefs")(function* (input) {
         const session = yield* result.get(input.sessionID).pipe(Effect.option)
         if (Option.isNone(session)) return undefined
-        if (!(yield* keepsMediaRefs(session.value))) return yield* result.message(input)
+        if (!(yield* mediaBlob(session.value))) return yield* result.message(input)
         const stored = yield* store.messageWithRefs(input.messageID)
         return stored?.sessionID === input.sessionID ? stored.message : undefined
       }),
@@ -465,7 +500,7 @@ const layer = Layer.effect(
       inbox: (sessionID) => sessions.forSession(sessionID).inbox(),
       inboxWithRefs: Effect.fn("Session.inboxWithRefs")(function* (sessionID) {
         const session = yield* result.get(sessionID)
-        if (!(yield* keepsMediaRefs(session))) return yield* result.inbox(sessionID)
+        if (!(yield* mediaBlob(session))) return yield* result.inbox(sessionID)
         return yield* SessionInbox.listWithRefs(db, sessionID)
       }),
       cancelInbox: (input) => sessions.forSession(input.sessionID).cancelInbox(input.inboxID),
@@ -510,6 +545,7 @@ const layer = Layer.effect(
       compact: (input) => sessions.forSession(input.sessionID).compact(input),
       wait: (sessionID) => sessions.forSession(sessionID).wait(),
       active: execution.active,
+      activeCluster: execution.activeCluster,
       background: Effect.fn("Session.background")(function* (sessionID) {
         yield* result.get(sessionID)
         const backgrounded = yield* jobs.backgroundAll({ sessionID })

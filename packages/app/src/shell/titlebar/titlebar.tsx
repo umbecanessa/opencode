@@ -28,15 +28,18 @@ import type { ComposerState } from "@/composer/persistence"
 import "./titlebar.css"
 import { MobileDrawer, MobileDrawerContent, MobileDrawerLabel, MobileDrawerTrigger } from "@/shell/mobile-drawer"
 import { sessionTabTitle } from "./tab-title"
-import { SessionTabAvatar } from "@/shell/layout/session-tab-avatar"
+import { SessionTabAvatarView } from "@/shell/layout/session-tab-avatar"
 import { ProjectSidebar } from "@/shell/layout/project-sidebar"
-import { SessionProgressIndicatorV2 } from "@opencode/session-ui/v2/session-progress-indicator-v2"
+import { useSessionTabAvatarState } from "@/shell/layout/project-avatar-state"
+import { ActivityRing } from "@opencode/ui/activity-ring"
 import { RecentlyClosedTabsMenu } from "./recently-closed-tabs-menu"
 import { useSettingsDialog } from "@/settings/command"
 import { rootSession } from "@/shell/routes/session"
 import { TitlebarItems, useTitlebarItems } from "@/runtime/plugin/titlebar-items"
 
 export const newTabCommand = { id: "tab.new", keybind: "mod+t,mod+n" }
+
+export const newTemporaryTabCommand = { id: "tab.newTemporary" }
 
 /** Search projects: a draft searches in place; everywhere else it opens a new draft with the project picker open. */
 export const projectSearchCommand = { id: "project.select", keybind: "mod+shift+o" }
@@ -343,7 +346,8 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
             })
 
             /** Opens a new session draft for the current context. Returns false when there is nothing to open it in. */
-            const openNewTab = () => {
+            const openNewTab = (temporary = false) => {
+              const draftOptions = temporary ? { temporary: true } : {}
               const route = layout.route()
 
               switch (route.type) {
@@ -352,7 +356,11 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
                   if (pending) {
                     const model = tabs.stateValue<ComposerState>(pending.draft, "prompt")?.model.current()
-                    void tabs.newDraft({ server: route.server, directory: pending.draft.directory }, "", model)
+                    void tabs.newDraft(
+                      { server: route.server, directory: pending.draft.directory, ...draftOptions },
+                      "",
+                      model,
+                    )
 
                     return true
                   }
@@ -369,7 +377,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
 
                   const model = tabs.stateValue<ComposerState>(sessionTab, "prompt")?.model.current()
                   void tabs.newDraft(
-                    { server: sessionTab.server, directory: activeSession.location.directory },
+                    { server: sessionTab.server, directory: activeSession.location.directory, ...draftOptions },
                     "",
                     model,
                   )
@@ -383,7 +391,11 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   if (activeTab?.type !== "draft") return false
 
                   const model = tabs.stateValue<ComposerState>(activeTab, "prompt")?.model.current()
-                  void tabs.newDraft({ server: activeTab.server, directory: activeTab.directory }, "", model)
+                  void tabs.newDraft(
+                    { server: activeTab.server, directory: activeTab.directory, ...draftOptions },
+                    "",
+                    model,
+                  )
 
                   return true
                 }
@@ -406,7 +418,10 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                     projects?.list()[0]
 
                   if (conn && project) {
-                    void tabs.newDraft({ server: ServerConnection.key(conn), directory: project.worktree }, "")
+                    void tabs.newDraft(
+                      { server: ServerConnection.key(conn), directory: project.worktree, ...draftOptions },
+                      "",
+                    )
 
                     return true
                   }
@@ -498,7 +513,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   type="button"
                   data-titlebar-tab-action
                   data-action="vertical-tabs-search"
-                  class="group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint hover:text-v2-text-text-base"
+                  class="group flex h-7 w-full shrink-0 items-center gap-1.5 rounded-[6px] ps-1.5 pe-2 text-[13px] leading-4 text-v2-text-text-faint"
                   onClick={() => command.trigger("sessions.search")}
                 >
                   <Icon name="magnifying-glass" class="shrink-0" />
@@ -529,6 +544,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                 id: "sessions.search",
                 title: language.t("command.session.search"),
                 category: language.t("command.category.session"),
+                keybind: "mod+shift+f",
                 onSelect: async () => {
                   const { DialogSessionSearch } = await import("@/shell/commands/session-search")
                   void dialog.show(() => <DialogSessionSearch />)
@@ -545,7 +561,15 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                   category: "tab",
                   title: language.t("command.session.new"),
                   hidden: true,
-                  onSelect: openNewTab,
+                  // Returning false declines the keybind, which is the right fallback when there is nothing to open.
+                  onSelect: () => (openNewTab() ? undefined : false),
+                },
+                {
+                  ...newTemporaryTabCommand,
+                  category: language.t("command.category.session"),
+                  title: language.t("command.session.newTemporary"),
+                  description: language.t("command.session.newTemporary.description"),
+                  onSelect: () => (openNewTab(true) ? undefined : false),
                 },
                 current && {
                   id: "tab.close",
@@ -583,6 +607,13 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
             ])
 
             const [mobileTabs, setMobileTabs] = createStore({ open: false, settings: false })
+
+            // The current tab's project avatar stays put; while it works, its activity ring shows beside the tab count.
+            const currentStatus = useSessionTabAvatarState(
+              () => currentTab()?.server,
+              () => session()?.id ?? "",
+              () => true,
+            )
 
             const currentProject = createMemo(() => {
               const tab = currentTab()
@@ -667,26 +698,18 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                                   tab().type === "draft" ? (
                                     <Icon name="edit" />
                                   ) : (
-                                    <Show
-                                      when={preparing()}
-                                      fallback={
-                                        <span
-                                          class="block size-4 rounded-[3px] border border-v2-border-border-muted"
-                                          aria-hidden="true"
-                                        />
-                                      }
-                                    >
-                                      <SessionProgressIndicatorV2 />
-                                    </Show>
+                                    <span
+                                      class="block size-4 rounded-[3px] border border-v2-border-border-muted"
+                                      aria-hidden="true"
+                                    />
                                   )
                                 }
                               >
                                 {(value) => (
-                                  <SessionTabAvatar
+                                  <SessionTabAvatarView
                                     project={currentProject()}
                                     directory={value().location.directory}
-                                    sessionId={value().id}
-                                    server={tab().server}
+                                    unread={currentStatus.unread() && !currentStatus.loading()}
                                   />
                                 )}
                               </Show>
@@ -696,6 +719,9 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                         <span data-slot="mobile-tab-title" dir="auto" class="min-w-0 flex-1 truncate text-start">
                           {currentTitle()}
                         </span>
+                        <Show when={preparing() || currentStatus.loading()}>
+                          <ActivityRing />
+                        </Show>
                         <span class="shrink-0 text-v2-text-text-muted">{tabsStore.length}</span>
                       </MobileDrawerTrigger>
                       <MobileDrawerContent>
@@ -793,7 +819,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                           onReorder={(keys) => tabsStoreActions.reorder(keys)}
                         />
                         <RecentlyClosedTabsMenu
-                          onNewTab={openNewTab}
+                          onNewTab={() => openNewTab()}
                           tooltip={
                             <>
                               {language.t("command.session.new")}
@@ -853,7 +879,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                               {searchButton(true)}
                               <RecentlyClosedTabsMenu
                                 vertical
-                                onNewTab={openNewTab}
+                                onNewTab={() => openNewTab()}
                                 keybind={command.keybind("tab.new")}
                               />
                             </div>

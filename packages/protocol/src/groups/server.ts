@@ -4,6 +4,9 @@ import { UnauthorizedError } from "../errors.js"
 
 export const ServerInfo = Schema.Struct({
   version: Schema.String,
+  // Per-boot identifier: changes on every restart, so liveness probes can tell
+  // the advertised server from a different process that reused its address.
+  id: Schema.optional(Schema.String),
   // 0 means the runtime has no OS process identity (e.g. workerd).
   pid: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   // The machine's name, absent where the runtime has none (e.g. workerd).

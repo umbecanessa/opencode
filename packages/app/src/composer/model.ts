@@ -423,7 +423,6 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
       })),
     onQuoteComment: (item, comment) => prompt.context.updateComment(item.commentID, { comment }),
     quoteComment: prompt.quoteComment,
-    quoteSource: prompt.quoteSource,
     onContextRemove(item) {
       if (item.type === "file" && item.commentID) comments.remove(item.path, item.commentID)
     },
@@ -537,6 +536,15 @@ export function createComposerModel(adapter: ComposerAdapter, options?: { queue?
         held: submission.held,
         working: adapter.working,
         queue: options?.queue,
+        quote:
+          adapter.kind === "active-session"
+            ? {
+                available: () =>
+                  available() && !adapter.controls().model.loading && !submission.held() && !options?.queue?.undoing(),
+                delivery: () => (adapter.working() ? (options?.queue?.alternate() ?? "steer") : undefined),
+                onSubmit: submission.submitQuote,
+              }
+            : undefined,
         onSubmit: (submitOptions) => {
           if (!available()) return
           const queue = options?.queue

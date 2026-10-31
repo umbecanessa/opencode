@@ -3,6 +3,7 @@ import { Schema } from "effect"
 import { Config } from "../src/config.js"
 import { ConfigAgent } from "../src/config/agent.js"
 import { ConfigMCP } from "../src/config/mcp.js"
+import { ConfigPolicy } from "../src/config/policy.js"
 import { ConfigProvider } from "../src/config/provider.js"
 import { Mcp } from "../src/mcp.js"
 import { Provider } from "../src/provider.js"
@@ -29,6 +30,41 @@ describe("Config.Entry", () => {
       ).toThrow()
   })
 
+  test("normalizes legacy prefixed integration.use statements into mcp.use, skill.use and plugin.use", () => {
+    const decode = Schema.decodeUnknownSync(Schema.Array(ConfigPolicy.Info))
+    expect(
+      decode([
+        { action: "integration.use", resource: "mcp:*", effect: "deny" },
+        { action: "integration.use", resource: "mcp:github", effect: "allow" },
+        { action: "integration.use", resource: "skill:team:review", effect: "deny" },
+        { action: "integration.use", resource: "plugin:@acme/plugin", effect: "deny" },
+        { action: "integration.use", resource: "*", effect: "deny" },
+        { action: "integration.use", resource: "opencode#org_01", effect: "allow" },
+        { action: "integration.use", resource: "https://ai.acme.com", effect: "allow" },
+        { action: "integration.use", resource: "constructor:x", effect: "allow" },
+        { action: "integration.connect", resource: "mcp:x", effect: "allow" },
+      ]),
+    ).toEqual([
+      { action: "mcp.use", resource: "*", effect: "deny" },
+      { action: "mcp.use", resource: "github", effect: "allow" },
+      { action: "skill.use", resource: "team:review", effect: "deny" },
+      { action: "plugin.use", resource: "@acme/plugin", effect: "deny" },
+      // A bare wildcard keeps its action, which now means every integration.
+      { action: "integration.use", resource: "*", effect: "deny" },
+      { action: "integration.use", resource: "opencode#org_01", effect: "allow" },
+      { action: "integration.use", resource: "https://ai.acme.com", effect: "allow" },
+      { action: "integration.use", resource: "constructor:x", effect: "allow" },
+      { action: "integration.connect", resource: "mcp:x", effect: "allow" },
+    ])
+    // Config documents decode through the same schema, top-level and experimental alike.
+    const config = Schema.decodeUnknownSync(Config.Info)({
+      policies: [{ action: "integration.use", resource: "skill:deploy", effect: "deny" }],
+      experimental: { policies: [{ action: "integration.use", resource: "plugin:local", effect: "deny" }] },
+    })
+    expect(config.policies).toEqual([{ action: "skill.use", resource: "deploy", effect: "deny" }])
+    expect(config.experimental?.policies).toEqual([{ action: "plugin.use", resource: "local", effect: "deny" }])
+  })
+
   test("accepts directory-only worktree config and omits it when absent", () => {
     const decode = Schema.decodeUnknownSync(Config.Info)
     const input = { worktree: { directory: "../worktrees" } }
@@ -38,6 +74,16 @@ describe("Config.Entry", () => {
     expect(() => decode({ worktree: { directory: " " } })).toThrow()
     expect(() => decode({ worktree: { directory: false } })).toThrow()
   })
+  test("round-trips peer server entries and omits absent credentials", () => {
+    const decode = Schema.decodeUnknownSync(Config.Info)
+    const input = { servers: { lab: { url: "http://192.168.1.20:4096" } } }
+    expect(Schema.encodeSync(Config.Info)(decode(input))).toEqual(input)
+    const withCredential = { servers: { lab: { url: "http://localhost:4096", credential: "secret" } } }
+    expect(Schema.encodeSync(Config.Info)(decode(withCredential))).toEqual(withCredential)
+    expect(() => decode({ servers: { lab: {} } })).toThrow()
+    expect(() => decode({ servers: { lab: { url: 1 } } })).toThrow()
+  })
+
   test("round-trips canonical provider IDs without changing config keys", () => {
     const input = { providers: { "console-anthropic": { canonical: "anthropic" } } }
     const decoded = Schema.decodeUnknownSync(Config.Info)(input)
