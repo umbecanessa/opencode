@@ -14,7 +14,7 @@ import { createBrowserPage, type BrowserPage, type ScrollPosition, type Shared }
 import { cookieURL, runCookieCommand } from "./cookies"
 import { browserFailure } from "./errors"
 import { createBrowserNetwork, type BrowserNetwork } from "./network"
-import { partitionIsLoaded, partitionSession } from "./partitions"
+import { partitionDirectory, partitionIsLoaded, partitionSession } from "./partitions"
 import { destinationOrigin, fileURLWithin, refusal } from "./policy"
 import { createRefs } from "./refs"
 import type { PaneEvent } from "./ipc"
@@ -32,11 +32,6 @@ type Target = { readonly server: string; readonly session: string; readonly rest
  */
 function partitionName(server: string, sessionID: string) {
   return `persist:opencode-browser-${createHash("sha256").update(server).digest("hex").slice(0, 12)}-${sessionID}`
-}
-
-/** The on-disk directory of a `persist:` partition, where Chromium owns its storage files. */
-function partitionDirectory(partition: string) {
-  return path.join(electron.app.getPath("userData"), "Partitions", partition.replace(/^persist:/, ""))
 }
 
 /**
@@ -570,7 +565,7 @@ export function createBrowserPane(input: {
       const prefix = `opencode-browser-${createHash("sha256").update(server).digest("hex").slice(0, 12)}-`
 
       const names = yield* Effect
-        .promise(() => readdir(path.join(electron.app.getPath("userData"), "Partitions")))
+        .promise(() => readdir(path.join(electron.app.getPath("userData"), "browser-data")))
         .pipe(Effect.catch(() => Effect.succeed<string[]>([])))
 
       for (const name of names) {

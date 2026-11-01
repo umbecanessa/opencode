@@ -10,6 +10,7 @@ import { createDiagnostics } from "./diagnostics"
 import { loadIcon } from "./icon"
 import { pageLetter, pageReload, pageShortcut, type PageShortcut } from "./keys"
 import { createProfiling, type Recording } from "./profiling"
+import { partitionSession } from "./partitions"
 import type { BrowserNetwork } from "./network"
 import {
   allowedDestination,
@@ -197,7 +198,10 @@ export function createBrowserPage(
   const view = new electron.WebContentsView({
     ...options.popupOptions,
     webPreferences: {
-      partition: options.partition,
+      // A session object, never a `partition:` string: the string form makes Chromium resolve a
+      // second storage partition for the same directory through its named-partition rule, and
+      // the two contexts sharing a directory start the re-bind kill loop (see ./partitions).
+      session: partitionSession(options.partition),
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
@@ -472,7 +476,8 @@ export function createBrowserPage(
               devTools: false,
               // Electron applies these preferences before the popup is adopted by our view.
               focusOnNavigation: false,
-              partition: options.partition,
+              // Same rule as the view above: a session object, never a partition string.
+              session: partitionSession(options.partition),
             },
           },
           createWindow: (popupOptions) => options.popup(popupOptions, disposition === "background-tab"),
