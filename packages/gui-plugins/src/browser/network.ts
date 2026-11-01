@@ -1,8 +1,9 @@
-import { net, session, type WebContents } from "electron"
+import { net, type WebContents } from "electron"
 import type { RpcClient } from "@opencode/client/effect/api"
 import type { Session } from "@opencode/schema/session"
 import { Browser } from "@opencode/plugin-browser/rpc"
 import { BrowserProxy } from "@opencode/plugin-browser/proxy"
+import { partitionSession } from "./partitions"
 import { Effect } from "effect"
 import { Base64 } from "effect/encoding"
 
@@ -37,7 +38,7 @@ export const createBrowserNetwork = Effect.fn("BrowserNetwork.create")(function*
     (proxy) => Effect.promise(() => proxy.close()),
   )
 
-  const partition = session.fromPartition(input.partition)
+  const partition = partitionSession(input.partition)
   yield* Effect.addFinalizer(() => Effect.promise(() => partition.closeAllConnections()))
   // This is the browser's private partition, not the app/API connection. Never
   // bypass localhost: it must resolve on the machine running the OC2 server.

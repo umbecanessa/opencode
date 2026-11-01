@@ -1,5 +1,6 @@
 import { Browser } from "@opencode/plugin-browser/rpc"
-import electron from "electron"
+import { partitionSession } from "./partitions"
+import type { Cookie } from "electron"
 import { Schema } from "effect"
 
 /** Listings and exports are bounded so one cookie command cannot flood the tool result. */
@@ -9,7 +10,7 @@ const MAX_LISTED = 500
  * The address a cookie is removed by: its domain without the leading dot, its path, and its scheme. An IPv6 host
  * needs its brackets in a URL.
  */
-export function cookieURL(cookie: Electron.Cookie) {
+export function cookieURL(cookie: Cookie) {
   const domain = (cookie.domain ?? "").replace(/^\./, "")
   const host = domain.includes(":") && !domain.startsWith("[") ? `[${domain}]` : domain
 
@@ -17,7 +18,7 @@ export function cookieURL(cookie: Electron.Cookie) {
 }
 
 /** Whether a cookie's scope covers the domain, its subdomains included. */
-export function domainMatches(cookie: Electron.Cookie, domain: string) {
+export function domainMatches(cookie: Cookie, domain: string) {
   const scope = (cookie.domain ?? "").replace(/^\./, "").toLowerCase()
   const want = domain.replace(/^\./, "").toLowerCase()
 
@@ -30,7 +31,7 @@ export function domainMatches(cookie: Electron.Cookie, domain: string) {
  * age and are always kept. Names in `keepNames` are spared either way. `now` is Unix seconds.
  */
 export function prunePlan(
-  cookies: readonly Electron.Cookie[],
+  cookies: readonly Cookie[],
   now: number,
   rules: { expired?: boolean; olderThan?: number; keepNames?: readonly string[] },
 ) {
@@ -47,7 +48,7 @@ export function prunePlan(
 }
 
 /** The browser's report of a cookie without its value; for listings, where values stay in the jar. */
-export function cookieInfo(cookie: Electron.Cookie): Browser.CookieInfo {
+export function cookieInfo(cookie: Cookie): Browser.CookieInfo {
   const sameSite = cookie.sameSite === "unspecified" ? undefined : cookie.sameSite
 
   // CookieInfo's fields are all optional, and the filter keeps only defined values.
@@ -97,7 +98,7 @@ function scopeOf(action: Browser.Action) {
 
 /** Runs one cookie command against a pane's persisted partition, tab-free: the jar is the session's. */
 export async function runCookieCommand(partition: string, action: Browser.Action): Promise<Schema.Json> {
-  const jar = electron.session.fromPartition(partition).cookies
+  const jar = partitionSession(partition).cookies
   const scope = scopeOf(action)
 
   const matched = async () => {
