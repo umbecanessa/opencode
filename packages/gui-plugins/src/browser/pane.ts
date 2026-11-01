@@ -467,12 +467,12 @@ export function createBrowserPane(input: {
       const entry = owned(window, binding)
       restore.remove(entry.storageKey)
       close(entry)
-      // Caches are the bulk of a partition and rebuild themselves, so closing a session's browser
-      // drops them. Cookies and origin storage stay: reopening the session keeps its logins.
-      void electron.session
-        .fromPartition(entry.partition)
-        .clearStorageData({ storages: ["cachestorage", "shadercache"] })
-        .catch(() => undefined)
+      // The caches are deliberately NOT wiped here. `clearStorageData()` - even narrowed to
+      // caches - runs Chromium's partition-wide delete pipeline, which on this Chromium (152)
+      // initializes the partition's DOM storage databases and turns a delete it cannot finish
+      // into a task that re-posts itself with no backoff: the main-process OOM loop this pane
+      // already sidesteps in purge. Caches rebuild anyway, and they leave with the partition
+      // when the session is deleted.
     },
     /**
      * The plugin is going away (reload, disable, or quit). Windows keep each pane's tabs as a

@@ -661,6 +661,9 @@ export function createBrowserPage(
     /**
      * Deletes what the page's site stored: the cookies its address can read, and its origin's storage. Resolves once
      * the page reloaded without them, so a count read next includes what the reload set again.
+     * Origin storage goes through same-origin script, not `clearStorageData()`: that API runs the partition-wide
+     * delete pipeline, which on this Chromium (152) turns into a task that re-posts itself with no backoff on these
+     * persistent partitions - the main-process OOM loop pane.ts's purge already sidesteps.
      */
     async clearSite() {
       const url = contents.getURL()
@@ -669,10 +672,15 @@ export function createBrowserPage(
       if (closed || !origin) return
       const cookies = await contents.session.cookies.get({ url })
       await Promise.all(cookies.map((cookie) => contents.session.cookies.remove(cookieURL(cookie), cookie.name)))
-      await contents.session.clearStorageData({
-        origin,
-        storages: ["localstorage", "indexdb", "serviceworkers", "cachestorage", "filesystem", "shadercache"],
-      })
+      await contents
+        .executeJavaScript(`(async () => {
+          try { localStorage.clear() } catch {}
+          try { for (const k of await caches.keys()) await caches.delete(k) } catch {}
+          try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister() } catch {}
+          try { for (const d of await indexedDB.databases()) await new Promise((done) => { const q = indexedDB.deleteDatabase(d.name); q.onsuccess = q.onerror = q.onblocked = done }) } catch {}
+          return true
+        })()`)
+        .catch(() => undefined)
 
       if (closed) return
       contents.reload()
