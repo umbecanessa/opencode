@@ -3,7 +3,8 @@ import { mkdirSync, rmSync } from "node:fs"
 import { enableCompileCache } from "node:module"
 import { homedir, tmpdir } from "node:os"
 import path from "node:path"
-import { app } from "electron"
+import log from "electron-log/main.js"
+import { app, session } from "electron"
 import { debugBuild, memoryLogInterval } from "@opencode/gui-plugins/debug/options"
 import { APP_ID, APP_NAME, CHANNEL } from "../constants"
 import { remoteDebuggingPort } from "../diagnostics/options"
@@ -24,6 +25,7 @@ export function configureApplication() {
 
   app.setName(APP_NAME)
   app.setAppUserModelId(APP_ID)
+  forcePersistentPartitions()
   app.commandLine.appendSwitch("proxy-bypass-list", "<-loopback>")
   const features = app.commandLine.getSwitchValue("enable-features")
   app.commandLine.appendSwitch("enable-features", features ? `${jsCallStackFeature},${features}` : jsCallStackFeature)
@@ -61,6 +63,27 @@ export function acquireApplicationLock() {
   app.quit()
 
   return false
+}
+
+// Chromium 152's storage service keys every context's SessionStorageControl by partition path and,
+// on a re-bind of a path it already serves, shuts down the pre-existing entry (crbug.com/396030877)
+// while the disconnected context re-binds immediately with no backoff. An in-memory
+// session.fromPartition lands on the userData root path; when a second context shares that path,
+// the pair kills each other's storage tens of thousands of times a second until the main process
+// runs out of memory (the ~2-12 minute crash loop of 26.11.x). Every partition this app and its
+// plugins want is a persistent, isolated one anyway, so no main-process caller may create an
+// in-memory session; the log line names the caller that asked for one.
+function forcePersistentPartitions() {
+  const fromPartition = session.fromPartition.bind(session)
+
+  session.fromPartition = (partition, options) => {
+    if (!partition || partition.startsWith("persist:")) return fromPartition(partition, options)
+
+    const forced = `persist:${partition}`
+    log.scope("main").warn(`session.fromPartition("${partition}") forced to "${forced}"`, new Error().stack)
+
+    return fromPartition(forced, options)
+  }
 }
 
 function createTestRoot() {
