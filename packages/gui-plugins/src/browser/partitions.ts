@@ -10,6 +10,10 @@ import path from "node:path"
  * Every mount of a browser partition goes through this file so the set stays complete; deleters
  * consult it and defer to the next run when a partition is already loaded.
  */
+// The set is a fact about the Chromium process, not plugin state: loaded partitions outlive any
+// window and any plugin setup, and cookie commands reach it without a plugin instance, so a
+// setup closure would under-count it and let a deleter delete a live partition's files.
+// ast-grep-ignore: gui-plugin-no-module-state
 const loaded = new Set<string>()
 
 /** The name a partition's files live under: its `persist:` name with the prefix stripped. */
