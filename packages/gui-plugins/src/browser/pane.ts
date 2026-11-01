@@ -3,7 +3,7 @@ import { Browser } from "@opencode/plugin-browser/rpc"
 import { OpenCode } from "@opencode/client/effect"
 import { SessionID } from "@opencode/schema/session-id"
 import { createHash } from "node:crypto"
-import { readdir } from "node:fs/promises"
+import { readdir, rm } from "node:fs/promises"
 import path from "node:path"
 import electron, { type BrowserWindow } from "electron"
 import { Deferred, Effect, ManagedRuntime, Option, Predicate, Queue, Schedule, Schema, Stream } from "effect"
@@ -11,7 +11,7 @@ import { HttpClient, HttpClientRequest } from "effect/http"
 import type { BuiltinMainStorage } from "@opencode/plugin/gui/builtin"
 import type { Embeds, Persisted, ServerEndpoints, Windows } from "@opencode/plugin/gui/main"
 import { createBrowserPage, type BrowserPage, type ScrollPosition, type Shared } from "./chromium"
-import { runCookieCommand } from "./cookies"
+import { cookieURL, runCookieCommand } from "./cookies"
 import { browserFailure } from "./errors"
 import { createBrowserNetwork, type BrowserNetwork } from "./network"
 import { destinationOrigin, fileURLWithin, refusal } from "./policy"
@@ -31,6 +31,40 @@ type Target = { readonly server: string; readonly session: string; readonly rest
  */
 function partitionName(server: string, sessionID: string) {
   return `persist:opencode-browser-${createHash("sha256").update(server).digest("hex").slice(0, 12)}-${sessionID}`
+}
+
+/** The on-disk directory of a `persist:` partition, where Chromium owns its storage files. */
+function partitionDirectory(partition: string) {
+  return path.join(electron.app.getPath("userData"), "Partitions", partition.replace(/^persist:/, ""))
+}
+
+/**
+ * File-level wipe of a persistent partition's DOM storage databases. The API alternative -
+ * `session.clearStorageData()` - makes Chromium destroy the databases, and on this Chromium
+ * (152) a destroy it cannot finish, on files that are locked or half-rebuilt, becomes a task
+ * that re-posts itself with no backoff: tens of MB a second of queued open tasks until the
+ * process dies. Removing the files while no page is loading sidesteps that path entirely.
+ *
+ * Session storage is always cleared: its specified scope is one browsing session, and a revived
+ * tab reloads its page anyway. Local storage goes with a deleted session (`all`), or on any
+ * register once a half-finished rebuild marker is on disk - the state whose repair already
+ * failed once and loops on the next attempt. Returns whether the partition directory exists, so
+ * callers can skip a partition that was never used.
+ */
+async function clearPartitionFiles(partition: string, all: boolean) {
+  const dir = partitionDirectory(partition)
+  const names = await readdir(dir).catch(() => undefined)
+
+  if (!names) return false
+
+  const wipeLocal = all || names.some((name) => name.startsWith("Local Storage__tmp_for_rebuild"))
+  const doomed = names.filter((name) => name.startsWith("Session Storage") || (wipeLocal && name.startsWith("Local Storage")))
+
+  await Promise.all(
+    doomed.map((name) => rm(path.join(dir, name), { recursive: true, maxRetries: 3, retryDelay: 100 }).catch(() => undefined)),
+  )
+
+  return true
 }
 
 type Entry = {
@@ -177,6 +211,16 @@ export function createBrowserPane(input: {
       }
 
       entries.set(binding, entry)
+
+      // Chromium 152 retries a failed or half-rebuilt DOM storage open by re-posting its own
+      // open task with no backoff, leaking tens of MB a second in queued tasks until the process
+      // dies. Session storage's scope is one browsing session anyway, and a database a previous
+      // repair abandoned is poisoned until its files are gone, so a registering pane starts on
+      // cleared files. Another live pane can share the partition (two windows, one session):
+      // its pages, and the files they hold open, stay untouched.
+      if (Array.from(entries.values()).every((other) => other === entry || other.partition !== entry.partition))
+        await clearPartitionFiles(entry.partition, false)
+
       void runtime
         .runPromise(
           Effect.gen(function* () {
@@ -477,8 +521,11 @@ export function createBrowserPane(input: {
 
   /**
    * A deleted session's browser goes with it: panes showing it close, its restored tabs are
-   * forgotten, and its partition is emptied. The directory itself stays - Electron has no
-   * partition-delete API and Chromium owns its files - but no cookie or site data survives.
+   * forgotten, and its partition is emptied. The cookies - the secret half of the jar - go
+   * through the cookies API, the one delete that lands while Chromium still holds the files
+   * open; the databases go at the file level (see clearPartitionFiles). The partition's own
+   * clearStorageData() is deliberately not used: its destroy step is what Chromium 152 turns
+   * into an endless retry loop when a file is locked.
    */
   function purge(server: string, sessionID: string) {
     const key = `${server}\n${sessionID}`
@@ -487,10 +534,21 @@ export function createBrowserPane(input: {
       if (entry.storageKey === key) close(entry)
     })
     restore.remove(key)
-    void electron.session
-      .fromPartition(partitionName(server, sessionID))
-      .clearStorageData()
-      .catch(() => undefined)
+
+    const partition = partitionName(server, sessionID)
+
+    void clearPartitionFiles(partition, true).then((existed) => {
+      if (!existed) return
+
+      const jar = electron.session.fromPartition(partition).cookies
+
+      return jar
+        .get({})
+        .then((cookies) =>
+          Promise.all(cookies.map(async (cookie) => jar.remove(cookieURL(cookie), cookie.name).catch(() => undefined))),
+        )
+        .catch(() => undefined)
+    })
   }
 
   /**
