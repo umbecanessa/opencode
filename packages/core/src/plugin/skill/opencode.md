@@ -421,6 +421,60 @@ Caveats of execution-over-ssh:
   (no ControlPath support there), so file operations pay a fresh handshake
   each time.
 
+## Project memory
+
+OpenCode keeps a per-project knowledge graph: durable entities, facts, and
+decisions (preferences, constraints, lessons) learned from past sessions in the
+same project. It is enabled by default. Set `experimental.memory` to `false`
+to turn it off for a project:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "memory": false
+  }
+}
+```
+
+When enabled, an agent working in the project sees:
+
+- A short project card in context listing the highest-importance records.
+  Records are leads, not ground truth: verify against the live repo before
+  relying on one.
+- `memory_search` — full-text (plus semantic) lookup of stored records,
+  returning ids, kinds, status, confidence, and the graph neighborhood.
+- `memory_write` — batched graph edits: `remember` an entity,
+  subject-predicate-object fact, or note; `link` two entities with a relation;
+  `forget` a record by the id from a `memory_search` result. Retiring a stale
+  record beats deleting it: superseded records stay visible with a retired
+  status. Writes gate on a `memory_write` permission action.
+- Automatic capture: when a session goes idle, the transcript is reviewed once
+  and worth-remembering records are extracted without the agent being asked.
+
+Semantic recall is optional. Point OpenCode at any OpenAI-compatible
+embeddings endpoint (for example a local vLLM server); when it is unreachable,
+recall falls back to full-text only:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "experimental": {
+    "memory": {
+      "embedding": {
+        "url": "http://127.0.0.1:8000/v1",
+        "model": "the-embedding-model-id"
+      }
+    }
+  }
+}
+```
+
+`url` defaults to `http://127.0.0.1:8000/v1`; `model` defaults to the first
+model the endpoint serves that looks like an embeddings model. Memories are
+stored in OpenCode's central database, scoped per project. The desktop app
+shows the graph in a Memory side panel with live updates.
+
 ## [Troubleshooting](https://opencode.ai/v2/docs/troubleshooting)
 
 OpenCode runs a client and a background server. Start by determining whether a
