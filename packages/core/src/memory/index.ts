@@ -1,5 +1,6 @@
 export * as Memory from "./index.js"
 
+import path from "node:path"
 import { Buffer } from "node:buffer"
 import { and, count, desc, eq, gt, or, sql, type SQLWrapper } from "drizzle-orm"
 import { Context, Effect, Layer, Option, Schema } from "effect"
@@ -8,9 +9,19 @@ import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
 import { Config } from "../config.js"
 import { Database } from "../database/database.js"
+import { KV } from "../kv.js"
 import { Location } from "../location.js"
+import { MemoryLocal } from "./local.js"
 import { MemoryEdgeTable, MemoryNodeTable } from "./sql.js"
+import { Global } from "@opencode/util/global"
 import type { Memory as MemoryContract } from "@opencode/schema/memory"
+
+type EmbeddingSettingsShape = {
+  readonly mode?: "auto" | "remote" | "local" | "off"
+  readonly url?: string
+  readonly model?: string
+  readonly localModel?: string
+}
 
 export type Node = MemoryContract.Node
 export type Edge = MemoryContract.Edge
@@ -60,6 +71,20 @@ export interface Interface {
   readonly list: (input: { readonly after?: string; readonly limit?: number }) => Effect.Effect<ListPage>
   /** Soft delete: the record becomes history, matching how superseded facts are kept. */
   readonly forget: (id: string) => Effect.Effect<boolean>
+  /** Effective embedding-source state for the settings UI, including local-model download progress. */
+  readonly embeddingInfo: () => Effect.Effect<MemoryContract.EmbeddingInfo>
+  /** Probe an OpenAI-compatible endpoint from the server: served models and a test embedding. */
+  readonly embeddingCheck: (input: {
+    readonly url?: string
+    readonly model?: string
+  }) => Effect.Effect<MemoryContract.EmbeddingProbe>
+  /** Persist the machine-wide embedding preference; merged into the stored settings, then re-resolved. */
+  readonly embeddingSet: (input: {
+    readonly mode?: "auto" | "remote" | "local" | "off"
+    readonly url?: string
+    readonly model?: string
+    readonly localModel?: string
+  }) => Effect.Effect<MemoryContract.EmbeddingInfo>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Memory") {}
@@ -72,6 +97,8 @@ const FTS_TERMS = 12
 const EMBEDDING_SCAN_LIMIT = 10_000
 const DEFAULT_EMBEDDING_URL = "http://127.0.0.1:8000/v1"
 const EMBEDDING_TIMEOUT = "10 seconds"
+const EMBEDDING_SETTINGS_KEY = "memory.embedding"
+const EMBEDDING_TAG_PREFIX = "memory.embedding.tag."
 
 const ModelsResponse = Schema.Struct({ data: Schema.Array(Schema.Struct({ id: Schema.String })) })
 const EmbeddingsRequest = Schema.Struct({ model: Schema.String, input: Schema.Array(Schema.String) })
@@ -79,7 +106,24 @@ const EmbeddingsResponse = Schema.Struct({
   data: Schema.Array(Schema.Struct({ embedding: Schema.Array(Schema.Number) })),
 })
 
-type Route = { readonly url: string; readonly model: string }
+type EmbedSource = { readonly kind: "remote"; readonly url: string; readonly model: string } | { readonly kind: "local"; readonly model: string }
+
+/** Narrow the untrusted kv JSON back to the stored embedding settings; anything else reads as unset. */
+function readEmbeddingSettings(value: unknown): EmbeddingSettingsShape | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const record = value as Record<string, unknown>
+  const text = (field: string) => (typeof record[field] === "string" ? (record[field] as string) : undefined)
+  const mode = text("mode")
+  const settings: EmbeddingSettingsShape = {
+    mode: mode === "auto" || mode === "remote" || mode === "local" || mode === "off" ? mode : undefined,
+    url: text("url"),
+    model: text("model"),
+    localModel: text("localModel"),
+  }
+  return settings.mode === undefined && settings.url === undefined && settings.model === undefined && settings.localModel === undefined
+    ? undefined
+    : settings
+}
 
 const clamp = (value: number | undefined, fallback: number) =>
   value === undefined ? fallback : Math.min(Math.max(value, 0), 1)
@@ -182,11 +226,32 @@ const layer = Layer.effect(
     const db = (yield* Database.Service).db
     const location = yield* Location.Service
     const config = yield* Config.Service
+    const global = yield* Global.Service
+    const kv = yield* KV.Service
     const http = HttpClient.filterStatusOk(yield* HttpClient.HttpClient)
     const projectID = location.project.id
-    // The embedding route is resolved once per location boot. An unreachable endpoint is resolved
-    // to none as well, so recall degrades to keyword-only instead of probing on every operation.
-    let embedding: Option.Option<Route> | undefined
+    const scope = yield* Effect.scope
+    // The embedding source is resolved once per location boot. An unreachable endpoint is resolved
+    // to its fallback (local model, then keyword-only) once as well, so recall never probes per
+    // operation.
+    let embedding: Option.Option<EmbedSource> | undefined
+    let backfillStarted = false
+
+    // Stored settings are machine-wide: the embedding endpoint or local model choice belongs to
+    // the machine, not one project.
+    const readSettings = Effect.fn("Memory.readSettings")(function* () {
+      const stored = readEmbeddingSettings(yield* kv.get(EMBEDDING_SETTINGS_KEY))
+      const memory = Config.latest(yield* config.entries(), "experimental")?.memory
+      const configured = typeof memory === "object" ? memory.embedding : undefined
+      return {
+        stored,
+        mode: stored?.mode ?? "auto",
+        url: stored?.url ?? configured?.url ?? DEFAULT_EMBEDDING_URL,
+        model: stored?.model ?? configured?.model,
+        localModel: stored?.localModel ?? MemoryLocal.DEFAULT_LOCAL_MODEL,
+        from: stored !== undefined ? ("stored" as const) : configured?.url !== undefined ? ("config" as const) : ("default" as const),
+      }
+    })
 
     const probe = Effect.fn("Memory.probe")(function* (base: string) {
       const models = yield* http
@@ -196,23 +261,78 @@ const layer = Layer.effect(
           Effect.timeout(EMBEDDING_TIMEOUT),
           Effect.catch(() => Effect.succeed(undefined)),
         )
-      if (models === undefined) return Option.none<Route>()
+      if (models === undefined) return Option.none<EmbedSource>()
       const served = models.data.map((model) => model.id)
       // A server serving only one model probably serves it as embeddings.
       const model = served.find((name) => /embed/i.test(name)) ?? (served.length === 1 ? served[0] : undefined)
-      return model === undefined ? Option.none<Route>() : Option.some<Route>({ url: base, model })
+      return model === undefined ? Option.none<EmbedSource>() : Option.some<EmbedSource>({ kind: "remote", url: base, model })
+    })
+
+    // When the resolved source changed since records were last embedded (first boot with local
+    // vectors after an upgrade, or a settings change), re-embed current records in the background
+    // so semantic search spans the whole graph, not only new records.
+    // The explicit type ends the embed → embedder → backfill → embed inference cycle.
+    const backfill: (key: string) => Effect.Effect<void> = Effect.fn("Memory.backfill")(function* (key: string) {
+      const tagKey = `${EMBEDDING_TAG_PREFIX}${projectID}`
+      if ((yield* kv.get(tagKey)) === key) return
+      const rows = yield* db
+        .select({
+          id: MemoryNodeTable.id,
+          title: MemoryNodeTable.title,
+          text: MemoryNodeTable.text,
+          subject: MemoryNodeTable.subject,
+          predicate: MemoryNodeTable.predicate,
+          object: MemoryNodeTable.object,
+        })
+        .from(MemoryNodeTable)
+        .where(eq(MemoryNodeTable.status, "current"))
+        .all()
+        .pipe(Effect.orDie)
+      const ids = rows.map((row) => row.id)
+      const texts = rows.map((row) =>
+        [row.title, row.text, row.subject === null ? "" : `${row.subject} ${row.predicate ?? ""} ${row.object ?? ""}`]
+          .filter((part): part is string => part !== null && part !== "")
+          .join(". "),
+      )
+      for (let index = 0; index < ids.length; index += 32) {
+        const vectors = yield* embed(texts.slice(index, index + 32))
+        if (vectors === undefined) break
+        for (let offset = 0; offset < vectors.length; offset++) {
+          const vector = vectors[offset]
+          if (vector === undefined) continue
+          yield* db
+            .update(MemoryNodeTable)
+            .set({ embedding: Buffer.from(vector.buffer) })
+            .where(eq(MemoryNodeTable.id, ids[index + offset]!))
+            .run()
+            .pipe(Effect.orDie)
+        }
+      }
+      yield* kv.set(tagKey, key)
     })
 
     const embedder = Effect.fn("Memory.embedder")(function* () {
       if (embedding !== undefined) return embedding
-      const memory = Config.latest(yield* config.entries(), "experimental")?.memory
-      const configured = typeof memory === "object" ? memory.embedding : undefined
-      const base = configured?.url ?? DEFAULT_EMBEDDING_URL
-      const next: Option.Option<Route> =
-        configured?.model === undefined
-          ? yield* probe(base)
-          : Option.some<Route>({ url: base, model: configured.model })
+      const settings = yield* readSettings()
+      let next: Option.Option<EmbedSource> = Option.none()
+      let key = "off"
+      if (settings.mode === "remote") {
+        next = yield* probe(settings.url)
+        key = `remote:${settings.url}`
+      } else if (settings.mode === "local") {
+        next = Option.some<EmbedSource>({ kind: "local", model: settings.localModel })
+        key = `local:${settings.localModel}`
+      } else if (settings.mode === "auto") {
+        const remote = yield* probe(settings.url)
+        // With an explicit model there is nothing to probe; trust the configured endpoint.
+        next = settings.model !== undefined ? Option.some<EmbedSource>({ kind: "remote", url: settings.url, model: settings.model }) : Option.isSome(remote) ? remote : Option.some<EmbedSource>({ kind: "local", model: settings.localModel })
+        key = Option.isSome(next) && next.value.kind === "remote" ? `remote:${next.value.url}#${next.value.model}` : `local:${settings.localModel}`
+      }
       embedding = next
+      if (Option.isSome(next) && !backfillStarted) {
+        backfillStarted = true
+        yield* backfill(key).pipe(Effect.catchCause(() => Effect.void), Effect.forkIn(scope))
+      }
       return next
     })
 
@@ -222,6 +342,8 @@ const layer = Layer.effect(
       if (texts.length === 0) return undefined
       const resolved = yield* embedder()
       if (Option.isNone(resolved)) return undefined
+      if (resolved.value.kind === "local")
+        return (yield* MemoryLocal.embed(texts, resolved.value.model, path.join(global.data, "memory")))?.map((vector) => Float32Array.from(vector))
       const result = yield* HttpClientRequest.post(`${resolved.value.url}/embeddings`)
         .pipe(
           HttpClientRequest.schemaBodyJson(EmbeddingsRequest)({ model: resolved.value.model, input: texts }),
@@ -772,12 +894,80 @@ const layer = Layer.effect(
       return rows.length > 0
     })
 
-    return Service.of({ remember, link, search, overview, neighbors, list, forget })
+    const embeddingInfo = Effect.fn("Memory.embeddingInfo")(function* () {
+      const settings = yield* readSettings()
+      const local = MemoryLocal.current()
+      return {
+        mode: settings.mode,
+        source: settings.from,
+        url: settings.url,
+        model: settings.model,
+        localModel: settings.localModel,
+        local:
+          local.state === "downloading"
+            ? { state: local.state, percent: local.percent }
+            : local.state === "failed"
+              ? { state: local.state, error: local.error }
+              : { state: local.state },
+      } satisfies MemoryContract.EmbeddingInfo
+    })
+
+    // Probe from the server so the settings UI never fetches cross-origin, and prove the endpoint
+    // with one real /embeddings call; a /models-only server is not an embeddings server.
+    const embeddingCheck = Effect.fn("Memory.embeddingCheck")(function* (input: { url?: string; model?: string }) {
+      const base = (input.url ?? DEFAULT_EMBEDDING_URL).replace(/\/+$/, "")
+      const models = yield* http
+        .execute(HttpClientRequest.get(`${base}/models`).pipe(HttpClientRequest.acceptJson))
+        .pipe(
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(ModelsResponse)),
+          Effect.timeout(EMBEDDING_TIMEOUT),
+          Effect.asSome,
+          Effect.catch(() => Effect.succeed(Option.none())),
+        )
+      if (Option.isNone(models)) return { reachable: false, models: [] }
+      const served = models.value.data.map((model) => ({
+        id: model.id,
+        embeddings: /embed/i.test(model.id) || models.value.data.length === 1,
+      }))
+      const picked = input.model ?? served.find((model) => model.embeddings)?.id
+      if (picked === undefined) return { reachable: true, models: served }
+      const sample = yield* HttpClientRequest.post(`${base}/embeddings`)
+        .pipe(
+          HttpClientRequest.schemaBodyJson(EmbeddingsRequest)({ model: picked, input: ["ping"] }),
+          Effect.flatMap((request) => http.execute(request)),
+          Effect.flatMap(HttpClientResponse.schemaBodyJson(EmbeddingsResponse)),
+          Effect.timeout(EMBEDDING_TIMEOUT),
+          Effect.as(true),
+          // Status codes are erased by filterStatusOk; the exact reason lives in the server logs.
+          Effect.catch(() => Effect.succeed("request failed")),
+        )
+      return { reachable: true, models: served, sample: { model: picked, ok: sample === true, error: sample === true ? undefined : String(sample) } }
+    })
+
+    const embeddingSet = Effect.fn("Memory.embeddingSet")(function* (input: EmbeddingSettingsShape) {
+      const stored = readEmbeddingSettings(yield* kv.get(EMBEDDING_SETTINGS_KEY))
+      const next = { ...stored, ...input }
+      const empty = Object.values(next).every((value) => value === undefined)
+      if (empty) yield* kv.remove(EMBEDDING_SETTINGS_KEY)
+      else yield* kv.set(EMBEDDING_SETTINGS_KEY, next)
+      // The next operation re-resolves, re-probes, and re-runs the backfill check under the new key.
+      embedding = undefined
+      backfillStarted = false
+      MemoryLocal.reset()
+      // Choosing local should start the model download right away, so the settings page can show
+      // its progress; one throwaway embed warms the pipeline without touching any record.
+      const warmup = yield* embedder()
+      if (Option.isSome(warmup) && warmup.value.kind === "local")
+        yield* embed(["warmup"]).pipe(Effect.asVoid, Effect.catchCause(() => Effect.void), Effect.forkIn(scope))
+      return yield* embeddingInfo()
+    })
+
+    return Service.of({ remember, link, search, overview, neighbors, list, forget, embeddingInfo, embeddingCheck, embeddingSet })
   }),
 )
 
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Database.node, Location.node, Config.node, httpClient],
+  deps: [Database.node, Location.node, Config.node, Global.node, KV.node, httpClient],
 })

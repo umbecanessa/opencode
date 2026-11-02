@@ -102,6 +102,7 @@
     "@effect/sql-sqlite-node": "catalog:",
     "@ff-labs/fff-bun": "0.10.5",
     "@ff-labs/fff-node": "0.10.5",
+    "@huggingface/transformers": "4.3.1",
     "@lydell/node-pty": "catalog:",
     "@modelcontextprotocol/client": "2.3.1",
     "@modelcontextprotocol/core": "2.3.1",

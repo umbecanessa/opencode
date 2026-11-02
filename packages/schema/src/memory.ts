@@ -109,6 +109,64 @@ export const ListPage = Schema.Struct({
 }).annotate({ identifier: "Memory.ListPage" })
 
 /**
+ * The embedding-endpoint preference. An empty object clears stored choices back to config and
+ * defaults. `mode` picks where vectors come from; `url`/`model` steer a remote endpoint;
+ * `localModel` names the auto-downloaded model for local mode.
+ */
+export interface EmbeddingSettings extends Schema.Schema.Type<typeof EmbeddingSettings> {}
+export const EmbeddingSettings = Schema.Struct({
+  /** auto = remote endpoint if reachable, else the local model; remote = endpoint only; local = built-in model only; off = keyword search only. */
+  mode: Schema.optional(Schema.Literals(["auto", "remote", "local", "off"])),
+  /** Base URL of an OpenAI-compatible endpoint, e.g. http://192.168.1.9:8000/v1. */
+  url: optional(Schema.String),
+  /** Model served at that endpoint to embed with. When omitted, the endpoint is probed. */
+  model: optional(Schema.String),
+  /** HuggingFace model id used for local embeddings. Defaults to a small English BGE model. */
+  localModel: optional(Schema.String),
+}).annotate({ identifier: "Memory.EmbeddingSettings" })
+
+/** What semantic recall resolves to right now, and how the local model is doing. */
+export interface EmbeddingInfo extends Schema.Schema.Type<typeof EmbeddingInfo> {}
+export const EmbeddingInfo = Schema.Struct({
+  mode: Schema.Literals(["auto", "remote", "local", "off"]).annotate({
+    description: "Effective mode: a stored choice, or auto when nothing was chosen",
+  }),
+  /** Where the mode and endpoint came from: stored settings, project config, or defaults. */
+  source: Schema.Literals(["stored", "config", "default"]),
+  url: optional(Schema.String),
+  model: optional(Schema.String),
+  localModel: Schema.String,
+  local: Schema.Struct({
+    state: Schema.Literals(["idle", "downloading", "ready", "failed"]),
+    percent: optional(Schema.Number),
+    error: optional(Schema.String),
+  }).annotate({ description: "Download/inference readiness of the local model" }),
+}).annotate({ identifier: "Memory.EmbeddingInfo" })
+
+/** Result of probing one embedding endpoint from the server, so the browser never fetches cross-origin. */
+export interface EmbeddingProbe extends Schema.Schema.Type<typeof EmbeddingProbe> {}
+export const EmbeddingProbe = Schema.Struct({
+  /** The endpoint answered /models. */
+  reachable: Schema.Boolean,
+  models: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      /** Name suggests an embeddings model; single-model servers count as one. */
+      embeddings: Schema.Boolean,
+    }),
+  ).annotate({ description: "Models the endpoint serves, best-guess embeddings-capable ones flagged" }),
+  /** A real /embeddings call with the picked (or best-guessed) model; absent when none was tried. */
+  sample: optional(
+    Schema.Struct({
+      model: Schema.String,
+      ok: Schema.Boolean,
+      /** Short failure text when ok is false, e.g. a 404 meaning the server serves no embeddings. */
+      error: optional(Schema.String),
+    }),
+  ),
+}).annotate({ identifier: "Memory.EmbeddingProbe" })
+
+/**
  * The `opencode.memory` plugin's RPC. Clients render the project knowledge graph with `overview`,
  * `search`, `nodes`, and `neighbors`, follow `changed` for live updates, and remove records with
  * `forget`. Reads never load the model: no LLM runs on any method. The schemas are Standard
@@ -140,6 +198,21 @@ export const Definition = Rpc.define({
     forget: {
       input: Schema.toStandardSchemaV1(Schema.Struct({ id: Schema.String })),
       output: Schema.toStandardSchemaV1(Schema.Boolean),
+    },
+    /** What semantic recall currently resolves to, including local-model download progress. */
+    embedding: {
+      input: Schema.toStandardSchemaV1(Schema.Struct({})),
+      output: Schema.toStandardSchemaV1(EmbeddingInfo),
+    },
+    /** Probe one OpenAI-compatible endpoint from the server: its models and a test embedding. */
+    checkEmbedding: {
+      input: Schema.toStandardSchemaV1(EmbeddingSettings),
+      output: Schema.toStandardSchemaV1(EmbeddingProbe),
+    },
+    /** Store the embedding preference (pass an empty object to clear it back to defaults). */
+    setEmbedding: {
+      input: Schema.toStandardSchemaV1(EmbeddingSettings),
+      output: Schema.toStandardSchemaV1(EmbeddingInfo),
     },
   },
   events: {

@@ -1,5 +1,6 @@
 import { lazy, onCleanup, Suspense } from "solid-js"
 import type { Plugin } from "@opencode/plugin/gui"
+import { SettingsPage } from "@opencode/plugin/gui"
 import { BuiltinPanel, onIdle, type BuiltinPanelTab } from "@opencode/plugin/gui/builtin"
 import type definition from "./index"
 
@@ -10,8 +11,35 @@ import type definition from "./index"
  */
 const setup: Plugin.Setup<typeof definition> = (ctx) => {
   const MemoryPanel = lazy(() => import("./panel"))
+  const MemorySettings = lazy(() => import("./settings"))
   // Compile the tab while the app idles, so the first open renders at once.
-  onCleanup(onIdle(() => void MemoryPanel.preload()))
+  onCleanup(onIdle(() => void Promise.all([MemoryPanel.preload(), MemorySettings.preload()])))
+
+  // The app's own server, whose ref is already authenticated in this window. Embedding settings
+  // are machine-wide, so the page works with no session routed.
+  const local = () =>
+    ctx.servers
+      .list()
+      .map((id) => ctx.servers.get(id))
+      .find((server) => server?.builtin)
+
+  ctx.add(SettingsPage, {
+    id: "memory",
+    icon: "brain",
+    get title() {
+      return ctx.t("title")
+    },
+    get entries() {
+      return [
+        { id: "memory-embeddings", title: ctx.t("settings.title"), keywords: "embedding vectors semantic local model search memory" },
+      ]
+    },
+    render: () => (
+      <Suspense fallback={<div class="min-h-16" />}>
+        <MemorySettings server={local} />
+      </Suspense>
+    ),
+  })
 
   const tab: BuiltinPanelTab = {
     id: "main",

@@ -76,6 +76,9 @@ export const Plugin = define({
         nodes: (input) => memory.list(input),
         neighbors: (input) => memory.neighbors(input.id).pipe(Effect.orDie),
         forget: (input) => memory.forget(input.id).pipe(Effect.tap((gone) => (gone ? notify() : Effect.void))),
+        embedding: () => memory.embeddingInfo(),
+        checkEmbedding: (input) => memory.embeddingCheck({ url: input.url, model: input.model }),
+        setEmbedding: (input) => memory.embeddingSet({ mode: input.mode, url: input.url, model: input.model, localModel: input.localModel }),
       })
       .pipe(Effect.orDie)
 

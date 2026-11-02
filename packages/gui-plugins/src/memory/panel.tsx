@@ -18,6 +18,8 @@ interface Row {
   via?: Memory.Via
 }
 
+type Filter = "all" | Memory.Kind
+
 interface State {
   status: "loading" | "ready" | "error"
   error: string
@@ -52,6 +54,7 @@ export default function MemoryPanel(props: { session: MountedSession }) {
   })
 
   const [query, setQuery] = createSignal("")
+  const [filter, setFilter] = createSignal<Filter>("all")
 
   const location = () => ({ directory: props.session.directory })
   const searching = () => store.results !== undefined
@@ -106,7 +109,7 @@ export default function MemoryPanel(props: { session: MountedSession }) {
 
     props.session.server.client
       .rpc(Memory.Definition)
-      .search({ query: text, limit: 12 }, { location: location(), signal: controller.signal })
+      .search({ query: text, limit: 24 }, { location: location(), signal: controller.signal })
       .then(
         (next) => {
           if (controller.signal.aborted) return
@@ -179,35 +182,43 @@ export default function MemoryPanel(props: { session: MountedSession }) {
       )
   }
 
+  const visible = (node: Memory.Node) => filter() === "all" || node.kind === filter()
+
   const rows = createMemo<Row[]>(() =>
-    searching()
-      ? (store.results?.matches ?? []).map((match) => ({ node: match.node, via: match.via }))
-      : (store.overview?.nodes ?? []).map((node) => ({ node })),
+    (searching() ? (store.results?.matches ?? []).map((match) => ({ node: match.node, via: match.via })) : (store.overview?.nodes ?? []).map((node) => ({ node }))).filter(
+      (row) => visible(row.node),
+    ),
   )
 
-  const counts = () => {
-    const value = store.overview?.counts
-
-    if (!value) return ""
+  const filters = createMemo(() => {
+    const counts = store.overview?.counts
 
     return [
-      ctx.plural("count.entities", value.entities),
-      ctx.plural("count.facts", value.facts),
-      ctx.plural("count.notes", value.notes),
-      ctx.plural("count.links", value.edges),
-    ].join(" · ")
-  }
+      { id: "all", label: ctx.t("filter.all"), count: searching() ? rows().length : counts ? counts.entities + counts.facts + counts.notes : undefined },
+      { id: "entity", label: ctx.t("kind.entity"), count: counts?.entities },
+      { id: "fact", label: ctx.t("kind.fact"), count: counts?.facts },
+      { id: "note", label: ctx.t("kind.note"), count: counts?.notes },
+    ] satisfies ReadonlyArray<{ id: Filter; label: string; count: number | undefined }>
+  })
 
   const line = (node: Memory.Node) =>
     node.triple
       ? `${node.triple.subject} ${node.triple.predicate.replaceAll("_", " ")} ${node.triple.object}`
-      : node.text
-        ? `${node.title}: ${node.text}`
-        : node.title
+      : node.title
+
+  const meta = (node: Memory.Node) => {
+    const age = relative(ctx, Date.now() - node.timeUpdated)
+
+    return [
+      `${ctx.t("confidence.title")} ${Math.round(node.confidence * 100)}%`,
+      `${ctx.t("importance.title")} ${Math.round(node.importance * 100)}%`,
+      age,
+    ].join(" · ")
+  }
 
   return (
     <div class="flex h-full min-h-0 flex-col bg-v2-background-bg-base">
-      <div class="shrink-0 px-3 pt-2 pb-2">
+      <div class="shrink-0 px-3 pt-2 pb-1.5">
         <div class="flex items-center gap-1.5 rounded-md border-[0.5px] border-v2-border-border-muted px-2 py-1">
           <input
             type="text"
@@ -232,10 +243,28 @@ export default function MemoryPanel(props: { session: MountedSession }) {
             </Button>
           </Show>
         </div>
+        <div class="mt-1.5 flex items-center gap-1 overflow-x-auto" data-scrollable>
+          <For each={filters()}>
+            {(item) => (
+              <button
+                type="button"
+                aria-pressed={filter() === item.id}
+                classList={{
+                  "shrink-0 rounded-full border-[0.5px] px-2 py-0.5 text-[10px] font-medium tracking-wide transition-colors": true,
+                  "border-v2-border-border-base text-v2-text-text-base": filter() === item.id,
+                  "border-v2-border-border-muted text-v2-text-text-muted hover:text-v2-text-text-base": filter() !== item.id,
+                }}
+                onClick={() => setFilter(item.id)}
+              >
+                {item.label}
+                <Show when={item.count !== undefined && item.id !== "all"}>
+                  <span class="ms-1 text-v2-text-text-muted">{item.count}</span>
+                </Show>
+              </button>
+            )}
+          </For>
+        </div>
       </div>
-      <Show when={store.status === "ready" && !searching() && store.overview !== undefined}>
-        <div class="shrink-0 px-3 pb-2 text-12-regular text-v2-text-text-muted">{counts()}</div>
-      </Show>
       <div class="min-h-0 flex-1 overflow-y-auto" data-scrollable>
         <Show when={store.status === "loading"}>
           <div class="flex items-center gap-2 px-3 py-2 text-12-regular text-v2-text-text-muted">
@@ -263,33 +292,52 @@ export default function MemoryPanel(props: { session: MountedSession }) {
         <For each={rows()}>
           {(row) => (
             <div class="group border-b-[0.5px] border-v2-border-border-muted/60 last:border-b-0">
-              <div class="flex items-start gap-2 px-3 py-1.5">
-                <button
-                  type="button"
-                  class="flex min-w-0 flex-1 items-start gap-2 text-left"
-                  onClick={() => toggle(row.node)}
-                >
-                  <span class="shrink-0 pt-px text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
-                    {ctx.t(`kind.${row.node.kind}`)}
+              <button
+                type="button"
+                class="flex w-full items-start gap-2 px-3 py-1.5 text-start transition-colors hover:bg-v2-background-bg-overlay/40"
+                aria-expanded={store.expanded === row.node.id}
+                onClick={() => toggle(row.node)}
+              >
+                <span class="mt-1 size-1.5 shrink-0 rounded-full bg-v2-text-text-muted/70" />
+                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span class="flex items-baseline gap-1.5">
+                    <span class="shrink-0 text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
+                      {ctx.t(`kind.${row.node.kind}`)}
+                    </span>
+                    <Show when={row.node.status === "superseded"}>
+                      <span class="shrink-0 text-[10px] text-v2-text-text-muted">{ctx.t("superseded")}</span>
+                    </Show>
+                    <Show when={row.via !== undefined}>
+                      <span class="shrink-0 ms-auto text-[10px] text-v2-text-text-muted">{ctx.t(`via.${row.via}`)}</span>
+                    </Show>
                   </span>
-                  <span class="line-clamp-2 min-w-0 flex-1 text-12-regular leading-[var(--line-height-compact)] text-v2-text-text-base">
+                  <span
+                    class={
+                      store.expanded === row.node.id
+                        ? "min-w-0 flex-1 text-12-regular leading-[var(--line-height-compact)] text-v2-text-text-base"
+                        : "line-clamp-2 min-w-0 flex-1 text-12-regular leading-[var(--line-height-compact)] text-v2-text-text-base"
+                    }
+                  >
                     {line(row.node)}
                   </span>
-                  <Show when={row.via !== undefined}>
-                    <span class="shrink-0 pt-px text-[10px] text-v2-text-text-muted">
-                      {ctx.t(`via.${row.via}`)}
+                  <Show when={store.expanded === row.node.id && row.node.text}>
+                    <span class="min-w-0 flex-1 pt-0.5 whitespace-pre-wrap text-12-regular leading-[var(--line-height-compact)] text-v2-text-text-muted">
+                      {row.node.text}
                     </span>
                   </Show>
-                </button>
-                <span
-                  class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
-                  title={`${ctx.t("confidence.title")}: ${row.node.confidence.toFixed(2)} · ${ctx.t("importance.title")}: ${row.node.importance.toFixed(2)}`}
-                >
+                </span>
+              </button>
+              <div class="flex items-center gap-1 px-3 pb-1.5">
+                <Show when={store.expanded === row.node.id}>
+                  <span class="min-w-0 flex-1 truncate text-[10px] text-v2-text-text-muted">{meta(row.node)}</span>
+                </Show>
+                <span class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
                   <Button
                     size="small"
                     variant="ghost-muted"
                     icon="outline-trash"
                     aria-label={ctx.t("forget")}
+                    title={`${ctx.t("confidence.title")}: ${row.node.confidence.toFixed(2)} · ${ctx.t("importance.title")}: ${row.node.importance.toFixed(2)}`}
                     onClick={() => forget(row.node)}
                   />
                 </span>
@@ -299,6 +347,11 @@ export default function MemoryPanel(props: { session: MountedSession }) {
                   <div class="ms-2 border-s-[0.5px] border-v2-border-border-muted ps-3 py-1">
                     <Show when={store.linking}>
                       <Spinner class="size-3 text-v2-text-text-muted" />
+                    </Show>
+                    <Show when={!store.linking && store.neighbors.length > 0}>
+                      <div class="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
+                        {ctx.t("links")}
+                      </div>
                     </Show>
                     <For each={store.neighbors}>
                       {(link) => (
@@ -310,7 +363,7 @@ export default function MemoryPanel(props: { session: MountedSession }) {
                       )}
                     </For>
                     <Show when={store.related.length > 0}>
-                      <div class="mt-1 text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
+                      <div class="mt-1.5 text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
                         {ctx.t("related")}
                       </div>
                       <For each={store.related}>
@@ -327,13 +380,11 @@ export default function MemoryPanel(props: { session: MountedSession }) {
           <div class="px-3 pt-2 text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
             {ctx.t("related")}
           </div>
-          <For each={store.results?.related ?? []}>
+          <For each={(store.results?.related ?? []).filter(visible)}>
             {(other) => (
               <div class="flex items-start gap-2 px-3 py-1">
-                <span class="shrink-0 pt-px text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted">
-                  {ctx.t(`kind.${other.kind}`)}
-                </span>
-                <span class="line-clamp-1 min-w-0 flex-1 text-12-regular text-v2-text-text-muted">{line(other)}</span>
+                <span class="mt-1 size-1.5 shrink-0 rounded-full bg-v2-text-text-muted/40" />
+                <span class="min-w-0 flex-1 text-12-regular text-v2-text-text-muted">{line(other)}</span>
               </div>
             )}
           </For>
@@ -346,6 +397,20 @@ export default function MemoryPanel(props: { session: MountedSession }) {
       </div>
     </div>
   )
+}
+
+function relative(ctx: { t: (key: string) => string; plural: (key: string, count: number) => string }, age: number) {
+  const minutes = Math.floor(age / 60_000)
+
+  if (minutes < 1) return ctx.t("age.now")
+
+  if (minutes < 60) return ctx.plural("age.minutes", minutes)
+
+  const hours = Math.floor(minutes / 60)
+
+  if (hours < 24) return ctx.plural("age.hours", hours)
+
+  return ctx.plural("age.days", Math.floor(hours / 24))
 }
 
 function reason(cause: unknown) {
