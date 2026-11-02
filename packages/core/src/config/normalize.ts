@@ -530,6 +530,15 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.artifacts = value
       }
+      if (own(experimental, "memory")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.memory,
+          experimental.memory,
+          ["experimental", "memory"],
+          diagnostics,
+        )
+        if (value !== undefined) result.memory = value
+      }
       if (own(experimental, "subagent_depth")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.subagent_depth,

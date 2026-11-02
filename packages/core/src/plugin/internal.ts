@@ -3,6 +3,7 @@ export * as PluginInternal from "./internal.js"
 import { LLMClient } from "@opencode/ai/effect"
 import type { Plugin } from "@opencode/plugin/effect/plugin"
 import { LayerNode } from "@opencode/util/effect/layer-node"
+import type { Generation } from "./service.js"
 import { httpClient } from "@opencode/util/effect/app-node-platform"
 import { AppProcess } from "@opencode/util/process"
 import { Context, Effect, Scope } from "effect"
@@ -40,6 +41,7 @@ import { Bus } from "../bus.js"
 import { Environment } from "../environment/index.js"
 import { FileAccess } from "../file-access.js"
 import { FileMutation } from "../file-mutation.js"
+import { FileWrite } from "../file-write.js"
 import { Formatter } from "../formatter.js"
 import { Generate } from "../generate.js"
 import { Form } from "../form.js"
@@ -53,6 +55,7 @@ import { Integration } from "../integration.js"
 import { Job } from "../job.js"
 import { KV } from "../kv.js"
 import { Location } from "../location.js"
+import { Memory } from "../memory/index.js"
 import { ModelsDev } from "../models-dev.js"
 import { Mcp } from "../mcp/index.js"
 import { Npm } from "@opencode/util/npm"
@@ -67,6 +70,7 @@ import { Session } from "../session.js"
 import { SessionCompaction } from "../session/compaction.js"
 import { SessionInstructions } from "../session/instructions.js"
 import { SubagentJob } from "../session/subagent-job.js"
+import { SharedCache } from "../shared-cache.js"
 import { Shell } from "../shell.js"
 import { ShellSelect } from "../shell/select.js"
 import { Snapshot } from "../snapshot.js"
@@ -102,6 +106,7 @@ import { CommandPlugin } from "./command.js"
 import { IdentityPlugin } from "./identity.js"
 import { PlanPlugin } from "./plan.js"
 import { GoalPlugin } from "./goal.js"
+import { MemoryPlugin } from "./memory.js"
 import { ModelsDevPlugin } from "./models-dev.js"
 import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
@@ -130,6 +135,7 @@ const services = [
   Environment.Service,
   FileAccess.Service,
   FileMutation.Service,
+  FileWrite.Service,
   Formatter.Service,
   Generate.Service,
   LocationWatcherPolicy.Service,
@@ -144,6 +150,7 @@ const services = [
   KV.Service,
   LLMClient.Service,
   Location.Service,
+  Memory.Service,
   ModelsDev.Service,
   Mcp.Service,
   Npm.Service,
@@ -160,6 +167,7 @@ const services = [
   SessionCompaction.Service,
   SessionInstructions.Service,
   SubagentJob.Service,
+  SharedCache.Service,
   Shell.Service,
   ShellSelect.Service,
   Snapshot.Service,
@@ -189,6 +197,7 @@ export const requirements = LayerNode.group([
   Environment.node,
   FileAccess.node,
   FileMutation.node,
+  FileWrite.node,
   Formatter.node,
   Generate.node,
   LocationWatcherPolicy.node,
@@ -205,6 +214,7 @@ export const requirements = LayerNode.group([
   Location.node,
   ModelsDev.node,
   Mcp.node,
+  Memory.node,
   Npm.node,
   PeerPlacements.node,
   PeerServers.node,
@@ -219,6 +229,7 @@ export const requirements = LayerNode.group([
   SessionCompaction.node,
   SessionInstructions.node,
   SubagentJob.node,
+  SharedCache.node,
   Shell.node,
   ShellSelect.node,
   Snapshot.node,
@@ -246,6 +257,7 @@ const pre = [
   PlanPlugin.Plugin,
   CommandPlugin.Plugin,
   GoalPlugin.Plugin,
+  MemoryPlugin.Plugin,
   SkillPlugin.Plugin,
   VcsHgPlugin.Plugin,
   ModelsDevPlugin,
@@ -308,10 +320,13 @@ export const list = Effect.fn("PluginInternal.list")(function* () {
   const context = Context.pick(...services)(yield* Effect.context<Requirements>())
   const resolve = (plugins: readonly InternalPlugin[]) =>
     plugins.map(
-      (plugin): Plugin => ({
-        id: plugin.id,
-        effect: (host) => plugin.effect(host).pipe(Effect.provide(context)),
-      }),
+      (plugin) =>
+        ({
+          id: plugin.id,
+          effect: (host) => plugin.effect(host).pipe(Effect.provide(context)),
+          revision: "internal",
+          source: { type: "builtin" },
+        }) satisfies Generation,
     )
   return {
     pre: resolve(pre),

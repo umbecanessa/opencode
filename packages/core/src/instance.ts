@@ -9,6 +9,7 @@ import { Config } from "./config.js"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Node } from "@opencode/util/effect/app-node"
 import { FileMutation } from "./file-mutation.js"
+import { FileWrite } from "./file-write.js"
 import { Environment } from "./environment/index.js"
 import { Formatter } from "./formatter.js"
 import { FileSystem } from "./filesystem.js"
@@ -26,6 +27,7 @@ import { FileAccess } from "./file-access.js"
 import { ModelResolver } from "./model-resolver.js"
 import { Mcp } from "./mcp/index.js"
 import { PeerServers } from "./peer-servers.js"
+import { Memory } from "./memory/index.js"
 import { Permission } from "./permission.js"
 import { Plugin } from "./plugin.js"
 import { PluginHooks } from "./plugin/hooks.js"
@@ -91,8 +93,10 @@ const nodes = [
   InstructionDiscovery.node,
   FileAccess.node,
   FileMutation.node,
+  FileWrite.node,
   Formatter.node,
   Mcp.node,
+  Memory.node,
   Permission.node,
   Tool.node,
   ToolOutput.node,
