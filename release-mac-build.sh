@@ -8,7 +8,7 @@ git fetch origin dev && git checkout -B dev origin/dev && git reset --hard origi
 export PATH="$HOME/.bun/bin:$PATH"
 step "bun install"
 bun install || exit 1
-export OPENCODE_VERSION=26.12.1
+export OPENCODE_VERSION=26.12.2
 # The login-keychain password stays off this script: read it from a 600-mode file
 # on the Mini (~/.opencode-release-keychain) or the KEYCHAIN_PASSWORD env var.
 KEYCHAIN_PASS="${KEYCHAIN_PASSWORD:-$(cat ~/.opencode-release-keychain 2>/dev/null)}"
