@@ -1,0 +1,7 @@
+Search this project's persistent knowledge graph: durable facts, decisions, constraints, and preferences learned across past sessions.
+
+Call this BEFORE answering questions about project history, architecture decisions, environment quirks, or "why/how/where" of past work — the graph is far cheaper than exploring the repo again. It is also worth a quick search near the start of unfamiliar work in a project you have touched before.
+
+The result lists matching records with their ids (needed by memory_write to retire stale ones) plus their graph neighborhood. Semantic matching is available when an embeddings endpoint is configured, so plain words work even if the exact phrasing differs.
+
+Memory is a hint, not ground truth: verify anything load-bearing against the live repository before acting on it.

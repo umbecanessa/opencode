@@ -26,6 +26,7 @@ import { LocationLifecycle } from "./location-lifecycle.js"
 import { FileAccess } from "./file-access.js"
 import { ModelResolver } from "./model-resolver.js"
 import { Mcp } from "./mcp/index.js"
+import { Memory } from "./memory/index.js"
 import { Permission } from "./permission.js"
 import { Plugin } from "./plugin.js"
 import { PluginHooks } from "./plugin/hooks.js"
@@ -93,6 +94,7 @@ const nodes = [
   FileWrite.node,
   Formatter.node,
   Mcp.node,
+  Memory.node,
   Permission.node,
   Tool.node,
   ToolOutput.node,

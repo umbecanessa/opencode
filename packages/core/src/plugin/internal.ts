@@ -54,6 +54,7 @@ import { Integration } from "../integration.js"
 import { Job } from "../job.js"
 import { KV } from "../kv.js"
 import { Location } from "../location.js"
+import { Memory } from "../memory/index.js"
 import { ModelsDev } from "../models-dev.js"
 import { Mcp } from "../mcp/index.js"
 import { Npm } from "@opencode/util/npm"
@@ -101,6 +102,7 @@ import { CommandPlugin } from "./command.js"
 import { IdentityPlugin } from "./identity.js"
 import { PlanPlugin } from "./plan.js"
 import { GoalPlugin } from "./goal.js"
+import { MemoryPlugin } from "./memory.js"
 import { ModelsDevPlugin } from "./models-dev.js"
 import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
@@ -144,6 +146,7 @@ const services = [
   KV.Service,
   LLMClient.Service,
   Location.Service,
+  Memory.Service,
   ModelsDev.Service,
   Mcp.Service,
   Npm.Service,
@@ -204,6 +207,7 @@ export const requirements = LayerNode.group([
   Location.node,
   ModelsDev.node,
   Mcp.node,
+  Memory.node,
   Npm.node,
   Permission.node,
   Form.node,
@@ -243,6 +247,7 @@ const pre = [
   PlanPlugin.Plugin,
   CommandPlugin.Plugin,
   GoalPlugin.Plugin,
+  MemoryPlugin.Plugin,
   SkillPlugin.Plugin,
   VcsHgPlugin.Plugin,
   ModelsDevPlugin,

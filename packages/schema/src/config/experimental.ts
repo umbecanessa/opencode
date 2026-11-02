@@ -40,6 +40,26 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
   artifacts: Schema.Boolean.pipe(optional).annotate({
     description: "Enable experimental artifacts backed by pluggable providers. Defaults to false.",
   }),
+  memory: Schema.Union([
+    Schema.Boolean,
+    Schema.Struct({
+      embedding: Schema.Struct({
+        url: Schema.String.pipe(optional).annotate({
+          description:
+            "Base URL of an OpenAI-compatible embeddings endpoint, e.g. http://127.0.0.1:8000/v1 for a local vLLM server. Defaults to http://127.0.0.1:8000/v1.",
+        }),
+        model: Schema.String.pipe(optional).annotate({
+          description:
+            "Embedding model id served at that endpoint. When omitted, the first model served whose name suggests embeddings (or the only model served) is used.",
+        }),
+      }).pipe(optional),
+    }),
+  ])
+    .pipe(optional)
+    .annotate({
+      description:
+        "Enable the experimental per-project knowledge graph: memory tools, automatic capture at session idle, and an injected project card. With an embedding block, recall also uses semantic similarity against a local embeddings endpoint. Defaults to false.",
+    }),
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
     description: "Maximum subagent nesting depth. Defaults to 1.",
   }),

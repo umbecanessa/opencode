@@ -1,0 +1,20 @@
+Write to this project's persistent knowledge graph. Pass a batch of operations; each is remembered, linked, or forgotten.
+
+Save proactively, without being asked, when you learn something durable:
+- decisions with their reasoning, constraints, and rules ("we chose X because Y", "never do Z in this repo")
+- environment and setup facts that took effort to discover (ports, services, credentials locations, tool quirks)
+- corrections the user gave you, and preferences they expressed
+- dependency and ownership relationships between services, modules, or files (kind "fact" with subject/predicate/object)
+
+Skip what is trivia: facts readable from the repo in seconds, one-off debugging noise, secrets (they are stripped anyway), and anything already in the project's instruction files.
+
+Record shapes:
+- kind "fact": subject + predicate (snake_case relation) + object. Re-stating the same (subject, predicate) with a new object supersedes the old fact automatically — history is kept, not destroyed.
+- kind "note": title + text. A decision, preference, or lesson. Re-using an existing title updates that note.
+- kind "entity": just a name, to pin a thing into the graph before linking it.
+- link: connect two entities by name with a snake_case relation.
+- forget: retire a record by id after you have confirmed it is wrong or obsolete (ids come from memory_search). Do not retire records merely because the code changed downstream — supersede the fact instead.
+
+Set confidence (1 for what you directly observed, lower for inference) and importance (high for records every future session should see without searching).
+
+Prefer calling memory_search first so you update rather than duplicate.
