@@ -58,7 +58,7 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
     .pipe(optional)
     .annotate({
       description:
-        "Enable the experimental per-project knowledge graph: memory tools, automatic capture at session idle, and an injected project card. With an embedding block, recall also uses semantic similarity against a local embeddings endpoint. Defaults to false.",
+        "Enable the experimental per-project knowledge graph: memory tools, automatic capture at session idle, and an injected project card. Enabled by default; set false to disable. With an embedding block, recall also uses semantic similarity against a local embeddings endpoint.",
     }),
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
     description: "Maximum subagent nesting depth. Defaults to 1.",

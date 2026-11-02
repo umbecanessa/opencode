@@ -63,10 +63,8 @@ export const Plugin = define({
 
     // Internal plugins are not re-run on config changes, so reload the tool transform instead.
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.tool.reload())
-    const enabled = () => {
-      const setting = Config.latest(loaded.entries, "experimental")?.memory
-      return setting !== undefined && setting !== false
-    }
+    // Memory is on by default; projects opt out with `experimental.memory: false`.
+    const enabled = () => Config.latest(loaded.entries, "experimental")?.memory !== false
 
     // The forget handler cannot reference `rpc` inside the registration object (its type is
     // still being inferred there), so the event emitter is wired in right after registration.
