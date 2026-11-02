@@ -4,7 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { makeGlobalNode } from "@opencode/util/effect/app-node"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Redacted, Schema } from "effect"
 import { ChildProcess } from "effect/process"
 import { ChildProcessSpawner, make } from "effect/process/ChildProcessSpawner"
 import { systemError } from "effect/PlatformError"
@@ -27,6 +27,9 @@ const Binding = Schema.Struct({
 
 // POSIX quoting for the single string ssh hands to the remote shell.
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
+
+const unword = (value: string | Redacted.Redacted<string>) =>
+  Redacted.isRedacted(value) ? Redacted.value(value) : value
 
 // The remote login environment is authoritative: forwarding the local PATH or HOME
 // would poison the remote host. Locale and terminal hints are the exception because
@@ -71,9 +74,12 @@ const sshSpawner = (local: ChildProcessSpawner["Service"], target: Target) =>
         )
       const invocation = translate(target, {
         command: command.command,
-        args: command.args,
+        // Command args and env carry Redacted variants for secrets; the remote shell needs the underlying text.
+        args: command.args.map(unword),
         ...(command.options.cwd === undefined ? {} : { cwd: command.options.cwd }),
-        ...(command.options.env === undefined ? {} : { env: command.options.env }),
+        ...(command.options.env === undefined
+          ? {}
+          : { env: Object.fromEntries(Object.entries(command.options.env).map(([key, value]) => [key, value === undefined ? undefined : unword(value)])) }),
       })
       // cwd and the forwarded env moved into the remote string; a local shell wrapper
       // would re-quote the remote string, so both are stripped from the ssh spawn.
