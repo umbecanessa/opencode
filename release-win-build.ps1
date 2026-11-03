@@ -1,11 +1,14 @@
 $ErrorActionPreference = "Continue"
-$log = "C:\Users\umber\opencode-src-memory\win-release.log"
+# Builds the checkout this script lives in; on a release run that tree must be at
+# the intended release commit (the mac side does an explicit reset to fork/dev).
+$log = Join-Path $PSScriptRoot "win-release.log"
 $env:OPENCODE_VERSION = "26.12.3"
-Set-Location C:\Users\umber\opencode-src-memory\packages\cli
+"=== head $(git -C $PSScriptRoot log --oneline -1)" | Add-Content $log
+Set-Location (Join-Path $PSScriptRoot "packages\cli")
 "=== cli build $(Get-Date -Format T)" | Add-Content $log
 bun run build 2>&1 | Add-Content $log
 if ($LASTEXITCODE) { "cli build FAILED $LASTEXITCODE" | Add-Content $log; exit 1 }
-Set-Location C:\Users\umber\opencode-src-memory\packages\desktop
+Set-Location (Join-Path $PSScriptRoot "packages\desktop")
 "=== desktop build $(Get-Date -Format T)" | Add-Content $log
 bun run build 2>&1 | Add-Content $log
 if ($LASTEXITCODE) { "desktop build FAILED $LASTEXITCODE" | Add-Content $log; exit 1 }
