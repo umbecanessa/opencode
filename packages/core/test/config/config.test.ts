@@ -350,6 +350,29 @@ describe("Config", () => {
     ),
   )
 
+  it.live("keeps experimental.spawn_model loaded from configuration files", () =>
+    Effect.acquireDisposable(Effect.promise(() => tmpdir())).pipe(
+      Effect.flatMap((tmp) => {
+        const root = path.join(tmp.path, "project")
+        return Effect.promise(async () => {
+          await fs.mkdir(path.join(root, "global"), { recursive: true })
+          await fs.mkdir(root, { recursive: true })
+          await fs.writeFile(
+            path.join(root, "global", "opencode.json"),
+            JSON.stringify({ experimental: { spawn_model: "acme/spawn-test" } }),
+          )
+        }).pipe(
+          Effect.andThen(
+            Effect.gen(function* () {
+              const config = yield* Config.Service
+              expect(Config.latest(yield* config.entries(), "experimental")?.spawn_model).toBe("acme/spawn-test")
+            }).pipe(Effect.provide(testLayer(root))),
+          ),
+        )
+      }),
+    ),
+  )
+
   test("resolves the system configuration directory per platform", () => {
     expect(ConfigDiscovery.systemDirectory("darwin", {})).toBe(
       AbsolutePath.make("/Library/Application Support/opencode"),
