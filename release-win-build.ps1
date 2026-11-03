@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Continue"
 $log = "C:\Users\umber\opencode-src-memory\win-release.log"
-$env:OPENCODE_VERSION = "26.12.2"
+$env:OPENCODE_VERSION = "26.12.3"
 Set-Location C:\Users\umber\opencode-src-memory\packages\cli
 "=== cli build $(Get-Date -Format T)" | Add-Content $log
 bun run build 2>&1 | Add-Content $log
