@@ -17,7 +17,7 @@ step "keychains"
 KC=$HOME/Library/Keychains/build.keychain-db
 security unlock-keychain -p "$(cat ~/signing/.keychain-pass)" "$KC" || exit 1
 security default-keychain -d user -s "$KC" || exit 1
-security default-keychain -d user | grep -q build.keychain || exit 1
+security default-keychain -d user | grep build.keychain || exit 1
 security list-keychains -d user -s "$KC" "$HOME/Library/Keychains/login.keychain-db" || exit 1
 # The login keychain stays unlocked too; some tool paths touch it during the build.
 KEYCHAIN_PASS="${KEYCHAIN_PASSWORD:-$(cat ~/.opencode-release-keychain 2>/dev/null)}"
@@ -33,7 +33,7 @@ CAFF=$!
 step "identity check"
 # Fail before building, not after shipping, when the Developer ID identity or
 # the notarization profile went missing from the build keychain.
-security find-identity -v -p codesigning "$KC" | grep -q "Developer ID Application" || { echo "NO Developer ID identity in $KC"; kill $CAFF 2>/dev/null; exit 1; }
+security find-identity -v -p codesigning "$KC" | grep "Developer ID Application" || { echo "NO Developer ID identity in $KC"; kill $CAFF 2>/dev/null; exit 1; }
 export APPLE_KEYCHAIN="$KC" APPLE_KEYCHAIN_PROFILE=notarytool-storage
 xcrun notarytool history --keychain-profile notarytool-storage --keychain "$KC" </dev/null >/dev/null 2>&1 || { echo "NO notarytool-storage profile in $KC"; kill $CAFF 2>/dev/null; exit 1; }
 step "bun install"
@@ -49,7 +49,7 @@ step "package mac"
 (cd packages/desktop && bunx electron-builder --mac --arm64 --publish never --config electron-builder.config.ts --config.mac.identity="Developer ID Application") || { echo "package FAILED"; kill $CAFF 2>/dev/null; exit 1; }
 step "verify"
 APP="packages/desktop/dist/mac-arm64/OpenCode Dev.app"
-codesign -dvv "$APP" 2>&1 | grep -q "Developer ID Application" || { echo "artifact NOT Developer ID signed"; kill $CAFF 2>/dev/null; exit 1; }
+codesign -dvv "$APP" 2>&1 | grep "Developer ID Application" || { echo "artifact NOT Developer ID signed"; kill $CAFF 2>/dev/null; exit 1; }
 spctl -a -vv -t install "$APP" || { echo "artifact rejected by Gatekeeper"; kill $CAFF 2>/dev/null; exit 1; }
 kill $CAFF 2>/dev/null
 step "DONE"
