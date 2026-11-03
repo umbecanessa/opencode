@@ -475,3 +475,90 @@ machine and the ssh-placed hosts, and the coordination fleet as a whole.
   nested jsonc edit at `experimental.spawn_model`. Options are the fork
   default (writes nothing, the key stays absent), each server's own default
   (writes `""`), and every model the server's connected providers serve.
+
+## Phase 7 — Watching subagents and talking back (implemented here)
+
+Field use showed two asymmetries in the coordination toolset. The parent is
+blind mid-run: every channel (`subagent` return, completion notice,
+`session_wait`) hands back only the last assistant *text* —
+`SubagentCompletion.text` and `peers.text` both filter the message down to
+`text` parts, so thinking and tool activity never reach the orchestrator even
+though the UI streams them from the child timeline. And the child has no
+reply channel to the parent agent at all: `question` and permission prompts
+escalate to the *user*, and completion is the only agent-visible return.
+
+- **`session_read` — read any session, with a `thinking` knob.** Input:
+  `sessionID`, optional `limit` (default 20, newest first), and
+  `thinking: boolean` (default **false**). Output: the message spine
+  (role + parts). Off means text parts only — the same view
+  `session_wait`/completions already give. On adds `reasoning` parts
+  (session-message's `reasoning` tag), a per-call opt-in so the orchestrator
+  pays the token cost only when it is actually checking up on a child, and
+  reasoning never crosses server boundaries by accident. Local reads come
+  from `sessions.messages`; remote reads reuse the same `/context` fetch
+  `peers.text` already makes (verified open item: whether that projection
+  keeps `reasoning` parts; if it strips them, an `experimental.reasoning`
+  query param goes on `session.context`, per the experimental-parameter
+  convention). Permission is the existing `session` action; a peer read
+  rides the same credentialed path as remote wait.
+- **`escalate` — the child's line to its parent.** A child-side tool with no
+  session argument: it resolves the caller's own `parentID` (ToolFailure for
+  a parentless session, pointing at `session_send` for explicit targets)
+  and durably enqueues the message into the parent's inbox through the
+  normal `session.inbox.enqueued` path, delivered as a synthetic message
+  attributed to the child session so the parent timeline shows who is
+  speaking. Foreground children escalate into a blocked parent's queue and
+  surface at the parent's next safe boundary; background children wake it —
+  both fall out of the existing inbox semantics, no new delivery modes and
+  no loop hazard beyond one child messaging its own parent. The parent's
+  reply is the machinery it already has: `session_send` back into the child.
+- **Tool descriptions carry the etiquette.** `session_read` says to leave
+  `thinking` off unless a child looks stuck or wrong; `escalate` says it is
+  for "the parent's decision is needed", not status noise — completion and
+  the question dock stay the normal channels.
+- **Registration.** Consistent with the other coordination tools: no
+  experimental config gate, since the fork ships this toolset as one unit.
+- Tests: local read with and without `thinking`; remote read through the
+  peer stub's context route; `escalate` enqueue + parent visibility + wake,
+  and the parentless failure path. A `session.context` param test if the
+  open item lands on needing one.
+- Open questions: whether `session_read` should also accept a `server`
+  parameter (remote by name, like list/wait already do) or rely on placement
+  routing by session ID; whether reasoning parts from *peer* sessions should
+  be truncated harder than local ones.
+
+### Phase 7 as implemented
+
+- The open item resolved cleanly: `GET /api/session/:id/context` already
+  returns assistant messages with their `reasoning` parts (the projection
+  rebuilds them from the part table), so no `experimental.reasoning` param,
+  no Protocol change, and no SDK regeneration were needed.
+- Local reads go through `sessions.messages` with `order: "desc"` and the
+  caller's `limit`; remote reads go through a new `PeerServers.read` reusing
+  the same credentialed `/context` fetch `peers.text` makes. Both produce the
+  same spine: `{ type, text?, reasoning?, tools? }` per message, tool calls
+  labelled `name` or `name (state)` while unfinished.
+- `session_read` takes `server` too, like list/spawn/send/stop/wait, and
+  reuses `resolveServer`, so placement routing by session ID works and an
+  explicit name covers sessions you did not dispatch. Peer reasoning is not
+  truncated harder than local: `thinking` is opt-in per call either way.
+- `escalate` takes no session argument and resolves the caller's own
+  `parentID`, failing with a ToolFailure pointing at `session_send` for a
+  parentless session. It gates with `assertNotDenied` under its **own**
+  `escalate` action rather than `session`: the built-in `general` and
+  `explore` subagents deny `session`, so gating on `session` would have hid
+  the tool from exactly the children that need it. A deny hides it; it never
+  asks the user. Delivery is `sessions.synthetic` into the parent — the
+  durable `session.inbox.enqueued` path — with attribution as
+  `<escalation sessionID=…>` markup plus `metadata` on the payload, and an
+  optional `delivery` (steer default, queue available).
+- Documentation landed in the built-in opencode skill (a watching section,
+  an escalating section, and the cross-server wording) and the user docs
+  (`session-coordination`, `tools`, `permissions`).
+- Tests: local read with and without `thinking` (`tool-session.test.ts`,
+  seeding the durable events directly — the tool reads the projected store,
+  never the model); remote read through the peer stub
+  (`tool-session-remote.test.ts`) and the real HTTP path with a fetch stub
+  (`peer-servers.test.ts`); `escalate` durable attribution, `queue`
+  delivery, parentless failure, and permission-based hiding
+  (`tool-escalate.test.ts`).

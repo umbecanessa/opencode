@@ -271,7 +271,12 @@ spawner.
 - `opencode_session_stop` — interrupt a session's active execution. History
   stays intact and the session remains continuable with `session_send`.
 - `opencode_session_wait` — bounded join: wait for a session to go idle and
-  report its outcome. Prefer background spawning instead of polling.
+  report its outcome, with its latest assistant text. Prefer background spawning
+  instead of polling.
+- `opencode_session_read` — the session's recent messages, newest first: each
+  message's kind, its text, and the tools it called. This is how you check on a
+  session that is still running; the other channels only ever carry final text.
+  `thinking: true` adds its reasoning parts.
 
 Foreground spawning blocks until the session goes idle and returns its final
 text. With `background: true` the tool returns immediately and a
@@ -307,6 +312,47 @@ prompting while other agents still ask. Denying `session` hides the tools
 entirely. Built-in subagents (`general`, `explore`) cannot coordinate peers;
 peer coordination is an orchestrator-level capability.
 
+### Watching a running session
+
+`session_read` is the only channel that shows a session before it finishes. The
+`subagent` return value, the `<subagent>` and `<peer>` completion notices, and
+`session_wait` all carry final text only, so use a read when a child or peer
+looks stuck or wrong and you need to know what it has actually done:
+
+```text
+The explore subagent has been running for five minutes: read what it has done
+so far before starting it over.
+```
+
+Leave `thinking` off by default and turn it on for the session you are actually
+investigating: reasoning parts are long, cost context, and are only useful for
+seeing how a session was thinking rather than what it did.
+
+### Escalating to the parent
+
+A child session has exactly one channel to its parent agent: the `escalate`
+tool. It takes no session argument — the caller's own parent is the only
+target — and delivers a durable message into the parent's inbox attributed to
+the child, so the parent's timeline shows who is speaking. A running parent
+picks it up at its next safe boundary; an idle parent is woken to read it. The
+parent answers with `session_send` into the child.
+
+Questions and permission prompts go to the *user*, and completing is the normal
+reply, so escalate means "the parent's decision is needed", not status updates.
+It works for built-in subagents even though they deny the `session` action: a
+deny of `escalate` hides the tool, and it never asks the user.
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "escalate": {
+      "*": "allow"
+    }
+  }
+}
+```
+
 ### Cross-server dispatch
 
 The config `servers` map names peer OpenCode servers the tools may act on.
@@ -325,13 +371,13 @@ its `credential` (sent as the HTTP Basic password with username `opencode`).
 }
 ```
 
-With servers configured, all five `opencode_session_*` tools accept a `server`
+With servers configured, all `opencode_session_*` tools accept a `server`
 parameter naming one of them, and act against that machine instead of this
 one: `session_list` lists its sessions, `session_spawn` dispatches a whole
-task there, `session_send`, `session_stop`, and `session_wait` address its
-sessions by ID. Cross-server calls gate on a separate `server` permission
-action (resource is the server name) which also defaults to `ask`; the local
-`session` permission does not apply to them.
+task there, `session_send`, `session_stop`, `session_wait`, and `session_read`
+address its sessions by ID. Cross-server calls gate on a separate `server`
+permission action (resource is the server name) which also defaults to `ask`;
+the local `session` permission does not apply to them.
 
 ```jsonc
 {
@@ -350,9 +396,9 @@ the dispatch returns immediately and a `<peer>` completion message arrives when
 the remote session finishes — do not sleep or poll before that message.
 `directory` does not apply with `server` (the session runs in the peer's own
 project location). Dispatched sessions remember their placement: later
-`session_send`, `session_stop`, and `session_wait` calls route to the peer by
-session ID alone, without the `server` parameter; the placement is dropped if
-the peer reports the session gone. A dispatched remote session with no client
+`session_send`, `session_stop`, `session_wait`, and `session_read` calls route to
+the peer by session ID alone, without the `server` parameter; the placement is
+dropped if the peer reports the session gone. A dispatched remote session with no client
 attached to the peer server has nowhere to surface permission asks, so the peer
 should be configured to run such work unattended. An unknown server name fails
 with the list of configured servers so you can correct it.

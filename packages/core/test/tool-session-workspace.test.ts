@@ -49,6 +49,7 @@ const peerStub = Layer.succeed(
     wait: unused,
     outcome: unused,
     text: unused,
+    read: unused,
     names: Effect.succeed([]),
   }),
 )

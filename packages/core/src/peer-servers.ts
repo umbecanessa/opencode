@@ -25,6 +25,17 @@ export interface Entry {
   readonly parentID?: SessionSchema.ID
 }
 
+/**
+ * One message of a remote session's transcript spine, in the shape the
+ * `session_read` tool shows: kind, joined text, and the tools it called.
+ */
+export interface ReadEntry {
+  readonly type: string
+  readonly text?: string
+  readonly reasoning?: string
+  readonly tools?: string[]
+}
+
 export class Failure extends Schema.TaggedError<Failure>()("PeerServers.Failure", {
   server: Schema.String,
   detail: Schema.String,
@@ -86,6 +97,16 @@ export interface Interface {
    * send + wait round trip can deliver the peer's reply, not just an ack.
    */
   readonly text: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<string, Failure>
+  /**
+   * Recent transcript spine of the remote session, newest first: role, text,
+   * and the tools it called. `thinking` adds the reasoning parts of assistant
+   * messages. The remote `/context` projection keeps reasoning parts, so this
+   * needs no extra request.
+   */
+  readonly read: (
+    server: string,
+    input: { readonly sessionID: SessionSchema.ID; readonly limit?: number; readonly thinking?: boolean },
+  ) => Effect.Effect<ReadEntry[], Failure>
   /** Server names these tools can act on: config `servers` keys plus runtime registrations. */
   readonly names: Effect.Effect<readonly string[]>
 }
@@ -159,12 +180,24 @@ const ContextResponse = Schema.Struct({
   data: Schema.Array(
     Schema.Struct({
       type: Schema.String,
+      /** Top-level text of user, synthetic, and system messages. */
+      text: Schema.optionalKey(Schema.String),
       content: Schema.optionalKey(
-        Schema.Array(Schema.Struct({ type: Schema.String, text: Schema.optionalKey(Schema.String) })),
+        Schema.Array(
+          Schema.Struct({
+            type: Schema.String,
+            text: Schema.optionalKey(Schema.String),
+            /** Tool-call name and terminal status, for the `session_read` view. */
+            name: Schema.optionalKey(Schema.String),
+            state: Schema.optionalKey(Schema.Struct({ status: Schema.String })),
+          }),
+        ),
       ),
     }),
   ),
 })
+
+type ContextMessage = (typeof ContextResponse.Type)["data"][number]
 
 /** Union of config `servers` keys and runtime registrations, config first. */
 function serverNames(
@@ -182,6 +215,33 @@ function lastText(messages: readonly { type: string; content?: readonly { type: 
     if (text) return text
   }
   return undefined
+}
+
+/**
+ * Transcript spine of a remote context window, newest first. Tool calls show
+ * their name and, while unfinished, their state: that is what "what is the
+ * child doing right now" needs.
+ */
+function readEntry(message: ContextMessage, thinking: boolean): ReadEntry {
+  const text =
+    message.text ??
+    message.content?.flatMap((part) => (part.type === "text" && part.text !== undefined ? [part.text] : [])).join("\n\n")
+  const reasoning = thinking
+    ? message.content
+        ?.flatMap((part) => (part.type === "reasoning" && part.text !== undefined ? [part.text] : []))
+        .join("\n\n")
+    : undefined
+  const tools = message.content?.flatMap((part) =>
+    part.type === "tool" && part.name !== undefined
+      ? [`${part.name}${part.state === undefined || part.state.status === "completed" ? "" : ` (${part.state.status})`}`]
+      : [],
+  )
+  return {
+    type: message.type,
+    ...(text === undefined || text === "" ? {} : { text }),
+    ...(reasoning === undefined || reasoning === "" ? {} : { reasoning }),
+    ...(tools === undefined || tools.length === 0 ? {} : { tools }),
+  }
 }
 
 const layer = Layer.effect(
@@ -422,6 +482,15 @@ const layer = Layer.effect(
       text: Effect.fn("PeerServers.text")(function* (server, sessionID) {
         const context = yield* contextOf(server, sessionID)
         return lastText(context.data) ?? SubagentCompletion.NO_TEXT
+      }),
+
+      read: Effect.fn("PeerServers.read")(function* (server, input) {
+        const context = yield* contextOf(server, input.sessionID)
+        return context.data
+          .slice()
+          .reverse()
+          .slice(0, input.limit ?? 20)
+          .map((message) => readEntry(message, input.thinking === true))
       }),
 
       names: Effect.gen(function* () {

@@ -105,6 +105,11 @@ const peerStub = Layer.succeed(
         peerCalls.push({ op: "text", server, input: sessionID })
         return remotePeerText
       }),
+    read: (server, input) =>
+      Effect.sync(() => {
+        peerCalls.push({ op: "read", server, input })
+        return [{ type: "assistant", text: remotePeerText }]
+      }),
     names: Effect.succeed(["lab"] as const),
   }),
 )
