@@ -548,6 +548,15 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.subagent_depth = value
       }
+      if (own(experimental, "spawn_model")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.spawn_model,
+          experimental.spawn_model,
+          ["experimental", "spawn_model"],
+          diagnostics,
+        )
+        if (value !== undefined) result.spawn_model = value
+      }
       if (own(experimental, "location_idle_timeout")) {
         const value = decodeEncoded(
           ConfigExperimental.Info.fields.location_idle_timeout,
