@@ -851,6 +851,11 @@ export const dict = {
   "settings.experimental.row.foldUserMessages.description": "Fold your messages past 12 lines behind a Read more button",
   "settings.experimental.row.newQuestionUI.title": "New question UI",
   "settings.experimental.row.newQuestionUI.description": "Preview the keyboard-first question dock",
+  "settings.experimental.row.spawnModel.title": "Subagent model",
+  "settings.experimental.row.spawnModel.description":
+    "Model that spawned sessions and subagents start on when no explicit, agent, or parent model applies",
+  "settings.experimental.row.spawnModel.forkDefault": "Default (recommended)",
+  "settings.experimental.row.spawnModel.serverDefault": "Each server's own default",
   "settings.plugins.reload": "Reload",
   "settings.plugins.status.loading": "Loading",
   "settings.plugins.status.failed": "Failed",
