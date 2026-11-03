@@ -95,6 +95,14 @@ const stubLayer = Layer.succeed(
         calls.push({ op: "text", server, input: sessionID })
         return remoteText
       }),
+    read: (server, input) =>
+      Effect.sync(() => {
+        calls.push({ op: "read", server, input })
+        return [
+          { type: "assistant", text: remoteText, reasoning: "checked the failing test first", tools: ["read", "shell (running)"] },
+          { type: "user", text: "remote task" },
+        ]
+      }),
     names: Effect.succeed(["lab"] as const),
   }),
 )
@@ -368,6 +376,47 @@ describe("SessionTools cross-server dispatch", () => {
         expect(waited.output).toEqual({ sessionID: remoteSessionID, idle: true, outcome: "succeeded", text: remoteText })
 
         expect(calls.map((entry) => entry.op)).toEqual(["send", "stop", "wait", "text"])
+      }),
+    ),
+  )
+
+  it.live(
+    "reads a remote session by name, and by remembered placement",
+    withTools((registry, sessionID) =>
+      Effect.gen(function* () {
+        const read = yield* call(registry, sessionID, "opencode_session_read", {
+          sessionID: remoteSessionID,
+          server: "lab",
+          limit: 5,
+          thinking: true,
+        })
+        expect(read.status).toBe("completed")
+        expect(read.output).toEqual({
+          sessionID: remoteSessionID,
+          data: [
+            {
+              type: "assistant",
+              text: remoteText,
+              reasoning: "checked the failing test first",
+              tools: ["read", "shell (running)"],
+            },
+            { type: "user", text: "remote task" },
+          ],
+        })
+        expect(calls).toEqual([{ op: "read", server: "lab", input: { sessionID: remoteSessionID, limit: 5, thinking: true } }])
+
+        calls.length = 0
+        const dispatched = yield* call(registry, sessionID, "opencode_session_spawn", {
+          title: "far work",
+          prompt: "go",
+          background: true,
+          server: "lab",
+        })
+        expect(dispatched.status).toBe("completed")
+        const placed = yield* call(registry, sessionID, "opencode_session_read", { sessionID: remoteSessionID })
+        expect(placed.status).toBe("completed")
+        expect(placed.output.data[0]?.text).toBe(remoteText)
+        expect(calls.find((entry) => entry.op === "read")?.server).toBe("lab")
       }),
     ),
   )

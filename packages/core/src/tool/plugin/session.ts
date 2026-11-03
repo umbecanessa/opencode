@@ -16,6 +16,7 @@ import { PeerServers } from "../../peer-servers.js"
 import { Permission } from "../../permission.js"
 import { AbsolutePath } from "../../schema.js"
 import { Session } from "../../session.js"
+import { SessionMessage } from "../../session/message.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SubagentCompletion } from "../../session/subagent-completion.js"
 import { SubagentJob } from "../../session/subagent-job.js"
@@ -37,6 +38,32 @@ const parseModel = (requested: string) =>
     try: () => Model.Ref.parse(requested),
     catch: () => new ToolFailure({ message: `Invalid model "${requested}". Use "providerID/modelID#variant".` }),
   })
+
+// The session_read transcript spine: each message's kind, its own text, and the
+// tools it called. Reasoning parts only ride along when the caller turned the
+// `thinking` knob on, so a routine check-up costs a few lines rather than the
+// child's whole train of thought.
+const readEntry = (message: SessionMessage.Info, thinking: boolean) => {
+  if (message.type !== "assistant") {
+    const text = "text" in message ? message.text : message.type === "shell" ? message.command : undefined
+    return { type: message.type, ...(text === undefined || text === "" ? {} : { text }) }
+  }
+  const text = message.content
+    .flatMap((part) => (part.type === "text" && part.text !== "" ? [part.text] : []))
+    .join("\n\n")
+  const reasoning = thinking
+    ? message.content.flatMap((part) => (part.type === "reasoning" && part.text !== "" ? [part.text] : [])).join("\n\n")
+    : undefined
+  const tools = message.content.flatMap((part) =>
+    part.type === "tool" ? [`${part.name}${part.state.status === "completed" ? "" : ` (${part.state.status})`}`] : [],
+  )
+  return {
+    type: message.type,
+    ...(text === "" ? {} : { text }),
+    ...(reasoning === undefined || reasoning === "" ? {} : { reasoning }),
+    ...(tools.length === 0 ? {} : { tools }),
+  }
+}
 
 // Remote dispatch gates on its own `server` permission action: talking to another machine
 // is a bigger step than coordinating sessions on this one.
@@ -138,6 +165,33 @@ const WaitInput = Schema.Struct({
     description: "Maximum seconds to wait for the session to go idle. Defaults to 60.",
   }),
   server: serverField,
+})
+
+const ReadInput = Schema.Struct({
+  sessionID: SessionSchema.ID,
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))).annotate({
+    description: "Maximum messages to return, newest first. Defaults to 20.",
+  }),
+  thinking: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "true also returns the session's reasoning parts. Leave it off otherwise: reasoning is long, costs context, and is only for seeing how a session was thinking.",
+  }),
+  server: serverField,
+})
+
+const ReadEntrySchema = Schema.Struct({
+  type: Schema.String.annotate({
+    description: "Message kind: user, assistant, synthetic, system, shell, compaction, and the switch markers",
+  }),
+  text: Schema.optionalKey(Schema.String).annotate({
+    description: "The message's own text: the reply for an assistant message, the prompt for a user message",
+  }),
+  reasoning: Schema.optionalKey(Schema.String).annotate({
+    description: "Reasoning parts joined in order; only present with thinking: true",
+  }),
+  tools: Schema.optionalKey(Schema.Array(Schema.String)).annotate({
+    description: "Tool calls in the message, as `name`, or `name (state)` while unfinished",
+  }),
 })
 
 const ListInput = Schema.Struct({
@@ -326,7 +380,7 @@ export const Plugin = {
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
             "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
             "Set server to dispatch the whole task to a named peer OpenCode server (config `servers` or registered by the desktop): it runs there and returns its final text. background=true is supported there too: the dispatch returns immediately and its completion arrives as a <peer> message.",
-            "The server parameter is optional for session_send, session_stop, and session_wait on sessions you dispatched: their placement routes the call by session ID alone.",
+            "The server parameter is optional for session_send, session_stop, session_wait, and session_read on sessions you dispatched: their placement routes the call by session ID alone.",
             "Set workspace to a named ssh workspace from the config `workspaces` map: the session's shell and file tools operate on that remote host inside the entry's directory (directory does not apply).",
           ].join("\n"),
           input: SpawnInput,
@@ -771,6 +825,63 @@ export const Plugin = {
               }
             }),
         })
+
+        editor.add({
+          name: "session_read",
+          description: [
+            "Reads what a session has been doing: its recent messages, newest first, each with its kind, text, and the tools it called.",
+            "Use it to check on a child or a dispatched session mid-run, especially when one looks stuck or wrong. Completion notices and session_wait only ever carry the final text, so this is the only way to see progress before a session goes idle.",
+            "Leave `thinking` off unless you need to see how the session was thinking: reasoning is long and costs context. Turn it on for a stuck or wrong-looking session and off again after.",
+            "A session you dispatched to a peer server earlier is read by its ID alone.",
+          ].join("\n"),
+          input: ReadInput,
+          output: Schema.Struct({ sessionID: SessionSchema.ID, data: Schema.Array(ReadEntrySchema) }),
+          options: { namespace: "opencode", codemode: false, permission: "session" },
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              const server = yield* resolveServer(input.sessionID, input.server)
+              if (server !== undefined) {
+                yield* assertServer(permission, server, context)
+                const data = yield* forgetIfGone(
+                  server,
+                  input.sessionID,
+                  peers.read(server, {
+                    sessionID: input.sessionID,
+                    ...(input.limit === undefined ? {} : { limit: input.limit }),
+                    ...(input.thinking === undefined ? {} : { thinking: input.thinking }),
+                  }),
+                ).pipe(Effect.mapError(remoteFailure(server)))
+                return { output: { sessionID: input.sessionID, data } }
+              }
+              yield* permission
+                .assert({
+                  action: "session",
+                  resources: [input.sessionID],
+                  save: [input.sessionID],
+                  sessionID: context.sessionID,
+                  agent: context.agent,
+                  source: { type: "tool", messageID: context.messageID, id: context.id },
+                })
+                .pipe(
+                  Effect.mapError((error) =>
+                    new ToolFailure({ message: `Session coordination denied: ${input.sessionID}`, error }),
+                  ),
+                )
+              const messages = yield* sessions
+                .messages({
+                  sessionID: input.sessionID,
+                  order: "desc",
+                  limit: input.limit ?? 20,
+                })
+                .pipe(Effect.mapError(() => new ToolFailure({ message: `Session not found: ${input.sessionID}` })))
+              return {
+                output: {
+                  sessionID: input.sessionID,
+                  data: messages.map((message) => readEntry(message, input.thinking === true)),
+                },
+              }
+            }),
+        })
       })
       .pipe(Effect.orDie)
 
@@ -779,8 +890,8 @@ export const Plugin = {
         if (!event.tools.session_spawn) return
         const names = yield* peers.names
         const peersLine = names.length
-          ? `Peer OpenCode servers available for the server parameter: ${names.join(", ")}. It lists, dispatches, sends, stops, and waits against that machine. Sessions dispatched with server remember their placement: send, stop, and wait route to them by session ID alone.`
-          : "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, or wait against that machine. Sessions dispatched with server remember their placement: send, stop, and wait route to them by session ID alone."
+          ? `Peer OpenCode servers available for the server parameter: ${names.join(", ")}. It lists, dispatches, sends, stops, waits, and reads against that machine. Sessions dispatched with server remember their placement: send, stop, wait, and read route to them by session ID alone.`
+          : "When the config `servers` map names peer OpenCode servers, these tools accept a server parameter to list, dispatch, send, stop, wait, or read against that machine. Sessions dispatched with server remember their placement: send, stop, wait, and read route to them by session ID alone."
         const workspaceNames = Object.keys(Config.latest(yield* config.entries(), "workspaces") ?? {})
         const workspacesLine = workspaceNames.length
           ? ` ssh workspaces available for session_spawn's workspace parameter: ${workspaceNames.join(", ")}. A placed session runs its shell and file tools on that remote host inside the configured directory.`
@@ -788,8 +899,9 @@ export const Plugin = {
         event.system.push(
           SystemPart.make(
             [
-              "You can coordinate other sessions with opencode_session_list, opencode_session_spawn, opencode_session_send, opencode_session_stop, and opencode_session_wait.",
+              "You can coordinate other sessions with opencode_session_list, opencode_session_spawn, opencode_session_send, opencode_session_stop, opencode_session_wait, and opencode_session_read.",
               "Sessions spawned with session_spawn are independent main-agent sessions; their completion arrives as <peer> messages.",
+              "session_read shows what a running session has done so far; keep its thinking knob off unless that session looks stuck or wrong.",
               peersLine,
               workspacesLine,
             ].join(" "),

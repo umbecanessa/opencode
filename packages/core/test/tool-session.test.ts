@@ -172,6 +172,70 @@ const withSessionTools = (location: Location.Ref) =>
     ).pipe(Effect.provide(locations.get(location)))
   })
 
+// The durable transcript a real step would leave behind, published directly:
+// session_read reads the projected store, never the model.
+const seedTurn = (
+  bus: Bus.Interface,
+  sessionID: Session.ID,
+  assistantMessageID: SessionMessage.ID,
+  turn: {
+    readonly text: string
+    readonly reasoning?: string
+    readonly tools?: readonly { readonly name: string; readonly done: boolean }[]
+  },
+) =>
+  Effect.gen(function* () {
+    yield* bus.publish(SessionEvent.Step.Started, {
+      sessionID,
+      assistantMessageID,
+      agent: Agent.ID.make("build"),
+      model: Model.Ref.make({ id: Model.ID.make("peer"), providerID: Provider.ID.make("test") }),
+      started: 0,
+    })
+    if (turn.reasoning !== undefined) {
+      yield* bus.publish(SessionEvent.Reasoning.Started, { sessionID, assistantMessageID, ordinal: 0 })
+      yield* bus.publish(SessionEvent.Reasoning.Ended, {
+        sessionID,
+        assistantMessageID,
+        ordinal: 0,
+        text: turn.reasoning,
+      })
+    }
+    yield* bus.publish(SessionEvent.Text.Started, { sessionID, assistantMessageID, ordinal: 1 })
+    yield* bus.publish(SessionEvent.Text.Ended, { sessionID, assistantMessageID, ordinal: 1, text: turn.text })
+    yield* Effect.forEach(
+      turn.tools ?? [],
+      (tool, index) => {
+        const id = `call-${index}`
+        return bus
+          .publish(SessionEvent.Tool.Input.Started, { sessionID, assistantMessageID, id, name: tool.name })
+          .pipe(
+            Effect.andThen(bus.publish(SessionEvent.Tool.Input.Ended, { sessionID, assistantMessageID, id, text: "{}" })),
+            Effect.andThen(bus.publish(SessionEvent.Tool.Called, { sessionID, assistantMessageID, id, input: {}, executed: true })),
+            Effect.andThen(
+              tool.done
+                ? bus.publish(SessionEvent.Tool.Success, {
+                    sessionID,
+                    assistantMessageID,
+                    id,
+                    content: [{ type: "text", text: "ok" }],
+                    executed: true,
+                  })
+                : Effect.void,
+            ),
+          )
+      },
+      { discard: true },
+    )
+    yield* bus.publish(SessionEvent.Step.Ended, {
+      sessionID,
+      assistantMessageID,
+      finish: "stop",
+      cost: Money.USD.zero,
+      tokens,
+    })
+  })
+
 describe("SessionTools", () => {
   it.live("spawns a level-zero session and returns its final text", () =>
     Effect.acquireRelease(
@@ -335,6 +399,65 @@ describe("SessionTools", () => {
           expect(synthetic).toHaveLength(1)
           expect(synthetic[0]?.text).toContain(`<peer sessionID="${childID}" state="completed"`)
           expect(synthetic[0]?.text).toContain(peerText)
+        }),
+      ),
+    ),
+  )
+
+  it.live("reads another session's recent messages, reasoning only with thinking", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, title: "Orchestrator" })
+          const worker = yield* sessions.create({ location, title: "Worker" })
+          yield* withSessionTools(location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          const bus = yield* Bus.Service
+          yield* seedTurn(bus, worker.id, SessionMessage.ID.create(), { text: "first answer" })
+          yield* seedTurn(bus, worker.id, SessionMessage.ID.create(), {
+            text: "second answer",
+            reasoning: "checked the failing test first",
+            tools: [{ name: "read", done: true }, { name: "shell", done: false }],
+          })
+
+          const read = (input: Record<string, unknown>, id: string) =>
+            executeTool(registry, {
+              sessionID: parent.id,
+              ...toolIdentity,
+              call: { type: "tool-call", id, name: "opencode_session_read", input },
+            })
+
+          const plain = yield* read({ sessionID: worker.id }, "call-session-read")
+          expect(plain.status).toBe("completed")
+          expect(plain.output.sessionID).toBe(worker.id)
+          // Newest first, tool calls visible, and no reasoning in the default view.
+          expect(plain.output.data).toEqual([
+            { type: "assistant", text: "second answer", tools: ["read", "shell (running)"] },
+            { type: "assistant", text: "first answer" },
+          ])
+
+          const thinking = yield* read({ sessionID: worker.id, thinking: true }, "call-session-read-thinking")
+          expect(thinking.output.data[0]).toEqual({
+            type: "assistant",
+            text: "second answer",
+            reasoning: "checked the failing test first",
+            tools: ["read", "shell (running)"],
+          })
+          expect(thinking.output.data[1]?.reasoning).toBeUndefined()
+
+          const limited = yield* read({ sessionID: worker.id, limit: 1 }, "call-session-read-limit")
+          expect(limited.output.data).toHaveLength(1)
+          expect(limited.output.data[0]?.text).toBe("second answer")
+
+          const missing = yield* read({ sessionID: Session.ID.create() }, "call-session-read-missing")
+          expect(missing.status).toBe("error")
+          expect(missing.error?.message).toContain("not found")
         }),
       ),
     ),

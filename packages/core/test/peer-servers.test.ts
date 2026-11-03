@@ -17,6 +17,22 @@ const peerSession = {
   time: { updated: 1 },
 }
 
+const peerContext = {
+  data: [
+    { type: "user", text: "inspect the flake" },
+    {
+      type: "assistant",
+      content: [
+        { type: "reasoning", text: "reproduce it first" },
+        { type: "text", text: "reproduced it" },
+        { type: "tool", name: "shell", state: { status: "completed" } },
+        { type: "tool", name: "read", state: { status: "running" } },
+      ],
+    },
+    { type: "synthetic", text: "a child finished" },
+  ],
+}
+
 let requests: { url: string; authorization?: string }[] = []
 
 const httpStub = Layer.succeed(
@@ -24,9 +40,16 @@ const httpStub = Layer.succeed(
   HttpClient.make((request) =>
     Effect.sync(() => {
       const path = new URL(request.url).pathname
-      if (path === "/api/session" || path.endsWith("/active"))
+      if (path === "/api/session" || path.endsWith("/active") || path.endsWith("/context"))
         requests.push({ url: request.url, authorization: request.headers["authorization"] })
-      const body = path === "/api/session" ? { data: [peerSession] } : path.endsWith("/active") ? { data: {} } : {}
+      const body =
+        path === "/api/session"
+          ? { data: [peerSession] }
+          : path.endsWith("/active")
+            ? { data: {} }
+            : path.endsWith("/context")
+              ? peerContext
+              : {}
       return HttpClientResponse.fromWeb(
         request,
         new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }),
@@ -111,6 +134,46 @@ describe("PeerServers registry", () => {
         const peers = yield* PeerServers.Service
         yield* register({ "ssh:dev": { url: "http://ssh.invalid" } })
         expect(yield* peers.names).toEqual(["config-server", "ssh:dev"])
+      }),
+    ),
+  )
+})
+
+describe("PeerServers transcript read", () => {
+  it.live(
+    "reads the peer transcript newest first, labelling unfinished tools",
+    reset(
+      Effect.gen(function* () {
+        const peers = yield* PeerServers.Service
+        yield* register({ "ssh:dev": { url: "http://ssh.invalid", credential: "ssh-cred" } })
+        const entries = yield* peers.read("ssh:dev", { sessionID: peerSession.id })
+        expect(entries).toEqual([
+          { type: "synthetic", text: "a child finished" },
+          { type: "assistant", text: "reproduced it", tools: ["shell", "read (running)"] },
+          { type: "user", text: "inspect the flake" },
+        ])
+        expect(requests[0]!.url).toContain(`http://ssh.invalid/api/session/${peerSession.id}/context`)
+        expect(requests[0]!.authorization).toBe(basic("ssh-cred"))
+      }),
+    ),
+  )
+
+  it.live(
+    "carries reasoning parts only when thinking is on",
+    reset(
+      Effect.gen(function* () {
+        const peers = yield* PeerServers.Service
+        yield* register({ "ssh:dev": { url: "http://ssh.invalid" } })
+        const entries = yield* peers.read("ssh:dev", { sessionID: peerSession.id, limit: 2, thinking: true })
+        expect(entries).toEqual([
+          { type: "synthetic", text: "a child finished" },
+          {
+            type: "assistant",
+            text: "reproduced it",
+            reasoning: "reproduce it first",
+            tools: ["shell", "read (running)"],
+          },
+        ])
       }),
     ),
   )
