@@ -81,6 +81,11 @@ export interface Interface {
   ) => Effect.Effect<boolean, Failure>
   readonly wait: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<void, Failure>
   readonly outcome: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<Outcome | undefined, Failure>
+  /**
+   * The remote session's latest assistant text (or the no-text marker), so a
+   * send + wait round trip can deliver the peer's reply, not just an ack.
+   */
+  readonly text: (server: string, sessionID: SessionSchema.ID) => Effect.Effect<string, Failure>
   /** Server names these tools can act on: config `servers` keys plus runtime registrations. */
   readonly names: Effect.Effect<readonly string[]>
 }
@@ -192,11 +197,22 @@ const layer = Layer.effect(
       const servers = Config.latest(yield* config.entries(), "servers")
       const registered = yield* registry.entries
       const info = servers?.[server] ?? registered[server]
-      if (info === undefined)
+      if (info === undefined) {
+        // A name that is only a config WORKSPACE reads as a failed server name;
+        // say so, because session_spawn places on workspaces through `workspace`.
+        const workspaces = Config.latest(yield* config.entries(), "workspaces")
+        const tunnel = Object.keys(registered).find((name) => name.endsWith(`:${server}`))
+        const hint =
+          workspaces?.[server] === undefined
+            ? ""
+            : ` ("${server}" is a configured workspace: place sessions on it with the session_spawn workspace parameter${
+                tunnel === undefined ? "" : `, or address it as the registered server "${tunnel}"`
+              }).`
         return yield* new Failure({
           server,
-          detail: `is not configured. Configured servers: ${serverNames(servers, registered).join(", ") || "none"}`,
+          detail: `is not configured. Configured servers: ${serverNames(servers, registered).join(", ") || "none"}.${hint}`,
         })
+      }
       return { base: info.url.replace(/\/+$/, ""), credential: info.credential }
     })
 
@@ -402,6 +418,11 @@ const layer = Layer.effect(
       wait: Effect.fn("PeerServers.wait")((server, sessionID) => idleAfterPrompt(server, sessionID)),
 
       outcome: outcomeOf,
+
+      text: Effect.fn("PeerServers.text")(function* (server, sessionID) {
+        const context = yield* contextOf(server, sessionID)
+        return lastText(context.data) ?? SubagentCompletion.NO_TEXT
+      }),
 
       names: Effect.gen(function* () {
         return serverNames(

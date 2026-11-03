@@ -2540,7 +2540,9 @@ export type ConfigEntry =
           image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           schedules?: boolean
           artifacts?: boolean
+          memory?: boolean | { embedding?: { url?: string; model?: string } }
           subagent_depth?: number
+          spawn_model?: string
           location_idle_timeout?: string | false
           policies?: Array<{
             action:
@@ -4841,7 +4843,10 @@ export type ConfigGetOutput = Array<ConfigEntry>
 
 export type ConfigShellsOutput = Array<ConfigShellOption>
 
-export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
+export type ExperimentalConfigUpdateInput = {
+  readonly shell?: string | null | undefined
+  readonly experimental?: { readonly spawn_model: string | null } | undefined
+}
 
 export type ExperimentalConfigUpdateOutput = void
 

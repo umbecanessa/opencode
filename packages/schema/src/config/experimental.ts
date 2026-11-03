@@ -63,6 +63,10 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
     description: "Maximum subagent nesting depth. Defaults to 1.",
   }),
+  spawn_model: Schema.String.pipe(optional).annotate({
+    description:
+      'Model ("providerID/modelID[#variant]") used for sessions an agent creates when neither an explicit model nor an agent or parent model applies. Defaults to the fork spawn default; set to "" to fall back to each server\'s own default model instead.',
+  }),
   location_idle_timeout: Schema.Union([Schema.DurationFromString, Schema.Literal(false)])
     .pipe(optional)
     .annotate({

@@ -90,6 +90,11 @@ const stubLayer = Layer.succeed(
         calls.push({ op: "wait", server, input: sessionID })
       }),
     outcome: () => Effect.succeed("succeeded" as const),
+    text: (server, sessionID) =>
+      Effect.sync(() => {
+        calls.push({ op: "text", server, input: sessionID })
+        return remoteText
+      }),
     names: Effect.succeed(["lab"] as const),
   }),
 )
@@ -213,8 +218,17 @@ describe("SessionTools cross-server dispatch", () => {
           { type: "text", text: expect.stringContaining(`<peer sessionID="${remoteSessionID}"`) },
         ])
         expect(settled.content).toEqual([{ type: "text", text: expect.stringContaining(remoteText) }])
+        // The spawn default model rides along so the peer starts on the fleet ref.
         expect(calls).toEqual([
-          { op: "spawn", server: "lab", input: { title: "remote work", prompt: "do the thing over there" } },
+          {
+            op: "spawn",
+            server: "lab",
+            input: {
+              title: "remote work",
+              prompt: "do the thing over there",
+              model: { providerID: "opencodex", id: "GX10/qwen3.8-flash-next" },
+            },
+          },
         ])
       }),
     ),
@@ -351,9 +365,9 @@ describe("SessionTools cross-server dispatch", () => {
           server: "lab",
         })
         expect(waited.status).toBe("completed")
-        expect(waited.output).toEqual({ sessionID: remoteSessionID, idle: true, outcome: "succeeded" })
+        expect(waited.output).toEqual({ sessionID: remoteSessionID, idle: true, outcome: "succeeded", text: remoteText })
 
-        expect(calls.map((entry) => entry.op)).toEqual(["send", "stop", "wait"])
+        expect(calls.map((entry) => entry.op)).toEqual(["send", "stop", "wait", "text"])
       }),
     ),
   )

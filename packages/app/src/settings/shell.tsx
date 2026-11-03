@@ -288,7 +288,7 @@ function RootSettings() {
       </Tabs.Content>
       <PluginSettingsPages />
       <Tabs.Content value="experimental" class="settings-panel">
-        <SettingsExperimental />
+        <SettingsExperimental server={reachable()} />
       </Tabs.Content>
       <Tabs.Content value="about" class="settings-panel settings-about">
         <SettingsAbout active={surface.view().tab === "about"} />

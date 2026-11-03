@@ -20,6 +20,7 @@ import { SessionSchema } from "../../session/schema.js"
 import { SubagentCompletion } from "../../session/subagent-completion.js"
 import { SubagentJob } from "../../session/subagent-job.js"
 import { Workspace } from "../../workspace.js"
+import { SpawnModel } from "./spawn-model.js"
 
 const spawnResult = (sessionID: SessionSchema.ID) => ({
   sessionID,
@@ -39,7 +40,7 @@ const parseModel = (requested: string) =>
 
 // Remote dispatch gates on its own `server` permission action: talking to another machine
 // is a bigger step than coordinating sessions on this one.
-const assertServer = (permission: Permission.Interface, server: string, context: Tool.Context) =>
+export const assertServer = (permission: Permission.Interface, server: string, context: Tool.Context) =>
   permission
     .assert({
       action: "server",
@@ -53,7 +54,7 @@ const assertServer = (permission: Permission.Interface, server: string, context:
 
 // Placing a session's execution on another machine gates on its own `workspace`
 // permission action, mirroring the `server` action for cross-server dispatch.
-const assertWorkspace = (permission: Permission.Interface, workspace: string, context: Tool.Context) =>
+export const assertWorkspace = (permission: Permission.Interface, workspace: string, context: Tool.Context) =>
   permission
     .assert({
       action: "workspace",
@@ -65,9 +66,14 @@ const assertWorkspace = (permission: Permission.Interface, workspace: string, co
     })
     .pipe(Effect.mapError((error) => new ToolFailure({ message: `Remote placement denied: ${workspace}`, error })))
 
-const serverField = Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+export const serverField = Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
   description:
     "Name of a peer OpenCode server to act against instead of this one: a key of the config `servers` map or a server registered at runtime by a connected client.",
+})
+
+export const workspaceField = Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+  description:
+    'Name of a configured ssh workspace (config "workspaces") to place the session on: its shell and file tools operate on the remote host inside the entry\'s directory. server and directory do not apply.',
 })
 
 const SpawnInput = Schema.Struct({
@@ -96,14 +102,8 @@ const SpawnInput = Schema.Struct({
     description:
       "true creates a disposable session: it never appears in session lists and is deleted roughly a day after finishing. Prefer true for spot tasks the user should not see in history. The session's permissions default to no edits, no subagents, and no peer spawning.",
   }),
-  server: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
-    description:
-      'Name of a configured peer OpenCode server (config "servers") to dispatch to. The session runs there and its final text is returned; background=true works there too (completion arrives as a <peer> message) and the placement routes later send, stop, and wait calls by session ID; directory does not apply.',
-  }),
-  workspace: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
-    description:
-      'Name of a configured ssh workspace (config "workspaces") to place the session on: its shell and file tools operate on the remote host inside the entry\'s directory. server and directory do not apply.',
-  }),
+  server: serverField,
+  workspace: workspaceField,
 })
 
 const SpawnOutput = Schema.Struct({
@@ -344,7 +344,13 @@ export const Plugin = {
                     message: "workspace does not apply with server: the peer server places the session itself.",
                   })
                 yield* assertServer(permission, input.server, context)
-                const remoteModel = input.model === undefined ? undefined : yield* parseModel(input.model)
+                // The peer cannot see this server's parent model, so an unspecified
+                // remote model lands on the spawn default (see SpawnModel) instead of
+                // whichever model setting that server happens to carry.
+                const remoteModel =
+                  input.model === undefined
+                    ? yield* SpawnModel.ref(Config.latest(yield* config.entries(), "experimental")?.spawn_model)
+                    : yield* parseModel(input.model)
                 const remoteInput = {
                   title: input.title,
                   prompt: input.prompt,
@@ -447,6 +453,15 @@ export const Plugin = {
                   message: `Model "${override.providerID}/${override.id}" is not available. Use the models tool to see what is available.`,
                 })
 
+              // Spawn default: when neither the prompt nor the agent config names a
+              // model, start on the fleet-wide spawn model rather than inheriting a
+              // parent that may run a hand-picked one. `experimental.spawn_model`
+              // set to "" restores pure parent inheritance.
+              const fallback = yield* SpawnModel.ref(Config.latest(yield* config.entries(), "experimental")?.spawn_model)
+              const fallbackAvailable =
+                fallback === undefined ||
+                (yield* models.available()).some((m) => m.providerID === fallback.providerID && m.id === fallback.id)
+
               const location =
                 input.workspace !== undefined
                   ? yield* placeOnWorkspace(input.workspace, context)
@@ -461,7 +476,8 @@ export const Plugin = {
                             ),
                           )).absolute,
                       }
-              const model = override ?? agent?.model ?? parent.model
+              const model =
+                override ?? agent?.model ?? (fallbackAvailable ? fallback : undefined) ?? parent.model
               const child = yield* sessions
                 .create({
                   location,
@@ -658,6 +674,7 @@ export const Plugin = {
           name: "session_wait",
           description: [
             "Waits for a session to go idle, up to the timeout, and reports its last outcome.",
+            "When the session went idle, the output also carries its latest assistant text, so a send followed by a wait reads the peer's reply.",
             "Prefer session_spawn with background=true and its completion notification; use this only when you genuinely need to join a run you did not start.",
             "A session you dispatched to a peer server earlier is awaited by its ID alone.",
           ].join("\n"),
@@ -666,6 +683,7 @@ export const Plugin = {
             sessionID: SessionSchema.ID,
             idle: Schema.Boolean,
             outcome: Schema.optionalKey(Schema.Literals(["succeeded", "failed", "interrupted"])),
+            text: Schema.optionalKey(Schema.String),
           }),
           options: { namespace: "opencode", codemode: false, permission: "session" },
           execute: (input, context) =>
@@ -678,16 +696,30 @@ export const Plugin = {
                   Effect.timeoutOption((input.timeout ?? 60) * 1000),
                   Effect.map((option) => option._tag === "None"),
                 )
-                const outcome = yield* forgetIfGone(
-                  server,
-                  input.sessionID,
-                  peers.outcome(server, input.sessionID),
-                ).pipe(Effect.mapError(remoteFailure(server)))
+                if (timedOut)
+                  return {
+                    output: {
+                      sessionID: input.sessionID,
+                      idle: false,
+                    },
+                  }
+                const [outcome, text] = yield* Effect.all(
+                  [
+                    forgetIfGone(server, input.sessionID, peers.outcome(server, input.sessionID)).pipe(
+                      Effect.mapError(remoteFailure(server)),
+                    ),
+                    forgetIfGone(server, input.sessionID, peers.text(server, input.sessionID)).pipe(
+                      Effect.mapError(remoteFailure(server)),
+                    ),
+                  ],
+                  { concurrency: 2 },
+                )
                 return {
                   output: {
                     sessionID: input.sessionID,
-                    idle: !timedOut,
+                    idle: true,
                     ...(outcome === undefined ? {} : { outcome }),
+                    text,
                   },
                 }
               }
@@ -716,11 +748,25 @@ export const Plugin = {
               const session = yield* sessions
                 .get(input.sessionID)
                 .pipe(Effect.mapError(() => new ToolFailure({ message: `Session disappeared: ${input.sessionID}` })))
+              if (timedOut)
+                return {
+                  output: {
+                    sessionID: input.sessionID,
+                    idle: false,
+                  },
+                }
+              // Latest assistant text, mirroring the final-text read of a completing
+              // subagent job: reading an idle session returns its last reply.
+              const messages = yield* sessions
+                .messages({ sessionID: input.sessionID, order: "desc", limit: 20 })
+                .pipe(Effect.orDie)
+              const text = SubagentCompletion.text(messages.find((message) => message.type === "assistant"))
               return {
                 output: {
                   sessionID: input.sessionID,
-                  idle: !timedOut,
+                  idle: true,
                   ...(session.outcome === undefined ? {} : { outcome: session.outcome }),
+                  text,
                 },
               }
             }),

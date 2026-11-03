@@ -113,6 +113,13 @@ export const clientSettings: Entry<SettingsRootTab>[] = [
   },
   {
     tab: "experimental",
+    label: "settings.experimental.row.spawnModel.title",
+    target: "settings-spawn-model",
+    description: "settings.experimental.row.spawnModel.description",
+    keywords: "subagent spawn default model fallback peer fleet",
+  },
+  {
+    tab: "experimental",
     label: "settings.experimental.row.foldUserMessages.title",
     target: "settings-fold-user-messages",
     description: "settings.experimental.row.foldUserMessages.description",
