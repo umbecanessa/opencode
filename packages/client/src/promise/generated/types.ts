@@ -2539,6 +2539,7 @@ export type ConfigEntry =
           schedules?: boolean
           artifacts?: boolean
           subagent_depth?: number
+          spawn_model?: string
           location_idle_timeout?: string | false
           policies?: Array<{
             action:
@@ -4839,7 +4840,10 @@ export type ConfigGetOutput = Array<ConfigEntry>
 
 export type ConfigShellsOutput = Array<ConfigShellOption>
 
-export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
+export type ExperimentalConfigUpdateInput = {
+  readonly shell?: string | null | undefined
+  readonly experimental?: { readonly spawn_model: string | null } | undefined
+}
 
 export type ExperimentalConfigUpdateOutput = void
 

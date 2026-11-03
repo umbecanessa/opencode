@@ -2801,10 +2801,13 @@ export interface ConfigApi<E = never> {
   readonly update: ExperimentalConfigUpdateOperation<E>
 }
 
-export type ExperimentalConfigUpdateInput = { readonly shell: string | null }
+export type ExperimentalConfigUpdateInput = {
+  readonly shell?: string | null
+  readonly experimental?: { readonly spawn_model: string | null }
+}
 export type ExperimentalConfigUpdateOutput = void
 export type ExperimentalConfigUpdateOperation<E = never> = (
-  input: ExperimentalConfigUpdateInput,
+  input?: ExperimentalConfigUpdateInput,
 ) => Effect.Effect<ExperimentalConfigUpdateOutput, E>
 
 export interface ExperimentalConfigApi<E = never> {

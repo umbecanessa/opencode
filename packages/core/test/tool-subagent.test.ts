@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Document, Info } from "@opencode/schema/config"
 import { LanguageModel } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { TestLLM } from "@opencode/ai/testing"
@@ -22,6 +23,8 @@ import { Job } from "@opencode/core/job"
 import { JobTable } from "@opencode/core/job/sql"
 import { KV } from "@opencode/core/kv"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
+import { PeerPlacements } from "@opencode/core/peer-placements"
+import { PeerServers } from "@opencode/core/peer-servers"
 import { Session } from "@opencode/core/session"
 import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
@@ -35,6 +38,7 @@ import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginSupervisor } from "@opencode/core/plugin/supervisor"
 import { Permission } from "@opencode/core/permission"
+import { Workspace } from "@opencode/core/workspace"
 import { SubagentTool } from "@opencode/core/tool/plugin/subagent"
 import { Tool } from "@opencode/core/tool"
 import { tmpdir } from "./fixture/tmpdir"
@@ -54,6 +58,56 @@ const overrideModel = Model.Ref.make({
   variant: Model.VariantID.make("fast"),
 })
 const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+
+// Peer stand-in: the remote subagent path never touches HTTP in this harness.
+const remotePeerText = "remote subagent reply"
+const remotePeerID = Session.ID.create()
+const peerCalls: { op: string; server: string; input: unknown }[] = []
+const peerStub = Layer.succeed(
+  PeerServers.Service,
+  PeerServers.Service.of({
+    list: () => Effect.succeed([]),
+    spawn: (server, input) =>
+      server === "lab"
+        ? Effect.sync(() => {
+            peerCalls.push({ op: "spawn", server, input })
+            return { sessionID: remotePeerID, text: remotePeerText, outcome: "succeeded" as const }
+          })
+        : Effect.fail(new PeerServers.Failure({ server, detail: "is not configured. Configured servers: lab" })),
+    dispatch: (server, input) =>
+      server === "lab"
+        ? Effect.sync(() => {
+            peerCalls.push({ op: "dispatch", server, input })
+            return { sessionID: remotePeerID }
+          })
+        : Effect.fail(new PeerServers.Failure({ server, detail: "is not configured. Configured servers: lab" })),
+    watch: (server, sessionID) =>
+      Effect.sync(() => {
+        peerCalls.push({ op: "watch", server, input: sessionID })
+        return remotePeerText
+      }),
+    send: (server, input) =>
+      Effect.sync(() => {
+        peerCalls.push({ op: "send", server, input })
+      }),
+    stop: (server, input) =>
+      Effect.sync(() => {
+        peerCalls.push({ op: "stop", server, input })
+        return true
+      }),
+    wait: (server, sessionID) =>
+      Effect.sync(() => {
+        peerCalls.push({ op: "wait", server, input: sessionID })
+      }),
+    outcome: () => Effect.succeed("succeeded" as const),
+    text: (server, sessionID) =>
+      Effect.sync(() => {
+        peerCalls.push({ op: "text", server, input: sessionID })
+        return remotePeerText
+      }),
+    names: Effect.succeed(["lab"] as const),
+  }),
+)
 
 const outputSessionID = (value: unknown) =>
   Schema.decodeUnknownSync(Schema.Struct({ sessionID: Session.ID }))(value).sessionID
@@ -131,6 +185,9 @@ const subagentPluginSupervisor = makeLocationNode({
     Job.node,
     SubagentJob.node,
     Tool.node,
+    PeerServers.node,
+    PeerPlacements.node,
+    Workspace.node,
     PluginHooks.node,
   ],
 })
@@ -147,10 +204,27 @@ const replacements = [
   SessionExecution.node.replace(executionNode),
   Global.node.replace(tempGlobalLayer),
   offlineModels,
+  PeerServers.node.replace(peerStub),
 ] satisfies LayerNode.Replacements
 const productionIt = testEffect(AppNodeBuilder.build(nodes, replacements))
 const it = testEffect(
   AppNodeBuilder.build(nodes, [...replacements, PluginSupervisor.node.replace(subagentPluginSupervisor)]),
+)
+
+// Same harness with `experimental.spawn_model` set to an available model.
+const spawnModelConfigNode = makeLocationNode({
+  name: "test/spawn-model-config",
+  layer: Config.testLayer([
+    new Document({ type: "document", info: new Info({ experimental: { spawn_model: "test/override" } }) }),
+  ]),
+  deps: [],
+})
+const spawnModelIt = testEffect(
+  AppNodeBuilder.build(nodes, [
+    ...replacements,
+    PluginSupervisor.node.replace(subagentPluginSupervisor),
+    Config.node.replace(spawnModelConfigNode),
+  ]),
 )
 const completionIt = testEffect(
   AppNodeBuilder.build(LayerNode.group([nodes, SessionRestart.node, KV.node]), [
@@ -481,6 +555,115 @@ describe("SubagentTool", () => {
           })
           const fallbackChild = yield* sessions.get(outputSessionID(fallback.metadata))
           expect(fallbackChild).toMatchObject({ parentID: parent.id, model: parentModel })
+        }),
+      ),
+    ),
+  )
+
+  it.live("dispatches a subagent on a peer server and routes its follow-up by placement", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, model: parentModel })
+          yield* withSubagent(parent.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+          peerCalls.length = 0
+
+          const dispatched = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-peer",
+              name: SubagentTool.name,
+              input: {
+                agent: "reviewer",
+                description: "remote review",
+                prompt: "review over there",
+                server: "lab",
+                background: true,
+              },
+            },
+          })
+          expect(dispatched).toMatchObject({
+            status: "completed",
+            content: [{ type: "text", text: expect.stringContaining("on lab (sessionID:") }],
+          })
+          expect(peerCalls.map((entry) => entry.op)).toEqual(["dispatch", "watch"])
+
+          // The placement lets a follow-up reach the peer by session ID alone.
+          const continued = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-peer-follow",
+              name: SubagentTool.name,
+              input: { agent: "reviewer", description: "more", prompt: "keep going", sessionID: remotePeerID },
+            },
+          })
+          expect(continued).toMatchObject({
+            status: "completed",
+            content: [{ type: "text", text: expect.stringContaining(remotePeerText) }],
+          })
+          expect(peerCalls.map((entry) => entry.op)).toEqual(["dispatch", "watch", "send", "wait", "text"])
+          expect(peerCalls.find((entry) => entry.op === "send")).toEqual({
+            op: "send",
+            server: "lab",
+            input: { sessionID: remotePeerID, prompt: "keep going" },
+          })
+        }),
+      ),
+    ),
+  )
+
+  spawnModelIt.live("starts modelless children on the configured spawn model", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const parent = yield* sessions.create({ location, model: parentModel })
+          yield* withSubagent(parent.location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(parent.location)))
+
+          // The agent's own configured model still wins over the spawn default.
+          const configured = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-spawn-agent",
+              name: SubagentTool.name,
+              input: { agent: "reviewer", description: "agent model", prompt: "review" },
+            },
+          })
+          const configuredChild = yield* sessions.get(outputSessionID(configured.metadata))
+          expect(configuredChild.model).toMatchObject(childModel)
+
+          // A modelless agent starts on the spawn model, not the parent's.
+          const spawned = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-spawn-default",
+              name: SubagentTool.name,
+              input: { agent: "fallback", description: "spawn default", prompt: "fallback" },
+            },
+          })
+          const spawnedChild = yield* sessions.get(outputSessionID(spawned.metadata))
+          expect(spawnedChild.model).toMatchObject({ providerID: Provider.ID.make("test"), id: Model.ID.make("override") })
         }),
       ),
     ),

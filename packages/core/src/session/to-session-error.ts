@@ -94,7 +94,16 @@ export function toSessionError(cause: unknown): SessionError.Error {
   )
     return { type: "provider.no-route", message: cause.message }
   if (cause instanceof Integration.AuthorizationError) return { type: "provider.auth", message: cause.message }
-  return { type: "unknown", message: cause instanceof Error ? cause.message : String(cause) }
+  if (cause instanceof Error) return { type: "unknown", message: cause.message }
+  // Plain objects (decoded HTTP failures, thrown schema issues) stringify to
+  // "[object Object]" and erase the reason; prefer a message field or JSON.
+  if (cause instanceof Object) {
+    const message = "message" in cause && typeof cause.message === "string" ? cause.message : ""
+    if (message !== "") return { type: "unknown", message }
+    const json = JSON.stringify(cause, (_key, value) => (typeof value === "bigint" ? String(value) : value))
+    return { type: "unknown", message: json ?? String(cause) }
+  }
+  return { type: "unknown", message: String(cause) }
 }
 
 export function contentFilterError(summary: string, reason: FinishReasonDetails): SessionError.Error {

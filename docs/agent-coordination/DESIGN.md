@@ -418,3 +418,60 @@ cross-server events (no event bus between processes yet); a configured
 (non-co-mounted) peer's interrupt/wait/active routing still comes from
 Phase 4/5b-1's placement registry, not from claims. Interruption of a
 Session owned by a server sharing no database remains out of scope.
+
+## Phase 6 — Live-orchestration fixes from field testing (implemented here)
+
+Three gaps surfaced while a desktop orchestrator drove work across this
+machine and the ssh-placed hosts, and the coordination fleet as a whole.
+
+- **`subagent` gained `server`.** The subagent tool previously had no
+  placement parameters at all: cross-machine delegation meant reaching for
+  `session_spawn`, which creates an unlinked main-agent session. Now
+  `subagent({ agent, server })` dispatches the child to that peer exactly the
+  way `session_spawn` does — dispatch + placement record + a local `peer_remote`
+  watcher job whose completion notifies the parent (foreground returns the
+  peer's final text). Follow-ups reuse the placement registry: `subagent`
+  with the child's `sessionID` prompts it on the peer (foreground also joins
+  and reads the reply; interruption stops the remote run). The depth limit,
+  agent-mode check, and `subagent` permission still gate locally before any
+  HTTP call; the `server` permission action gates the machine itself.
+  `workspace` on `subagent` deliberately fails with a pointer to
+  `session_spawn`, whose ssh placement already propagates to children
+  through the inherited location.
+- **Remote replies are readable.** `PeerServers` gained `text` (the latest
+  assistant text via the existing `/context` read, or the no-text marker), and
+  `session_wait` now returns `text` whenever it reports `idle` — locally
+  through `sessions.messages` + `SubagentCompletion.text`, remotely through
+  `peers.text`. The send-then-wait round trip finally yields the peer's
+  answer instead of a bare ack, which was the "child printed, orchestrator
+  couldn't see" failure. A `server` name that matches a config WORKSPACE now
+  fails with a hint to use `workspace` (and the registered tunnel name when
+  one exists), instead of only listing configured servers.
+- **Spawn default model.** Sessions created through the coordination tools
+  with no explicit model land on `SpawnModel.DEFAULT`
+  (`opencodex/GX10/qwen3.8-flash-next`) instead of the parent's hand-picked
+  model or the remote server's unrelated default. Chain: explicit `model`
+  parameter, then the resolved agent's configured model, then the spawn
+  default (locally: only when available; remotely: sent as-is since peers
+  in the fleet serve it), then the parent's model as the final fallback.
+  `experimental.spawn_model` overrides the constant; `""` disables the
+  fallback for servers that should keep their own defaults.
+- **Plain-object failures are legible.** `toSessionError` no longer renders
+  non-Error causes (decoded HTTP failure bodies, thrown schema issues) as
+  `[object Object]`: a `message` field is preferred, otherwise the cause is
+  JSON-stringified. The cross-server spawn errors that hid behind
+  `String(cause)` now name their actual reason to the model.
+- Tests: remote `subagent` dispatch + placement-routed follow-up
+  (`tool-subagent.test.ts`), wait-text on both wait paths
+  (`tool-session-remote.test.ts`), and the spawn-default chain under an
+  `experimental.spawn_model` config (`spawnModelIt`).
+- **Spawn default is a settings option.** Settings > Experimental gained a
+  *Subagent model* picker for the selected server, mirroring the shell row's
+  path: it reads the global config documents, and writes through
+  `PATCH /api/experimental/config` with optimistic mutation and rollback.
+  `Config.Patch` gained an optional `experimental.spawn_model` member (and
+  `shell` became an optional key so unrelated fields keep their
+  leave-what-you-didn't-send semantics), and `Config.update` applies the
+  nested jsonc edit at `experimental.spawn_model`. Options are the fork
+  default (writes nothing, the key stays absent), each server's own default
+  (writes `""`), and every model the server's connected providers serve.

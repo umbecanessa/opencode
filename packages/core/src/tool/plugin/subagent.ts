@@ -8,11 +8,15 @@ import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
+import { PeerPlacements } from "../../peer-placements.js"
+import { PeerServers } from "../../peer-servers.js"
 import { Permission } from "../../permission.js"
 import { Session } from "../../session.js"
 import { SessionSchema } from "../../session/schema.js"
 import { SubagentCompletion } from "../../session/subagent-completion.js"
 import { SubagentJob } from "../../session/subagent-job.js"
+import { assertServer } from "./session.js"
+import { SpawnModel } from "./spawn-model.js"
 
 export const name = "subagent"
 
@@ -45,6 +49,14 @@ export const Input = Schema.Struct({
     description:
       "Run the subagent in the background and return immediately. You will be notified when it completes. DO NOT sleep, poll, or proactively check on its progress.",
   }),
+  server: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description:
+      'Name of a peer OpenCode server (config "servers" or a runtime-registered one) to run this subagent there instead of locally. The child is a main-agent session on that server linked to you through this tool: background dispatch arrives as a <peer> completion, foreground returns its final text. With sessionID it sends the prompt there; server, workspace, and directory do not apply to a new placement elsewhere. Follow-up sends to an already-dispatched child route by sessionID alone.',
+  }),
+  workspace: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))).annotate({
+    description:
+      "Unsupported here: to place a subagent on an ssh workspace, use session_spawn with workspace, whose children run remotely by inheriting the placed location. Does not apply with server.",
+  }),
 })
 
 export const Output = Schema.Struct({
@@ -59,6 +71,7 @@ export const description = [
   "Foreground (default) runs the subagent to completion and returns its final response.",
   "Background mode (background=true) launches it asynchronously and returns immediately; you are notified when it finishes.",
   "Use background only for independent work that can run while you continue elsewhere.",
+  "With server, the child is dispatched to that peer OpenCode server; calling again with its sessionID continues it (prompts and waits go to the peer), and its completion arrives as a <peer> message.",
 ].join("\n")
 
 export const Plugin = {
@@ -71,6 +84,22 @@ export const Plugin = {
     const permission = yield* Permission.Service
     const models = yield* Model.Service
     const subagents = yield* SubagentJob.Service
+    const peers = yield* PeerServers.Service
+    const placements = yield* PeerPlacements.Service
+
+    // Follow-up routing for dispatched children: they have no local session row,
+    // so an explicit server or the placement recorded at dispatch routes the call.
+    const route = (sessionID: SessionSchema.ID | undefined, server: string | undefined) =>
+      server !== undefined
+        ? Effect.succeed<string | undefined>(server)
+        : sessionID === undefined
+          ? Effect.succeed<string | undefined>(undefined)
+          : sessions.get(sessionID).pipe(
+              Effect.as(undefined),
+              Effect.catch(() =>
+                placements.locate(sessionID).pipe(Effect.map((found) => (found._tag === "Some" ? found.value.server : undefined))),
+              ),
+            )
 
     const resolveModel = Effect.fn("SubagentTool.resolveModel")(function* (input: string) {
       const ref = yield* Effect.try({
@@ -156,6 +185,114 @@ export const Plugin = {
                 })
                 .pipe(Effect.mapError((error) => new ToolFailure({ message: `Subagent denied: ${agent.id}`, error })))
 
+              // Cross-server children: an explicit server, or a placement recorded by an
+              // earlier dispatch of this sessionID, routes the call to a peer machine.
+              // The depth and agent-mode checks above still gate the request locally.
+              const routed = yield* route(input.sessionID, input.server)
+              if (input.workspace !== undefined)
+                return yield* new ToolFailure({
+                  message:
+                    "workspace placement is a session_spawn feature: a session placed on an ssh workspace passes its remote location to its own subagents. The subagent tool dispatches to peer OpenCode servers through server.",
+                })
+              if (routed !== undefined) {
+                const server = routed
+                yield* assertServer(permission, server, context)
+                const remoteFailure = (detail: string) => (error: unknown) =>
+                  new ToolFailure({ message: `${detail} on ${server}: ${error instanceof Error ? error.message : String(error)}`, error })
+                if (input.sessionID !== undefined) {
+                  const childID = input.sessionID
+                  yield* peers
+                    .send(server, { sessionID: childID, prompt: input.prompt })
+                    .pipe(Effect.mapError(remoteFailure(`Failed to prompt the remote subagent ${childID}`)))
+                  if (input.background === true)
+                    return {
+                      sessionID: childID,
+                      status: "running" as const,
+                      output: `Prompt delivered to the remote subagent ${childID} on ${server}. No completion notification is sent for follow-ups; call session_wait with this sessionID to join the run and read its reply.`,
+                    }
+                  // Foreground continuation: join the remote run and return its reply.
+                  yield* peers
+                    .wait(server, childID)
+                    .pipe(
+                      Effect.onInterrupt(() => peers.stop(server, { sessionID: childID }).pipe(Effect.ignore)),
+                      Effect.mapError(remoteFailure(`Failed to wait for the remote subagent ${childID}`)),
+                    )
+                  const reply = yield* peers
+                    .text(server, childID)
+                    .pipe(Effect.mapError(remoteFailure(`Failed to read the remote subagent reply`)))
+                  return { sessionID: childID, status: "completed" as const, output: reply }
+                }
+                const requestedModel = input.model
+                const remoteModel =
+                  requestedModel === undefined
+                    ? yield* SpawnModel.ref(Config.latest(yield* config.entries(), "experimental")?.spawn_model)
+                    : yield* Effect.try({
+                        try: () => Model.Ref.parse(requestedModel),
+                        catch: () => new ToolFailure({ message: `Invalid model "${requestedModel}". Use "providerID/modelID#variant".` }),
+                      })
+                const remoteInput = {
+                  title: input.description,
+                  prompt: ["You are a subagent dispatched by another session on a peer server.", input.prompt].join("\n"),
+                  agent: agent.id,
+                  ...(remoteModel === undefined ? {} : { model: remoteModel }),
+                }
+                if (input.background === true) {
+                  const dispatched = yield* peers
+                    .dispatch(server, remoteInput)
+                    .pipe(Effect.mapError(remoteFailure("Unable to dispatch the subagent")))
+                  yield* placements
+                    .record(server, dispatched.sessionID)
+                    .pipe(Effect.mapError(remoteFailure("Unable to place the dispatched subagent")))
+                  const recovery = {
+                    kind: "peer_remote" as const,
+                    parentSessionID: context.sessionID,
+                    childSessionID: dispatched.sessionID,
+                    server,
+                    agent: agent.name,
+                    description: input.description,
+                  }
+                  // The local job is only the completion observer: its run waits on
+                  // the peer and survives restarts through restart recovery.
+                  yield* jobs.start({
+                    id: dispatched.sessionID,
+                    type: "subagent",
+                    title: input.description,
+                    recovery,
+                    run: peers.watch(server, dispatched.sessionID),
+                  })
+                  yield* context.progress({ sessionID: dispatched.sessionID, status: "running" })
+                  yield* subagents.background(recovery)
+                  return {
+                    sessionID: dispatched.sessionID,
+                    status: "running" as const,
+                    output: [
+                      `The remote subagent is working on ${server} (sessionID: ${dispatched.sessionID}). You will be notified automatically when it finishes.`,
+                      "DO NOT sleep, poll for progress, ask the peer for status, or duplicate this subagent's work.",
+                      `To send it follow-ups, call subagent again with this sessionID: the placement routes prompts to ${server}.`,
+                    ].join("\n"),
+                  }
+                }
+                const result = yield* peers
+                  .spawn(server, remoteInput)
+                  .pipe(Effect.mapError(remoteFailure("Unable to dispatch the subagent")))
+                yield* placements
+                  .record(server, result.sessionID)
+                  .pipe(Effect.mapError(remoteFailure("Unable to place the dispatched subagent")))
+                if (result.outcome === "failed")
+                  return yield* new ToolFailure({
+                    message: `Remote subagent failed (sessionID: ${result.sessionID} on ${server})`,
+                  })
+                if (result.outcome === "interrupted")
+                  return yield* new ToolFailure({
+                    message: `Remote subagent was interrupted (sessionID: ${result.sessionID} on ${server})`,
+                  })
+                return {
+                  sessionID: result.sessionID,
+                  status: "completed" as const,
+                  output: result.text ?? SubagentCompletion.NO_TEXT,
+                }
+              }
+
               const existing =
                 input.sessionID === undefined
                   ? undefined
@@ -187,7 +324,14 @@ export const Plugin = {
                 )
               }
 
-              const model = override ?? agent.model ?? parent.model
+              // Spawn default: when neither the call nor the agent config names a
+              // model, start the child on the fleet-wide spawn model rather than
+              // inheriting a parent that may run a hand-picked one.
+              const fallback = yield* SpawnModel.ref(Config.latest(yield* config.entries(), "experimental")?.spawn_model)
+              const fallbackAvailable =
+                fallback === undefined ||
+                (yield* models.available()).some((m) => m.providerID === fallback.providerID && m.id === fallback.id)
+              const model = override ?? agent.model ?? (fallbackAvailable ? fallback : undefined) ?? parent.model
               const child =
                 existing ??
                 (yield* sessions
@@ -277,10 +421,13 @@ export const Plugin = {
     yield* ctx.tool.hook("execute.before", (event) =>
       Effect.sync(() => {
         if (event.tool !== name || !Predicate.isObject(event.input)) return
-        if (event.input.model !== "" && event.input.sessionID !== "") return
+        if (event.input.model !== "" && event.input.sessionID !== "" && event.input.server !== "" && event.input.workspace !== "")
+          return
         const input = { ...event.input }
         if (input.model === "") delete input.model
         if (input.sessionID === "") delete input.sessionID
+        if (input.server === "") delete input.server
+        if (input.workspace === "") delete input.workspace
         event.input = input
       }),
     )
