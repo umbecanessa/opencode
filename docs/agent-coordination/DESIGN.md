@@ -476,7 +476,7 @@ machine and the ssh-placed hosts, and the coordination fleet as a whole.
   default (writes nothing, the key stays absent), each server's own default
   (writes `""`), and every model the server's connected providers serve.
 
-## Phase 7 — Watching subagents and talking back (design, not yet implemented)
+## Phase 7 — Watching subagents and talking back (implemented here)
 
 Field use showed two asymmetries in the coordination toolset. The parent is
 blind mid-run: every channel (`subagent` return, completion notice,
@@ -526,3 +526,39 @@ escalate to the *user*, and completion is the only agent-visible return.
   parameter (remote by name, like list/wait already do) or rely on placement
   routing by session ID; whether reasoning parts from *peer* sessions should
   be truncated harder than local ones.
+
+### Phase 7 as implemented
+
+- The open item resolved cleanly: `GET /api/session/:id/context` already
+  returns assistant messages with their `reasoning` parts (the projection
+  rebuilds them from the part table), so no `experimental.reasoning` param,
+  no Protocol change, and no SDK regeneration were needed.
+- Local reads go through `sessions.messages` with `order: "desc"` and the
+  caller's `limit`; remote reads go through a new `PeerServers.read` reusing
+  the same credentialed `/context` fetch `peers.text` makes. Both produce the
+  same spine: `{ type, text?, reasoning?, tools? }` per message, tool calls
+  labelled `name` or `name (state)` while unfinished.
+- `session_read` takes `server` too, like list/spawn/send/stop/wait, and
+  reuses `resolveServer`, so placement routing by session ID works and an
+  explicit name covers sessions you did not dispatch. Peer reasoning is not
+  truncated harder than local: `thinking` is opt-in per call either way.
+- `escalate` takes no session argument and resolves the caller's own
+  `parentID`, failing with a ToolFailure pointing at `session_send` for a
+  parentless session. It gates with `assertNotDenied` under its **own**
+  `escalate` action rather than `session`: the built-in `general` and
+  `explore` subagents deny `session`, so gating on `session` would have hid
+  the tool from exactly the children that need it. A deny hides it; it never
+  asks the user. Delivery is `sessions.synthetic` into the parent — the
+  durable `session.inbox.enqueued` path — with attribution as
+  `<escalation sessionID=…>` markup plus `metadata` on the payload, and an
+  optional `delivery` (steer default, queue available).
+- Documentation landed in the built-in opencode skill (a watching section,
+  an escalating section, and the cross-server wording) and the user docs
+  (`session-coordination`, `tools`, `permissions`).
+- Tests: local read with and without `thinking` (`tool-session.test.ts`,
+  seeding the durable events directly — the tool reads the projected store,
+  never the model); remote read through the peer stub
+  (`tool-session-remote.test.ts`) and the real HTTP path with a fetch stub
+  (`peer-servers.test.ts`); `escalate` durable attribution, `queue`
+  delivery, parentless failure, and permission-based hiding
+  (`tool-escalate.test.ts`).

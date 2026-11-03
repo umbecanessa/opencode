@@ -25,7 +25,9 @@ The tools cover the whole lifecycle:
 - `opencode_session_stop` — interrupt a session's active run. History stays
   intact and the session remains continuable.
 - `opencode_session_wait` — wait for a session to go idle and report its
-  outcome.
+  outcome, with its latest assistant text.
+- `opencode_session_read` — the session's recent messages, newest first: each
+  message's kind, its text, and the tools it called.
 
 ```text
 Spawn a peer session that reviews the release notes and reports what changed.
@@ -47,6 +49,49 @@ session ID.
     "session": {
       "*": "ask",
       "general": "allow",
+    },
+  },
+}
+```
+
+## Watching a running session
+
+Completion notices and `session_wait` only ever carry final text, so
+`session_read` is how an agent sees a session that is still working — useful
+when a child or peer looks stuck and restarting it would be wasteful.
+
+```text
+The subagent that has been running for five minutes: read what it has done so
+far, then tell me whether to let it finish.
+```
+
+`thinking: true` adds the session's reasoning parts. Leave it off by default:
+reasoning is long, costs context, and says how a session was thinking rather
+than what it did.
+
+## Escalating back from a child
+
+A spawned child has one channel to its parent agent: the `escalate` tool. It
+takes no session argument — the caller's own parent is the only target — and
+delivers a durable message into the parent's inbox, attributed to the child. A
+running parent reads it at its next safe boundary; an idle parent is woken. The
+parent replies with `session_send` into the child.
+
+```text
+If the migration order turns out to be ambiguous, escalate to me instead of
+guessing.
+```
+
+Questions and permission prompts reach the *user*, and finishing the task is the
+normal reply, so escalate is for needing the parent's decision, not for status
+updates. Permission: a deny of the `escalate` action hides the tool, and it never
+asks the user, so built-in subagents can use it even though they deny `session`.
+
+```jsonc
+{
+  "permission": {
+    "escalate": {
+      "*": "allow",
     },
   },
 }
@@ -82,7 +127,7 @@ tools may act against.
 }
 ```
 
-With servers configured, all five tools accept a `server` parameter naming one
+With servers configured, all six tools accept a `server` parameter naming one
 of them. `session_spawn` with `server` dispatches the whole task there: it runs
 in the peer's own project location and returns its final text; `directory` does
 not apply.
@@ -94,9 +139,9 @@ Dispatching supports both run modes:
   arrives as a `<peer>` message, like a local background spawn.
 
 A dispatched session remembers which server owns it, so later `session_send`,
-`session_stop`, and `session_wait` calls route to it by session ID alone; the
-`server` parameter is only needed for sessions you did not dispatch. The
-placement is dropped when the peer reports the session gone.
+`session_stop`, `session_wait`, and `session_read` calls route to it by session
+ID alone; the `server` parameter is only needed for sessions you did not
+dispatch. The placement is dropped when the peer reports the session gone.
 
 Cross-server calls gate on a separate `server` permission action (resource is
 the server name) which defaults to `ask`; the local `session` permission does
@@ -140,9 +185,10 @@ sessions can be placed on.
 ```
 
 `session_spawn` with `workspace` places the session on the named entry. The
-session row stays on this server — listing, sending, stopping, and waiting work
-as with local sessions — but the placed session runs its shell and file tools on
-the remote host inside the entry's directory. Children of a placed session
+session row stays on this server — listing, sending, stopping, waiting, and
+reading all work as with local sessions — but the placed session runs its
+shell and file tools on the remote host inside the entry's directory. Children
+of a placed session
 inherit the placement, so its subagents and its own peer spawns run remotely
 too. `workspace` is mutually exclusive with `server` and `directory`.
 
