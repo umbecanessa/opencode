@@ -6,7 +6,7 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import { Definition, Kind, Status } from "@opencode/schema/memory"
 import { Session } from "@opencode/schema/session"
 import type { SessionMessage } from "@opencode/schema/session-message"
-import { Cause, Effect, Option, Schema } from "effect"
+import { Cause, Effect, Option, Schema, Scope } from "effect"
 import { Config } from "../config.js"
 import { ConfigEntryObserver } from "../config/plugin/entry-observer.js"
 import { Memory } from "../memory/index.js"
@@ -15,7 +15,8 @@ import REVIEW from "./memory/review.txt"
 import SEARCH_DESCRIPTION from "./memory/search.txt"
 import WRITE_DESCRIPTION from "./memory/write.txt"
 
-// Capture runs once the Session would go idle, like the goal plugin's reviewer. Keep each review
+// Capture runs in the background once the Session would go idle; unlike the goal plugin's
+// reviewer it never admits input, so it does not hold the idle boundary. Keep each review
 // bounded: enough transcript to learn from without replaying the whole Session on every call.
 const MIN_CAPTURE_CHARS = 600
 const MAX_TRANSCRIPT_CHARS = 24_000
@@ -286,15 +287,27 @@ export const Plugin = define({
     )
 
     // ---- automatic capture at idle ----
+    // Capture never admits input and its generate does not mutate the Session, so unlike the
+    // goal reviewer it must not hold the idle boundary: review continues on the plugin's scope
+    // while the Session goes idle right away. At most one capture per session runs; a session
+    // that keeps working idles again later, and the ledger makes each pass read only the
+    // messages after the previous pass.
+    const scope = yield* Scope.Scope
+    const capturing = new Set<string>()
     yield* ctx.session.hook("experimental.idle", (event) =>
-      enabled()
-        ? capture(event.sessionID).pipe(
-            Effect.catchCause((cause) =>
-              Cause.hasInterruptsOnly(cause)
-                ? Effect.interrupt
-                : Effect.logWarning("project memory capture failed", { sessionID: event.sessionID, cause }),
-            ),
-          )
+      enabled() && !capturing.has(String(event.sessionID))
+        ? Effect.gen(function* () {
+            capturing.add(String(event.sessionID))
+            yield* capture(event.sessionID).pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.interrupt
+                  : Effect.logWarning("project memory capture failed", { sessionID: event.sessionID, cause }),
+              ),
+              Effect.ensuring(Effect.sync(() => void capturing.delete(String(event.sessionID)))),
+              Effect.forkIn(scope),
+            )
+          })
         : Effect.void,
     )
 
