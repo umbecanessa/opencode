@@ -42,12 +42,19 @@ export class Client {
 
   // One transport for every call: prefers the cached LAN origin, and on a connection-class failure
   // (timeout/DNS/refused — not an HTTP status) sweeps the local subnet once before giving up.
-  private send(path: string, init?: { method?: string; body?: string; timeout?: number; accept?: string }) {
+  // Byte bodies (voice uploads) ride expo/fetch, whose normalizeBodyInit accepts typed arrays;
+  // the default RN fetch is kept for string bodies to avoid changing behavior elsewhere.
+  private send(
+    path: string,
+    init?: { method?: string; body?: string | Uint8Array; timeout?: number; accept?: string; contentType?: string },
+  ) {
     const fetchVia = (origin: string) =>
-      fetch(`${origin}${path}`, {
+      (typeof init?.body === "string" || init?.body === undefined ? fetch : streamingFetch)(`${origin}${path}`, {
         method: init?.method ?? "GET",
-        body: init?.body,
-        headers: init?.body ? { ...this.headers(init?.accept), "content-type": "application/json" } : this.headers(init?.accept),
+        body: init?.body as never,
+        headers: init?.body
+          ? { ...this.headers(init?.accept), "content-type": init?.contentType ?? "application/json" }
+          : this.headers(init?.accept),
         ...(init?.timeout !== undefined ? { signal: AbortSignal.timeout(init.timeout) } : {}),
       })
     return fetchVia(this.base()).catch(async (error) => {
@@ -148,6 +155,35 @@ export class Client {
 
   fsList = (l: Location, path: string) =>
     this.request<{ data: FileEntry[] }>(`/api/fs/list?${loc(l)}&path=${encodeURIComponent(path)}`)
+
+  // Raw-bytes upload to the server's filesystem; returns the resolved absolute path that
+  // voice.transcribe reads back. Missing parent directories are created server-side.
+  fsWrite = async (directory: string, path: string, bytes: Uint8Array): Promise<string> => {
+    const res = await this.send(`/api/experimental/fs/write?${loc({ directory })}&path=${encodeURIComponent(path)}`, {
+      method: "POST",
+      body: bytes,
+      contentType: "application/octet-stream",
+      timeout: 120_000,
+    })
+    if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
+    if (!res.ok) throw new Error(`${this.host.name}: fs/write ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300))
+    return ((await res.json()) as { data: { path: string } }).data.path
+  }
+
+  voiceTranscribe = (body: {
+    audioPath: string
+    recordingId?: string
+    sessionID?: string
+    title?: string
+    device?: string
+    duration?: number
+    recordedAt?: number
+    language?: string
+  }) =>
+    this.request<{ data: { jobID: string; sessionID: string } }>("/api/experimental/voice/transcribe", {
+      method: "POST",
+      body: JSON.stringify(body),
+    })
 
   fsRead = async (l: Location, path: string, limit = 2_000_000): Promise<FileContent> => {
     const encodedPath = path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")

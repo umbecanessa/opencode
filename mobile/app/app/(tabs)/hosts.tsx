@@ -78,6 +78,17 @@ export default function Hosts() {
         <Ionicons name="add-circle" size={22} color={t.tint} />
         <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>Pair a machine</Text>
       </Pressable>
+
+      <Pressable
+        onPress={() => router.push("/pocket")}
+        style={({ pressed }) => [
+          styles.add,
+          { backgroundColor: t.surface, opacity: pressed ? 0.7 : 1, transform: [{ scale: pressed ? 0.98 : 1 }] },
+        ]}
+      >
+        <Ionicons name="ear-outline" size={22} color={t.tint} />
+        <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>Pocket recorder</Text>
+      </Pressable>
     </ScrollView>
   )
 }

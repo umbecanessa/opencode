@@ -2,6 +2,7 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from "expo-router"
 import { StatusBar } from "expo-status-bar"
 import { View, useColorScheme } from "react-native"
 import { HostsProvider } from "../src/state/hosts"
+import { PocketProvider } from "../src/state/pocket"
 import { useTheme } from "../src/theme"
 import { NotificationRouting } from "../src/components/NotificationRouting"
 
@@ -25,34 +26,37 @@ export default function RootLayout() {
     >
       <StatusBar style={dark ? "light" : "dark"} />
       <HostsProvider>
-        <NotificationRouting />
-        <Stack
-          screenOptions={{
-            contentStyle: { backgroundColor: t.background },
-            headerTitleStyle: { fontWeight: "700" },
-            headerBackButtonDisplayMode: "minimal",
-            // Opaque header: the iOS default blur can render transparent behind custom two-line titles.
-            headerBackground: () => <View style={{ flex: 1, backgroundColor: t.background }} />,
-            headerShadowVisible: false,
-          }}
-        >
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="pair" options={{ presentation: "modal", title: "Add host" }} />
-          <Stack.Screen
-            name="file"
-            options={{
-              presentation: "modal",
-              headerShown: false,
-              sheetAllowedDetents: [0.65, 0.95],
-              sheetInitialDetentIndex: 0,
-              sheetGrabberVisible: true,
-              sheetCornerRadius: 18,
+        <PocketProvider>
+          <NotificationRouting />
+          <Stack
+            screenOptions={{
+              contentStyle: { backgroundColor: t.background },
+              headerTitleStyle: { fontWeight: "700" },
+              headerBackButtonDisplayMode: "minimal",
+              // Opaque header: the iOS default blur can render transparent behind custom two-line titles.
+              headerBackground: () => <View style={{ flex: 1, backgroundColor: t.background }} />,
+              headerShadowVisible: false,
             }}
-          />
-          <Stack.Screen name="session" options={{ title: "Session" }} />
-          <Stack.Screen name="project" options={{ title: "Project" }} />
-          <Stack.Screen name="new-project" options={{ presentation: "modal", title: "New project" }} />
-        </Stack>
+          >
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="pair" options={{ presentation: "modal", title: "Add host" }} />
+            <Stack.Screen
+              name="file"
+              options={{
+                presentation: "modal",
+                headerShown: false,
+                sheetAllowedDetents: [0.65, 0.95],
+                sheetInitialDetentIndex: 0,
+                sheetGrabberVisible: true,
+                sheetCornerRadius: 18,
+              }}
+            />
+            <Stack.Screen name="session" options={{ title: "Session" }} />
+            <Stack.Screen name="project" options={{ title: "Project" }} />
+            <Stack.Screen name="new-project" options={{ presentation: "modal", title: "New project" }} />
+            <Stack.Screen name="pocket" options={{ title: "Pocket" }} />
+          </Stack>
+        </PocketProvider>
       </HostsProvider>
     </ThemeProvider>
   )

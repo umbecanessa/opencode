@@ -52,6 +52,14 @@
             "usePrecompiledModules": false
           }
         }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["central"],
+          "bluetoothAlwaysPermission": "OpenCode Mobile connects to your Pocket voice recorder over Bluetooth to pull its recordings."
+        }
       ]
     ],
     "extra": {
