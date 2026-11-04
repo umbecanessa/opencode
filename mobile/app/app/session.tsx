@@ -30,6 +30,7 @@ import {
   UserBubble,
   type Item,
   type Message,
+  type ToolPart,
 } from "../src/components/session/Timeline"
 import { useHosts } from "../src/state/hosts"
 import { familyStatus, isFailed, liveKey, useLive } from "../src/state/live"
@@ -61,6 +62,37 @@ export default function Session() {
   const pinned = useRef(true)
   const scrolling = useRef(false)
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
+
+  // Live output for open, running shell rows: map a tool part to the shell it spawned (matched by
+  // the sessionID tag on running shells, falling back to the command text) and its read cursor.
+  const shells = useRef<Record<string, { id: string; cursor: number }>>({})
+  const liveOutput = useCallback(
+    async (tool: ToolPart) => {
+      if (!c) return undefined
+      const known = shells.current[tool.id]
+      if (known) {
+        try {
+          const page = await c.shellOutput(known.id, directory.current, known.cursor)
+          known.cursor = page.data.cursor
+          return { text: page.data.output, cursor: known.cursor }
+        } catch {
+          delete shells.current[tool.id]
+        }
+      }
+      let id = typeof tool.state.metadata?.shellID === "string" ? tool.state.metadata.shellID : undefined
+      if (!id) {
+        const command = typeof tool.state.input?.command === "string" ? tool.state.input.command : ""
+        const running = await c.runningShells(directory.current).catch(() => undefined)
+        id = running?.data.find((s) => s.metadata?.sessionID === params.id || (!!command && s.command === command))?.id
+      }
+      if (!id) return undefined
+      const page = await c.shellOutput(id, directory.current).catch(() => undefined)
+      if (!page) return undefined
+      shells.current[tool.id] = { id, cursor: page.data.cursor }
+      return { text: page.data.output, cursor: page.data.cursor }
+    },
+    [c, params.id],
+  )
 
   const [subagents, setSubagents] = useState<SessionInfo[]>([])
   const [outcome, setOutcome] = useState<unknown>()
@@ -289,7 +321,7 @@ export default function Session() {
     if (item.kind === "text") return <AssistantText text={item.text} onFile={openFile} />
     if (item.kind === "thought") return <Thought text={item.text} />
     if (item.kind === "thinking") return <Thinking />
-    if (item.kind === "tools") return <ToolGroup tools={item.tools} onBackground={c ? () => c.background(params.id) : undefined} />
+    if (item.kind === "tools") return <ToolGroup tools={item.tools} onBackground={c ? () => c.background(params.id) : undefined} liveOutput={liveOutput} />
     if (item.kind === "end") return <TurnEnd outcome={item.outcome} time={item.time} />
     return <Note text={item.text} />
   }

@@ -1,5 +1,5 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
-import { memo, useState } from "react"
+import { memo, useEffect, useState } from "react"
 import { ActivityIndicator, Image, LayoutAnimation, Pressable, ScrollView, StyleSheet, Text, View } from "react-native"
 import { useTheme } from "../../theme"
 import { Markdown } from "../Markdown"
@@ -8,8 +8,9 @@ type ToolPart = {
   type: "tool"
   id: string
   name: string
-  state: { status: string; input?: Record<string, unknown>; content?: unknown; error?: unknown }
+  state: { status: string; input?: Record<string, unknown>; content?: unknown; error?: unknown; metadata?: Record<string, unknown> }
 }
+export type { ToolPart }
 type Part = { type: "text"; text: string } | { type: "reasoning"; text?: string } | ToolPart
 
 export type Message = {
@@ -177,14 +178,19 @@ const toolDetail = (tool: ToolPart) => {
 const basename = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p
 
 const toolOutput = (tool: ToolPart) => {
+  // Running shells stream partial output into metadata.output (the desktop reads the same field);
+  // terminal states carry content/error instead.
+  const partial = typeof tool.state.metadata?.output === "string" ? tool.state.metadata.output : ""
   const c = tool.state.content ?? tool.state.error
-  if (typeof c === "string") return c
-  if (Array.isArray(c))
-    return c
+  if (typeof c === "string") return c || partial
+  if (Array.isArray(c)) {
+    const text = c
       .map((x) => (x && typeof x === "object" && "text" in x && typeof x.text === "string" ? x.text : ""))
       .filter(Boolean)
       .join("\n")
-  return ""
+    return text || partial
+  }
+  return partial
 }
 
 const toolInput = (tool: ToolPart) => {
@@ -199,17 +205,44 @@ const clip = (s: string, lines = 40) => {
   return all.length > lines ? `${all.slice(0, lines).join("\n")}\n… ${all.length - lines} more lines` : s
 }
 
-const ToolRow = ({ tool, first, onBackground }: { tool: ToolPart; first: boolean; onBackground?: () => Promise<void> }) => {
+// Pulls incremental output for a running tool; returns appended text plus the read cursor.
+type LiveReader = (tool: ToolPart) => Promise<{ text: string; cursor: number } | undefined>
+
+const ToolRow = ({ tool, first, onBackground, liveOutput }: { tool: ToolPart; first: boolean; onBackground?: () => Promise<void>; liveOutput?: LiveReader }) => {
   const t = useTheme()
   const [open, setOpen] = useState(false)
   const [backgrounding, setBackgrounding] = useState(false)
   const [backgroundError, setBackgroundError] = useState("")
+  const [live, setLive] = useState<{ text: string; cursor: number }>()
   const meta = TOOLS[tool.name] ?? { icon: "construct-outline" as const, verb: tool.name }
   const status = tool.state.status
   const failed = status === "error" || status === "failed"
   const running = status === "running" || status === "pending"
+  const isShell = tool.name === "shell" || tool.name === "bash"
   const detail = toolDetail(tool)
-  const output = open ? toolOutput(tool) : ""
+  // While a shell row is open and running, page its captured output so the transcript shows the
+  // command producing text live, not only when it finishes.
+  useEffect(() => {
+    if (!open || !running || !liveOutput || !isShell) return
+    let cancelled = false
+    const tick = () =>
+      liveOutput(tool)
+        .then((r) => {
+          if (cancelled || !r) return
+          setLive((prev) => (prev ? { text: prev.text + r.text, cursor: r.cursor } : r))
+        })
+        .catch(() => {})
+    tick()
+    const timer = setInterval(tick, 1500)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+    // Keyed on tool.id: the tool object is rebuilt every poll, and re-running on identity churn
+    // would restart the interval without adding information.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, running, isShell, liveOutput, tool.id])
+  const output = open ? toolOutput(tool) || live?.text || "" : ""
   return (
     <View style={!first && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.separator }}>
       <Pressable
@@ -232,7 +265,7 @@ const ToolRow = ({ tool, first, onBackground }: { tool: ToolPart; first: boolean
         {running && <ActivityIndicator size="small" color={t.tertiaryLabel} />}
         {failed && <Ionicons name="alert-circle" size={17} color={t.status.failed} />}
       </Pressable>
-      {running && (tool.name === "shell" || tool.name === "bash") && onBackground && (
+      {running && isShell && onBackground && (
         <View style={{ paddingHorizontal: 12, paddingBottom: 10 }}>
           <Pressable disabled={backgrounding} accessibilityRole="button" accessibilityLabel="Send running tools to background"
             onPress={async () => {
@@ -257,8 +290,8 @@ const ToolRow = ({ tool, first, onBackground }: { tool: ToolPart; first: boolean
           </ScrollView>
           {output.length > 0 && (
             <>
-              <Text style={[t.font.caption, styles.toolLabel, { color: failed ? t.status.failed : t.tertiaryLabel }]}>
-                {failed ? "ERROR" : "OUTPUT"}
+              <Text style={[t.font.caption, styles.toolLabel, { color: failed ? t.status.failed : running ? t.status.running : t.tertiaryLabel }]}>
+                {failed ? "ERROR" : running ? "LIVE OUTPUT" : "OUTPUT"}
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.code, { backgroundColor: t.codeBackground }]}>
                 <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
@@ -275,7 +308,7 @@ const ToolRow = ({ tool, first, onBackground }: { tool: ToolPart; first: boolean
 
 const COLLAPSE_AFTER = 4
 
-export const ToolGroup = ({ tools, onBackground }: { tools: ToolPart[]; onBackground?: () => Promise<void> }) => {
+export const ToolGroup = ({ tools, onBackground, liveOutput }: { tools: ToolPart[]; onBackground?: () => Promise<void>; liveOutput?: LiveReader }) => {
   const t = useTheme()
   const [expanded, setExpanded] = useState(false)
   const hidden = expanded ? 0 : Math.max(0, tools.length - COLLAPSE_AFTER)
@@ -299,7 +332,7 @@ export const ToolGroup = ({ tools, onBackground }: { tools: ToolPart[]; onBackgr
         </Pressable>
       )}
       {visible.map((tool, i) => (
-        <ToolRow key={tool.id} tool={tool} first={i === 0 && hidden === 0} onBackground={onBackground} />
+        <ToolRow key={tool.id} tool={tool} first={i === 0 && hidden === 0} onBackground={onBackground} liveOutput={liveOutput} />
       ))}
     </View>
   )

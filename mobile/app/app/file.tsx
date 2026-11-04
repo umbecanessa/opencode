@@ -12,7 +12,8 @@ export default function FileView() {
   const router = useRouter()
   const { host, directory, path, name } = useLocalSearchParams<{ host: string; directory: string; path: string; name: string }>()
   const { client } = useHosts()
-  const [mode, setMode] = useState<"rendered" | "source">(String(name).endsWith(".md") || String(name).endsWith(".mdx") ? "rendered" : "source")
+  const isMarkdown = /\.(md|mdx)$/i.test(String(name))
+  const [mode, setMode] = useState<"rendered" | "source">(isMarkdown ? "rendered" : "source")
   const [text, setText] = useState<string>()
   const [truncated, setTruncated] = useState(false)
   const [error, setError] = useState("")
@@ -37,13 +38,15 @@ export default function FileView() {
           {name} · {host}
         </Text>
       </View>
-      <View style={{ paddingHorizontal: 16 }}>
-        <SegmentedControl
-          values={["Rendered", "Source"]}
-          selectedIndex={mode === "rendered" ? 0 : 1}
-          onChange={(i) => setMode(i === 0 ? "rendered" : "source")}
-        />
-      </View>
+      {isMarkdown && (
+        <View style={{ paddingHorizontal: 16 }}>
+          <SegmentedControl
+            values={["Rendered", "Source"]}
+            selectedIndex={mode === "rendered" ? 0 : 1}
+            onChange={(i) => setMode(i === 0 ? "rendered" : "source")}
+          />
+        </View>
+      )}
       {truncated && (
         <Text style={[t.font.footnote, styles.banner, { color: t.status.waiting, backgroundColor: t.fill.secondary }]}>
           Showing the first part of this file.
@@ -55,18 +58,36 @@ export default function FileView() {
       {text === undefined && !error && <ActivityIndicator style={{ marginTop: 30 }} color={t.tint} />}
       {text !== undefined && (
         <ScrollView contentContainerStyle={{ padding: 16, paddingBottom: 60 }}>
-          {mode === "rendered" ? (
+          {isMarkdown && mode === "rendered" ? (
             <Markdown onFile={(target) => {
               const base = path.replace(/[\\/][^\\/]*$/, "")
               router.push({ pathname: "/file", params: { host, directory, path: joinPath(base, target), name: target.split(/[\\/]/).pop() } })
             }}>{text}</Markdown>
           ) : (
-            <Text style={[styles.source, { color: t.label }]} selectable>
-              {text}
-            </Text>
+            <CodeView text={text} />
           )}
         </ScrollView>
       )}
+    </View>
+  )
+}
+
+// Code, not prose: monospace on a raised card with a line-number gutter when wrapping is unlikely
+// to break the alignment (long lines would misalign wrapped rows against the numbers).
+const CodeView = ({ text }: { text: string }) => {
+  const t = useTheme()
+  const lines = text.split("\n")
+  const gutter = lines.length <= 3000 && !lines.some((line) => line.length > 90)
+  return (
+    <View style={[styles.codeCard, { backgroundColor: t.codeBackground, borderColor: t.separator }]}>
+      {gutter && (
+        <Text style={[styles.gutter, styles.source, { color: t.tertiaryLabel }]} selectable={false}>
+          {lines.map((_, i) => `${i + 1}`).join("\n")}
+        </Text>
+      )}
+      <Text style={[styles.source, styles.codeText, { color: t.label }]} selectable>
+        {text}
+      </Text>
     </View>
   )
 }
@@ -76,4 +97,7 @@ const styles = StyleSheet.create({
   close: { paddingVertical: 4 },
   banner: { marginHorizontal: 16, marginTop: 10, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
   source: { fontFamily: "Menlo", fontSize: 13, lineHeight: 19 },
+  codeCard: { flexDirection: "row", padding: 12, borderRadius: 12, borderWidth: StyleSheet.hairlineWidth, gap: 12 },
+  codeText: { flexShrink: 1 },
+  gutter: { textAlign: "right", opacity: 0.6 },
 })

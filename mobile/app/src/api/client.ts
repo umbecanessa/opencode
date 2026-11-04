@@ -1,4 +1,5 @@
 import { fetch as streamingFetch } from "expo/fetch"
+import { cachedLanOrigin, findLanOrigin, forgetLanOrigin } from "./lan"
 import type {
   FileContent,
   FileEntry,
@@ -17,10 +18,20 @@ export type Location = { directory: string }
 const loc = (l: Location) => new URLSearchParams({ "location[directory]": l.directory }).toString()
 
 export class Client {
+  // When the tailnet path fails, a verified LAN origin (same Wi-Fi) takes over until it too dies.
+  private lanOrigin?: string
+  private lanProbe?: Promise<string | undefined>
+
   constructor(
     private host: Host,
     private token: string,
-  ) {}
+  ) {
+    void cachedLanOrigin(host.id).then((origin) => {
+      if (origin) this.lanOrigin = origin
+    })
+  }
+
+  private base = () => this.lanOrigin ?? this.host.origin
 
   // Server auth is HTTP Basic with the fixed user "opencode"; the paired session
   // token is used as the password (see packages/app/src/runtime/server/api.ts).
@@ -29,15 +40,37 @@ export class Client {
     authorization: `Basic ${btoa(`opencode:${this.token}`)}`,
   })
 
+  // One transport for every call: prefers the cached LAN origin, and on a connection-class failure
+  // (timeout/DNS/refused — not an HTTP status) sweeps the local subnet once before giving up.
+  private send(path: string, init?: { method?: string; body?: string; timeout?: number; accept?: string }) {
+    const fetchVia = (origin: string) =>
+      fetch(`${origin}${path}`, {
+        method: init?.method ?? "GET",
+        body: init?.body,
+        headers: init?.body ? { ...this.headers(init?.accept), "content-type": "application/json" } : this.headers(init?.accept),
+        ...(init?.timeout !== undefined ? { signal: AbortSignal.timeout(init.timeout) } : {}),
+      })
+    return fetchVia(this.base()).catch(async (error) => {
+      if (this.lanOrigin) {
+        // The remembered LAN path went stale (phone moved networks): drop it and use the paired origin.
+        void forgetLanOrigin(this.host.id)
+        this.lanOrigin = undefined
+        throw error
+      }
+      this.lanProbe ??= findLanOrigin(this.host.id, this.host.origin, this.token)
+      const lan = await this.lanProbe
+      this.lanProbe = undefined
+      if (!lan) throw error
+      this.lanOrigin = lan
+      console.warn(`[lan] ${this.host.name}: falling back to ${lan}`)
+      return fetchVia(lan)
+    })
+  }
+
   private async request<T>(path: string, init?: { method?: string; body?: string }): Promise<T> {
     // A deadline is essential on flaky tunnels: a request stuck in a half-open VPN path would otherwise
     // hang the caller's poll cycle forever, pinning the host as unreachable even after the tunnel recovers.
-    const res = await fetch(`${this.host.origin}${path}`, {
-      method: init?.method ?? "GET",
-      body: init?.body,
-      headers: init?.body ? { ...this.headers(), "content-type": "application/json" } : this.headers(),
-      signal: AbortSignal.timeout(10_000),
-    })
+    const res = await this.send(path, { ...init, timeout: 10_000 })
     if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
     if (!res.ok) throw new Error(`${this.host.name}: ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300))
     return (await res.json()) as T
@@ -50,14 +83,13 @@ export class Client {
   diff = (id: string) => this.request<{ data: { file: string; patch: string; additions: number; deletions: number; status: "added" | "deleted" | "modified" }[] }>(`/api/session/${id}/diff?context=3`)
   permissions = (id: string) => this.request<{ data: { permissions?: { action: string; resource: string; effect: "allow" | "deny" | "ask" }[] } }>(`/api/session/${id}`).then((r) => r.data)
   setPermissions = async (id: string, permissions: { action: string; resource: string; effect: "allow" | "deny" | "ask" }[]) => {
-    const res = await fetch(`${this.host.origin}/api/session/${id}`, {
-      method: "PATCH", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify({ permissions }),
-    })
+    const res = await this.send(`/api/session/${id}`, { method: "PATCH", body: JSON.stringify({ permissions }) })
     if (!res.ok) throw new Error(`Could not update permissions (${res.status})`)
   }
   switchModel = async (id: string, model: { providerID: string; modelID: string; variant?: string }) => {
-    const res = await fetch(`${this.host.origin}/api/session/${id}/model`, {
-      method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify({ model: { id: model.modelID, providerID: model.providerID, ...(model.variant ? { variant: model.variant } : {}) } }),
+    const res = await this.send(`/api/session/${id}/model`, {
+      method: "POST",
+      body: JSON.stringify({ model: { id: model.modelID, providerID: model.providerID, ...(model.variant ? { variant: model.variant } : {}) } }),
     })
     if (!res.ok) throw new Error(`Could not switch model (${res.status})`)
   }
@@ -92,10 +124,7 @@ export class Client {
     this.request<{ interrupted: boolean }>(`/api/session/${sessionID}/interrupt`, { method: "POST" })
 
   background = async (sessionID: string) => {
-    const res = await fetch(`${this.host.origin}/api/session/${sessionID}/background`, {
-      method: "POST",
-      headers: this.headers(),
-    })
+    const res = await this.send(`/api/session/${sessionID}/background`, { method: "POST" })
     if (!res.ok) throw new Error(`Could not background tools (${res.status})`)
   }
 
@@ -103,19 +132,26 @@ export class Client {
     .then((r) => r.data.map((form) => ({ ...form, host: this.host.id })))
 
   answerForm = async (sessionID: string, formID: string, answer: Record<string, FormValue>) => {
-    const res = await fetch(`${this.host.origin}/api/session/${sessionID}/form/${formID}/reply`, {
-      method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body: JSON.stringify({ answer }),
-    })
+    const res = await this.send(`/api/session/${sessionID}/form/${formID}/reply`, { method: "POST", body: JSON.stringify({ answer }) })
     if (!res.ok) throw new Error(`Could not submit answers (${res.status}): ${await res.text()}`.slice(0, 300))
   }
+
+  // Live shell output for the session screen: running shells at a location are listed (exited ones
+  // are excluded), and each shell's captured stdout/stderr is paged by byte cursor.
+  runningShells = (directory: string) =>
+    this.request<{ data: { id: string; command: string; metadata?: Record<string, unknown> }[] }>(`/api/shell?${loc({ directory })}`)
+
+  shellOutput = (id: string, directory: string, cursor?: number) =>
+    this.request<{ data: { output: string; cursor: number } }>(
+      `/api/shell/${id}/output?${loc({ directory })}&limit=8000${cursor !== undefined ? `&cursor=${cursor}` : ""}`,
+    )
 
   fsList = (l: Location, path: string) =>
     this.request<{ data: FileEntry[] }>(`/api/fs/list?${loc(l)}&path=${encodeURIComponent(path)}`)
 
   fsRead = async (l: Location, path: string, limit = 2_000_000): Promise<FileContent> => {
     const encodedPath = path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")
-    const url = `${this.host.origin}/api/fs/read/${encodedPath}?${loc(l)}`
-    const res = await fetch(url, { headers: this.headers("application/octet-stream") })
+    const res = await this.send(`/api/fs/read/${encodedPath}?${loc(l)}`, { accept: "application/octet-stream" })
     if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
     if (!res.ok) throw new Error(`Cannot read ${path} on ${this.host.name} (${res.status})`)
     const size = Number(res.headers.get("content-length") ?? 0)
@@ -135,10 +171,9 @@ export class Client {
     )
 
   replyPermission = async (sessionID: string, requestID: string, decision: PermissionDecision) => {
-    const res = await fetch(`${this.host.origin}/api/session/${sessionID}/permission/${requestID}/reply`, {
+    const res = await this.send(`/api/session/${sessionID}/permission/${requestID}/reply`, {
       method: "POST",
       body: JSON.stringify({ decision }),
-      headers: { ...this.headers(), "content-type": "application/json" },
     })
     if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
     if (!res.ok) throw new Error(`${this.host.name}: ${res.status} ${await res.text().catch(() => "")}`.slice(0, 300))
@@ -153,7 +188,7 @@ export class Client {
     (async () => {
       while (!signal.aborted) {
         try {
-          const res = await streamingFetch(`${this.host.origin}/api/event`, {
+          const res = await streamingFetch(`${this.base()}/api/event`, {
             headers: this.headers("text/event-stream"),
             signal: signal as never,
           })
@@ -182,6 +217,12 @@ export class Client {
           }
         } catch {
           if (signal.aborted) return
+          // A dead stream with no HTTP status is a transport failure: probe LAN so the next
+          // reconnect rides the local path when the tailnet is what broke.
+          if (!this.lanOrigin) {
+            this.lanProbe ??= findLanOrigin(this.host.id, this.host.origin, this.token)
+            void this.lanProbe.then((lan) => { if (lan && !this.lanOrigin) this.lanOrigin = lan })
+          }
         }
         await new Promise((r) => setTimeout(r, 3000))
       }
