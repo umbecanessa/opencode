@@ -60,6 +60,25 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
       description:
         "Enable the experimental per-project knowledge graph: memory tools, automatic capture at session idle, and an injected project card. Enabled by default; set false to disable. With an embedding block, recall also uses semantic similarity against a local embeddings endpoint.",
     }),
+  voice: Schema.Union([
+    Schema.Boolean,
+    Schema.Struct({
+      transcribe: Schema.Struct({
+        url: Schema.String.pipe(optional).annotate({
+          description:
+            "Base URL of an OpenAI-compatible speech-to-text endpoint (POST /audio/transcriptions), e.g. http://127.0.0.1:8080/v1 for a local whisper.cpp server or http://127.0.0.1:5001/v1 for faster-whisper's OpenAI mode. Defaults to http://127.0.0.1:8080/v1.",
+        }),
+        model: Schema.String.pipe(optional).annotate({
+          description: "Model id sent to the transcription endpoint. Defaults to whisper-1.",
+        }),
+      }).pipe(optional),
+    }),
+  ])
+    .pipe(optional)
+    .annotate({
+      description:
+        "Settings for voice-note ingest from external recorders, including server-side transcription of uploaded audio through a local OpenAI-compatible whisper endpoint. Enabled by default; set false to disable voice transcription.",
+    }),
   subagent_depth: NonNegativeInt.pipe(optional).annotate({
     description: "Maximum subagent nesting depth. Defaults to 1.",
   }),

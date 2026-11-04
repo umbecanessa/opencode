@@ -15,6 +15,7 @@ import { Formatter } from "./formatter.js"
 import { FileSystem } from "./filesystem.js"
 import { FileSystemSearch } from "./filesystem/search.js"
 import { Generate } from "./generate.js"
+import { Transcribe } from "./transcribe.js"
 import { Voice } from "./voice.js"
 import { UsageLimits } from "./usage-limits.js"
 import { Form } from "./form.js"
@@ -106,6 +107,7 @@ const nodes = [
   Form.node,
   Generate.node,
   Voice.node,
+  Transcribe.node,
   UsageLimits.node,
   ReadToolFileSystem.node,
   McpTool.node,

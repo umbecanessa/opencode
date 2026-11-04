@@ -421,6 +421,8 @@ export type PermissionRule = { action: string; resource: string; effect: Permiss
 
 export type PluginInfo = { id?: PluginID; source: PluginSource; features: PluginFeatures; state: PluginState }
 
+export type VoiceTranscribeResponse = { data: { jobID: string; sessionID: SessionID } }
+
 export type SessionForkBoundary =
   | { type: "before"; messageID: SessionMessageID }
   | { type: "through"; messageID: SessionMessageID }
@@ -2541,6 +2543,7 @@ export type ConfigEntry =
           schedules?: boolean
           artifacts?: boolean
           memory?: boolean | { embedding?: { url?: string; model?: string } }
+          voice?: boolean | { transcribe?: { url?: string; model?: string } }
           subagent_depth?: number
           spawn_model?: string
           location_idle_timeout?: string | false
@@ -4010,6 +4013,21 @@ export type ExperimentalVoiceIngestInput = {
 
 export type ExperimentalVoiceIngestOutput = { data: SessionInboxSynthetic }["data"]
 
+export type ExperimentalVoiceTranscribeInput = {
+  readonly audioPath: string
+  readonly itemId?: string | undefined
+  readonly sessionID?: string | undefined
+  readonly title?: string | undefined
+  readonly device?: string | undefined
+  readonly recordingId?: string | undefined
+  readonly recordedAt?: number | undefined
+  readonly duration?: number | undefined
+  readonly language?: string | undefined
+  readonly delivery?: ("steer" | "queue") | undefined
+}
+
+export type ExperimentalVoiceTranscribeOutput = VoiceTranscribeResponse["data"]
+
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
 export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
@@ -4974,6 +4992,12 @@ export type VoiceIngestInput = ExperimentalVoiceIngestInput
 
 /** @deprecated Use `ExperimentalVoiceIngestOutput`. Removed in the next minor. */
 export type VoiceIngestOutput = ExperimentalVoiceIngestOutput
+
+/** @deprecated Use `ExperimentalVoiceTranscribeInput`. Removed in the next minor. */
+export type VoiceTranscribeInput = ExperimentalVoiceTranscribeInput
+
+/** @deprecated Use `ExperimentalVoiceTranscribeOutput`. Removed in the next minor. */
+export type VoiceTranscribeOutput = ExperimentalVoiceTranscribeOutput
 
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput

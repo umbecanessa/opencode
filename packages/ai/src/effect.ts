@@ -27,6 +27,7 @@ export const ai = {
 export { AIClient } from "./ai-client.js"
 export { LLMClient } from "./route/client.js"
 export { ImageClient } from "./image-client.js"
+export { TranscriptionClient } from "./transcription-client.js"
 export { Auth } from "./route/auth.js"
 export { ProviderPackage } from "./provider-package.js"
 export type { LLMClientService } from "./route/client.js"

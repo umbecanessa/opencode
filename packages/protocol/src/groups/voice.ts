@@ -80,6 +80,20 @@ export const VoiceIngestInput = Schema.Struct({
   delivery: SessionInbox.Delivery.pipe(Schema.optional),
 }).annotate({ identifier: "VoiceIngestInput" })
 
+export interface VoiceTranscribeInput extends Schema.Schema.Type<typeof VoiceTranscribeInput> {}
+export const VoiceTranscribeInput = Schema.Struct({
+  audioPath: Schema.String,
+  itemId: SessionMessage.ID.pipe(Schema.optional),
+  sessionID: Session.ID.pipe(Schema.optional),
+  title: Schema.String.pipe(Schema.optional),
+  device: Schema.String.pipe(Schema.optional),
+  recordingId: Schema.String.pipe(Schema.optional),
+  recordedAt: Schema.Finite.pipe(Schema.optional),
+  duration: Schema.Finite.pipe(Schema.optional),
+  language: Schema.String.pipe(Schema.optional),
+  delivery: SessionInbox.Delivery.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceTranscribeInput" })
+
 export const VoiceGroup = HttpApiGroup.make("server.voice")
   .add(
     HttpApiEndpoint.get("voice.models", "/api/experimental/voice/models", {
@@ -132,6 +146,25 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         summary: "Ingest voice recording transcript",
         description:
           "Experimental: may change without compatibility guarantees. Durably admit an externally transcribed voice recording (e.g. from a Pocket recorder) as pending synthetic session input without waking execution, creating the Voice Inbox session when no target session is given.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("voice.transcribe", "/api/experimental/voice/transcribe", {
+      payload: VoiceTranscribeInput,
+      success: Schema.Struct({
+        data: Schema.Struct({
+          jobID: Schema.String,
+          sessionID: Session.ID,
+        }),
+      }).annotate({ identifier: "VoiceTranscribeResponse" }),
+      error: [InvalidRequestError, ConflictError, SessionNotFoundError, ServiceUnavailableError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.transcribe",
+        summary: "Transcribe uploaded voice recording",
+        description:
+          "Experimental: may change without compatibility guarantees. Starts a server-side job that transcribes audio previously uploaded to `audioPath` with the configured local whisper endpoint, enriches it with a summary and todos, and admits it as pending synthetic session input without waking execution. Returns immediately with the job id and the target session.",
       }),
     ),
   )

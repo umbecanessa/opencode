@@ -124,6 +124,8 @@ import type {
   ExperimentalVoiceSessionOutput,
   ExperimentalVoiceIngestInput,
   ExperimentalVoiceIngestOutput,
+  ExperimentalVoiceTranscribeInput,
+  ExperimentalVoiceTranscribeOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1296,6 +1298,29 @@ export function make(options: ClientOptions) {
               },
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 409],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        transcribe: (input: ExperimentalVoiceTranscribeInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceTranscribeOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/voice/transcribe`,
+              body: {
+                audioPath: input["audioPath"],
+                itemId: input["itemId"],
+                sessionID: input["sessionID"],
+                title: input["title"],
+                device: input["device"],
+                recordingId: input["recordingId"],
+                recordedAt: input["recordedAt"],
+                duration: input["duration"],
+                language: input["language"],
+                delivery: input["delivery"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 409, 503],
               empty: false,
             },
             requestOptions,
@@ -2781,6 +2806,8 @@ export function make(options: ClientOptions) {
       session: client.experimental.voice.session,
       /** @deprecated Use `client.experimental.voice.ingest`. Removed in the next minor. */
       ingest: client.experimental.voice.ingest,
+      /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
+      transcribe: client.experimental.voice.transcribe,
     },
     integration: {
       ...client.integration,
