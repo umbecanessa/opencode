@@ -299,20 +299,12 @@ const ToolRow = ({ tool, first, onBackground, liveOutput }: { tool: ToolPart; fi
               <Text style={[t.font.caption, styles.toolLabel, { color: failed ? t.status.failed : running ? t.status.running : t.tertiaryLabel }]}>
                 {failed ? "ERROR" : running ? "LIVE OUTPUT" : "OUTPUT"}
               </Text>
-              {running ? (
-                // Live: wrap and show the newest lines instead of a sideways-scrolled block.
-                <View style={[styles.codeLive, { backgroundColor: t.codeBackground }]}>
-                  <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
-                    {clipTail(output, 30)}
-                  </Text>
-                </View>
-              ) : (
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.code, { backgroundColor: t.codeBackground }]}>
-                  <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
-                    {clip(output)}
-                  </Text>
-                </ScrollView>
-              )}
+              {/* Wrapped tail, live and final alike: a sideways-scrolled block just shows line starts. */}
+              <View style={[styles.codeLive, { backgroundColor: t.codeBackground }]}>
+                <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
+                  {clipTail(output, 30)}
+                </Text>
+              </View>
             </>
           )}
         </View>
