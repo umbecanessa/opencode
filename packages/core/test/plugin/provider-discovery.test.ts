@@ -75,14 +75,26 @@ describe("DiscoveryPlugin", () => {
             document({
               gateway: {
                 package: "@opencode/ai/providers/openai-compatible",
-                discover: true,
                 settings: { baseURL: `${server.url.origin}/v1/`, apiKey: "secret" },
                 models: { alpha: { name: "Alpha (configured)" } },
               },
-              plain: {
+              optout: {
                 package: "@opencode/ai/providers/openai-compatible",
-                settings: { baseURL: `${server.url.origin}/plain/v1` },
-                models: { local: {} },
+                discover: false,
+                settings: { baseURL: `${server.url.origin}/optout/v1` },
+              },
+              native: {
+                package: "@opencode/ai/providers/openai/responses",
+                settings: { baseURL: `${server.url.origin}/native/v1` },
+              },
+              legacy: {
+                package: "aisdk:@ai-sdk/openai-compatible",
+                settings: { baseURL: `${server.url.origin}/legacy/v1` },
+              },
+              forced: {
+                package: "@opencode/ai/providers/openai/responses",
+                discover: true,
+                settings: { baseURL: `${server.url.origin}/forced/v1` },
               },
             }),
           ])
@@ -104,7 +116,14 @@ describe("DiscoveryPlugin", () => {
           })
           expect(yield* modelOf("image-only")).toBeUndefined()
           expect(requests).toContainEqual({ authorization: "Bearer secret", path: "/v1/models" })
-          expect(requests.filter((request) => request.path.startsWith("/plain"))).toEqual([])
+          // `forced` and `legacy` are fetched too; give their requests time to land before judging the rest.
+          yield* eventually(
+            Effect.sync(() => requests.map((request) => request.path)),
+            (paths) => paths.includes("/forced/v1/models") && paths.includes("/legacy/v1/models"),
+          )
+          const paths = requests.map((request) => request.path)
+          expect(paths).not.toContain("/optout/v1/models")
+          expect(paths).not.toContain("/native/v1/models")
         }),
       ({ server }) => Effect.promise(() => server.stop(true)),
     ),

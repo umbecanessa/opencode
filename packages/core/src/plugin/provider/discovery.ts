@@ -3,6 +3,7 @@ import type { Document, Entry } from "@opencode/schema/config"
 import { Duration, Effect, Option, Schedule, Schema, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Config } from "../../config.js"
+import { ConfigIntegration } from "../../config/integration.js"
 import { Variant } from "../../variant.js"
 import type { PluginInternal } from "../internal.js"
 import { foldSettings } from "./configured.js"
@@ -27,7 +28,8 @@ type Target = { readonly providerID: string; readonly baseURL: string; readonly 
 type Remote = typeof RemoteModel.Type
 
 /**
- * Registers the models an OpenAI-compatible endpoint lists for every provider configured with `discover: true`.
+ * Registers the models an OpenAI-compatible endpoint lists for every configured provider that uses an
+ * OpenAI-compatible package, unless it sets `discover: false`. `discover: true` enables it for any other provider.
  * Fields beyond `id` are read when the endpoint reports them (context window, tool use, vision, reasoning efforts).
  * Discovered models are registered before configured models, so explicit `models` entries still overlay them.
  */
@@ -117,15 +119,24 @@ function isText(item: Remote) {
   return item.capabilities?.output_modalities?.includes("text") ?? true
 }
 
+// Providers on an OpenAI-compatible package are discovered unless they opt out; `discover: true` opts any provider in.
 function targets(entries: readonly Entry[]): readonly Target[] {
-  const flags = new Map(
-    entries
-      .filter((entry): entry is Document => entry.type === "document")
-      .flatMap((document) => Object.entries(document.info.providers ?? {}))
-      .flatMap(([id, provider]) => (provider.discover === undefined ? [] : [[id, provider.discover] as const])),
-  )
-  return [...flags].flatMap(([providerID, enabled]) => {
-    const settings = enabled ? foldSettings(entries, providerID, undefined) : undefined
+  const configured = entries
+    .filter((entry): entry is Document => entry.type === "document" && !(entry instanceof ConfigIntegration.Document))
+    .flatMap((document) => Object.entries(document.info.providers ?? {}))
+    .reduce(
+      (providers, [id, provider]) =>
+        providers.set(id, {
+          discover: provider.discover ?? providers.get(id)?.discover,
+          package: provider.package ?? providers.get(id)?.package,
+        }),
+      new Map<string, { readonly discover?: boolean; readonly package?: string }>(),
+    )
+  return [...configured].flatMap(([providerID, provider]) => {
+    const settings =
+      (provider.discover ?? provider.package?.includes("openai-compatible") === true)
+        ? foldSettings(entries, providerID, undefined)
+        : undefined
     if (typeof settings?.baseURL !== "string" || !URL.canParse(settings.baseURL)) return []
     return [
       {

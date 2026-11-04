@@ -268,8 +268,8 @@ You can also use an npm package such as `@acme/opencode-provider` or an absolute
 
 ## Discovering models
 
-OpenCode only lists the models in its catalog and in your `models` map. For a gateway that serves many models, set
-`discover` to list them from its `/models` endpoint instead.
+A provider that uses the OpenAI-compatible package lists its own models. OpenCode fetches `{baseURL}/models` when the
+configuration loads, then every minute, so a model added to a gateway appears without a config change.
 
 ```jsonc title="opencode.jsonc"
 {
@@ -277,7 +277,6 @@ OpenCode only lists the models in its catalog and in your `models` map. For a ga
   "providers": {
     "gateway": {
       "package": "@opencode/ai/providers/openai-compatible",
-      "discover": true,
       "settings": {
         "baseURL": "https://gateway.example/v1",
         "apiKey": "{env:GATEWAY_API_KEY}",
@@ -287,11 +286,12 @@ OpenCode only lists the models in its catalog and in your `models` map. For a ga
 }
 ```
 
-OpenCode fetches `{baseURL}/models` when the configuration loads, then every minute. Models that the endpoint stops
-listing disappear, and a failed fetch keeps the last list.
+Models that the endpoint stops listing disappear, and a failed fetch keeps the last list. Discovery sends the
+provider's `settings.apiKey` as a bearer token, so a key that is only stored as a credential is not used.
 
 Only the model ID is required. When the endpoint also reports them, OpenCode reads the context window, maximum output,
-tool use, vision, and reasoning efforts from `context_length`, `max_output_tokens`, and `capabilities`.
+tool use, vision, and reasoning efforts from `context_length`, `max_output_tokens`, and `capabilities`. Models that do
+not produce text are skipped.
 
 An entry in `models` overlays the discovered model with the same ID, so you can rename it or add variants.
 
@@ -299,14 +299,23 @@ An entry in `models` overlays the discovered model with the same ID, so you can 
 {
   "providers": {
     "gateway": {
-      "discover": true,
       "models": { "claude-sonnet-5-5": { "name": "Sonnet 5.5 (gateway)" } },
     },
   },
 }
 ```
 
-Discovery uses the provider's `settings.baseURL` and `settings.apiKey`, and skips models that do not produce text.
+Set `discover` to `false` to keep only the models you list, or to `true` to discover for a provider that uses another
+package.
+
+```jsonc title="opencode.jsonc"
+{
+  "providers": {
+    "openrouter-curated": { "discover": false },
+    "other": { "package": "@opencode/ai/providers/openai", "discover": true },
+  },
+}
+```
 
 ## Models
 

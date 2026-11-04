@@ -117,6 +117,7 @@ export class Info extends Schema.Class<Info>("Config.Provider")({
   // Defaults for every model of this provider; model compatibility overrides individual fields.
   compatibility: ProviderCompatibility.pipe(optional),
   // Lists `${settings.baseURL}/models` and registers the models it reports; configured models still overlay them.
+  // On by default for OpenAI-compatible packages; `false` opts out and `true` opts in any other provider.
   discover: Schema.Boolean.pipe(optional),
   ...Overlays,
   models: Schema.Record(Schema.String, ModelConfig).pipe(optional),
