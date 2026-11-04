@@ -17264,6 +17264,9 @@
           "compatibility": {
             "$ref": "#/components/schemas/Provider.Compatibility"
           },
+          "discover": {
+            "type": "boolean"
+          },
           "settings": {
             "$ref": "#/components/schemas/Config.Provider.Settings"
           },

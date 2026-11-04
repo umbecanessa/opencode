@@ -116,6 +116,8 @@ export class Info extends Schema.Class<Info>("Config.Provider")({
   package: Schema.String.pipe(optional),
   // Defaults for every model of this provider; model compatibility overrides individual fields.
   compatibility: ProviderCompatibility.pipe(optional),
+  // Lists `${settings.baseURL}/models` and registers the models it reports; configured models still overlay them.
+  discover: Schema.Boolean.pipe(optional),
   ...Overlays,
   models: Schema.Record(Schema.String, ModelConfig).pipe(optional),
 }) {}
