@@ -1,6 +1,15 @@
+import { Session } from "@opencode/schema/session"
+import { SessionInbox } from "@opencode/schema/session-inbox"
+import { SessionMessage } from "@opencode/schema/session-message"
 import { Schema } from "effect"
 import { HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api"
-import { InvalidRequestError, LocationNotFoundError, ServiceUnavailableError } from "../errors.js"
+import {
+  ConflictError,
+  InvalidRequestError,
+  LocationNotFoundError,
+  ServiceUnavailableError,
+  SessionNotFoundError,
+} from "../errors.js"
 
 export const VoiceTransportType = Schema.Literals(["webrtc", "websocket"]).annotate({
   identifier: "VoiceTransportType",
@@ -45,6 +54,32 @@ export const VoiceTransport = Schema.Union([
   VoiceWebSocketTransport,
 ]).annotate({ identifier: "VoiceTransport" })
 
+export interface VoiceIngestSegment extends Schema.Schema.Type<typeof VoiceIngestSegment> {}
+export const VoiceIngestSegment = Schema.Struct({
+  start: Schema.Finite,
+  end: Schema.Finite,
+  speaker: Schema.String.pipe(Schema.optional),
+  text: Schema.String,
+}).annotate({ identifier: "VoiceIngestSegment" })
+
+export interface VoiceIngestInput extends Schema.Schema.Type<typeof VoiceIngestInput> {}
+export const VoiceIngestInput = Schema.Struct({
+  transcript: Schema.String,
+  itemId: SessionMessage.ID.pipe(Schema.optional),
+  sessionID: Session.ID.pipe(Schema.optional),
+  title: Schema.String.pipe(Schema.optional),
+  summary: Schema.String.pipe(Schema.optional),
+  todos: Schema.Array(Schema.String).pipe(Schema.optional),
+  segments: Schema.Array(VoiceIngestSegment).pipe(Schema.optional),
+  recordedAt: Schema.Finite.pipe(Schema.optional),
+  duration: Schema.Finite.pipe(Schema.optional),
+  device: Schema.String.pipe(Schema.optional),
+  recordingId: Schema.String.pipe(Schema.optional),
+  audioPath: Schema.String.pipe(Schema.optional),
+  suggestedProject: Schema.String.pipe(Schema.optional),
+  delivery: SessionInbox.Delivery.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceIngestInput" })
+
 export const VoiceGroup = HttpApiGroup.make("server.voice")
   .add(
     HttpApiEndpoint.get("voice.models", "/api/experimental/voice/models", {
@@ -86,9 +121,23 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
       }),
     ),
   )
+  .add(
+    HttpApiEndpoint.post("voice.ingest", "/api/experimental/voice/ingest", {
+      payload: VoiceIngestInput,
+      success: Schema.Struct({ data: SessionInbox.Synthetic }),
+      error: [InvalidRequestError, ConflictError, SessionNotFoundError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.ingest",
+        summary: "Ingest voice recording transcript",
+        description:
+          "Experimental: may change without compatibility guarantees. Durably admit an externally transcribed voice recording (e.g. from a Pocket recorder) as pending synthetic session input without waking execution, creating the Voice Inbox session when no target session is given.",
+      }),
+    ),
+  )
   .annotateMerge(
     OpenApi.annotations({
       title: "voice",
-      description: "Experimental server-brokered voice session routes.",
+      description: "Experimental server-brokered voice session and voice ingest routes.",
     }),
   )

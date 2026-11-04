@@ -128,6 +128,8 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
+  ExperimentalVoiceIngestInput,
+  ExperimentalVoiceIngestOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1002,9 +1004,35 @@ const EndpointExperimentalVoiceSession = (raw: RawClient["server.voice"]) => (in
     ),
   )
 
+const EndpointExperimentalVoiceIngest = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceIngestInput) =>
+  preserveEffect<ExperimentalVoiceIngestOutput>()(
+    raw["voice.ingest"]({
+      payload: {
+        transcript: input["transcript"],
+        itemId: input["itemId"],
+        sessionID: input["sessionID"],
+        title: input["title"],
+        summary: input["summary"],
+        todos: input["todos"],
+        segments: input["segments"],
+        recordedAt: input["recordedAt"],
+        duration: input["duration"],
+        device: input["device"],
+        recordingId: input["recordingId"],
+        audioPath: input["audioPath"],
+        suggestedProject: input["suggestedProject"],
+        delivery: input["delivery"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const adaptGroupExperimentalVoice = (raw: RawClient["server.voice"]) => ({
   models: EndpointExperimentalVoiceModels(raw),
   session: EndpointExperimentalVoiceSession(raw),
+  ingest: EndpointExperimentalVoiceIngest(raw),
 })
 
 const EndpointProviderList = (raw: RawClient["server.provider"]) => (input?: ProviderListInput) =>
@@ -2057,6 +2085,8 @@ const adaptClient = (raw: RawClient) => {
       models: client.experimental.voice.models,
       /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
       session: client.experimental.voice.session,
+      /** @deprecated Use `client.experimental.voice.ingest`. Removed in the next minor. */
+      ingest: client.experimental.voice.ingest,
     },
     integration: {
       ...client.integration,

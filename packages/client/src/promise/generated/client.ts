@@ -122,6 +122,8 @@ import type {
   ExperimentalVoiceModelsOutput,
   ExperimentalVoiceSessionInput,
   ExperimentalVoiceSessionOutput,
+  ExperimentalVoiceIngestInput,
+  ExperimentalVoiceIngestOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1267,6 +1269,33 @@ export function make(options: ClientOptions) {
               body: { model: input["model"], session: input["session"], transport: input["transport"] },
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        ingest: (input: ExperimentalVoiceIngestInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceIngestOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/voice/ingest`,
+              body: {
+                transcript: input["transcript"],
+                itemId: input["itemId"],
+                sessionID: input["sessionID"],
+                title: input["title"],
+                summary: input["summary"],
+                todos: input["todos"],
+                segments: input["segments"],
+                recordedAt: input["recordedAt"],
+                duration: input["duration"],
+                device: input["device"],
+                recordingId: input["recordingId"],
+                audioPath: input["audioPath"],
+                suggestedProject: input["suggestedProject"],
+                delivery: input["delivery"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 409],
               empty: false,
             },
             requestOptions,
@@ -2750,6 +2779,8 @@ export function make(options: ClientOptions) {
       models: client.experimental.voice.models,
       /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
       session: client.experimental.voice.session,
+      /** @deprecated Use `client.experimental.voice.ingest`. Removed in the next minor. */
+      ingest: client.experimental.voice.ingest,
     },
     integration: {
       ...client.integration,

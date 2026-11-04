@@ -112,3 +112,76 @@ it.live("routes experimental voice models and session endpoints", () =>
     expect((yield* post({ model: "unavailable", transport: { type: "websocket" } })).status).toBe(503)
   }),
 )
+
+it.live("ingests voice transcripts as pending synthetic inbox items", () =>
+  Effect.gen(function* () {
+    const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-ingest-")))
+    const global = path.join(tmp.path, "global")
+    yield* Effect.promise(() => fs.mkdir(global))
+    const handler = yield* ServerFetch.make(
+      {
+        database: { path: ":memory:" },
+        config: { directory: global },
+        fs: { filewatcher: false },
+        models: { fetch: false },
+      },
+      { overrides: [Voice.node.replace(voice)] },
+    )
+    const ingest = (body: unknown) =>
+      Effect.promise(() =>
+        handler(
+          new Request("http://opencode.local/api/experimental/voice/ingest", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        ),
+      )
+
+    const first = yield* ingest({
+      transcript: "remember to ship the ingest endpoint",
+      itemId: "msg_voice_first",
+      title: "Standup notes",
+      summary: "Ship the ingest endpoint",
+      todos: ["ship the ingest endpoint"],
+      segments: [{ start: 0, end: 2.5, speaker: "S1", text: "remember to ship the ingest endpoint" }],
+      device: "PKT01_GREY_264267d2",
+      recordingId: "20261104161653",
+      suggestedProject: "opencode",
+    })
+    expect(first.status).toBe(200)
+    const firstData = (yield* Effect.promise(() => first.json())).data
+    expect(firstData.type).toBe("synthetic")
+    expect(firstData.sessionID).toBe("ses_voice_inbox")
+    expect(firstData.id).toBe("msg_voice_first")
+    expect(firstData.delivery).toBe("queue")
+    expect(firstData.payload.text).toContain("Transcript:\nremember to ship the ingest endpoint")
+    expect(firstData.payload.text).toContain("[0:00] (S1) remember to ship the ingest endpoint")
+    expect(firstData.payload.description).toBe("Standup notes")
+    expect(firstData.payload.metadata).toMatchObject({
+      source: "voice",
+      device: "PKT01_GREY_264267d2",
+      recordingId: "20261104161653",
+      suggestedProject: "opencode",
+      todos: ["ship the ingest endpoint"],
+    })
+
+    // Retrying the same item id is idempotent: the first admission wins.
+    const retry = yield* ingest({ transcript: "changed after the device resent", itemId: "msg_voice_first" })
+    expect(retry.status).toBe(200)
+    const retryData = (yield* Effect.promise(() => retry.json())).data
+    expect(retryData.id).toBe("msg_voice_first")
+    expect(retryData.payload.text).toContain("remember to ship the ingest endpoint")
+
+    // A later recording without an item id lands in the same adopted Voice Inbox session.
+    const second = yield* ingest({ transcript: "second recording" })
+    expect(second.status).toBe(200)
+    expect((yield* Effect.promise(() => second.json())).data.sessionID).toBe("ses_voice_inbox")
+
+    // An explicit session that does not exist is a 404, not an implicit inbox creation.
+    expect((yield* ingest({ transcript: "orphan", sessionID: "ses_missing" })).status).toBe(404)
+
+    // Malformed payloads (missing transcript) are rejected at the boundary.
+    expect((yield* ingest({ title: "no transcript" })).status).toBe(400)
+  }),
+)

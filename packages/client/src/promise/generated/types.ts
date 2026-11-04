@@ -3984,6 +3984,32 @@ export type ExperimentalVoiceSessionInput = {
 
 export type ExperimentalVoiceSessionOutput = VoiceSessionResponse["data"]
 
+export type ExperimentalVoiceIngestInput = {
+  readonly transcript: string
+  readonly itemId?: string | undefined
+  readonly sessionID?: string | undefined
+  readonly title?: string | undefined
+  readonly summary?: string | undefined
+  readonly todos?: ReadonlyArray<string> | undefined
+  readonly segments?:
+    | ReadonlyArray<{
+        readonly start: number
+        readonly end: number
+        readonly speaker?: string | undefined
+        readonly text: string
+      }>
+    | undefined
+  readonly recordedAt?: number | undefined
+  readonly duration?: number | undefined
+  readonly device?: string | undefined
+  readonly recordingId?: string | undefined
+  readonly audioPath?: string | undefined
+  readonly suggestedProject?: string | undefined
+  readonly delivery?: ("steer" | "queue") | undefined
+}
+
+export type ExperimentalVoiceIngestOutput = { data: SessionInboxSynthetic }["data"]
+
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
 export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
@@ -4942,6 +4968,12 @@ export type VoiceSessionInput = ExperimentalVoiceSessionInput
 
 /** @deprecated Use `ExperimentalVoiceSessionOutput`. Removed in the next minor. */
 export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
+
+/** @deprecated Use `ExperimentalVoiceIngestInput`. Removed in the next minor. */
+export type VoiceIngestInput = ExperimentalVoiceIngestInput
+
+/** @deprecated Use `ExperimentalVoiceIngestOutput`. Removed in the next minor. */
+export type VoiceIngestOutput = ExperimentalVoiceIngestOutput
 
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput

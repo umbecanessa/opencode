@@ -1571,9 +1571,38 @@ export type ExperimentalVoiceSessionOperation<E = never> = (
   input: ExperimentalVoiceSessionInput,
 ) => Effect.Effect<ExperimentalVoiceSessionOutput, E>
 
+export type ExperimentalVoiceIngestInput = {
+  readonly transcript: string
+  readonly itemId?: SessionMessage.ID | undefined
+  readonly sessionID?: Session.ID | undefined
+  readonly title?: string | undefined
+  readonly summary?: string | undefined
+  readonly todos?: ReadonlyArray<string> | undefined
+  readonly segments?:
+    | ReadonlyArray<{
+        readonly start: number
+        readonly end: number
+        readonly speaker?: string | undefined
+        readonly text: string
+      }>
+    | undefined
+  readonly recordedAt?: number | undefined
+  readonly duration?: number | undefined
+  readonly device?: string | undefined
+  readonly recordingId?: string | undefined
+  readonly audioPath?: string | undefined
+  readonly suggestedProject?: string | undefined
+  readonly delivery?: SessionInbox.Delivery | undefined
+}
+export type ExperimentalVoiceIngestOutput = SessionInbox.Synthetic
+export type ExperimentalVoiceIngestOperation<E = never> = (
+  input: ExperimentalVoiceIngestInput,
+) => Effect.Effect<ExperimentalVoiceIngestOutput, E>
+
 export interface ExperimentalVoiceApi<E = never> {
   readonly models: ExperimentalVoiceModelsOperation<E>
   readonly session: ExperimentalVoiceSessionOperation<E>
+  readonly ingest: ExperimentalVoiceIngestOperation<E>
 }
 
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
@@ -2955,6 +2984,15 @@ export type VoiceSessionOutput = ExperimentalVoiceSessionOutput
 /** @deprecated Use `ExperimentalVoiceSessionOperation`. Removed in the next minor. */
 export type VoiceSessionOperation<E = never> = ExperimentalVoiceSessionOperation<E>
 
+/** @deprecated Use `ExperimentalVoiceIngestInput`. Removed in the next minor. */
+export type VoiceIngestInput = ExperimentalVoiceIngestInput
+
+/** @deprecated Use `ExperimentalVoiceIngestOutput`. Removed in the next minor. */
+export type VoiceIngestOutput = ExperimentalVoiceIngestOutput
+
+/** @deprecated Use `ExperimentalVoiceIngestOperation`. Removed in the next minor. */
+export type VoiceIngestOperation<E = never> = ExperimentalVoiceIngestOperation<E>
+
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput
 
@@ -3122,6 +3160,9 @@ export interface AppApi<E = never> {
 
     /** @deprecated Use `client.experimental.voice.session`. Removed in the next minor. */
     readonly session: ExperimentalVoiceSessionOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.ingest`. Removed in the next minor. */
+    readonly ingest: ExperimentalVoiceIngestOperation<E>
   }
 
   /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */
