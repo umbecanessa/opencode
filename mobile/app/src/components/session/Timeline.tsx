@@ -205,6 +205,12 @@ const clip = (s: string, lines = 40) => {
   return all.length > lines ? `${all.slice(0, lines).join("\n")}\n… ${all.length - lines} more lines` : s
 }
 
+// Streaming output is newest-first: keep the last N lines rather than the oldest.
+const clipTail = (s: string, lines = 80) => {
+  const all = s.split("\n")
+  return all.length > lines ? `… ${all.length - lines} earlier lines\n${all.slice(-lines).join("\n")}` : s
+}
+
 // Pulls incremental output for a running tool; returns appended text plus the read cursor.
 type LiveReader = (tool: ToolPart) => Promise<{ text: string; cursor: number } | undefined>
 
@@ -293,11 +299,20 @@ const ToolRow = ({ tool, first, onBackground, liveOutput }: { tool: ToolPart; fi
               <Text style={[t.font.caption, styles.toolLabel, { color: failed ? t.status.failed : running ? t.status.running : t.tertiaryLabel }]}>
                 {failed ? "ERROR" : running ? "LIVE OUTPUT" : "OUTPUT"}
               </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.code, { backgroundColor: t.codeBackground }]}>
-                <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
-                  {clip(output)}
-                </Text>
-              </ScrollView>
+              {running ? (
+                // Live: wrap and show the newest lines instead of a sideways-scrolled block.
+                <View style={[styles.codeLive, { backgroundColor: t.codeBackground }]}>
+                  <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
+                    {clipTail(output, 30)}
+                  </Text>
+                </View>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.code, { backgroundColor: t.codeBackground }]}>
+                  <Text style={[styles.codeText, { color: t.secondaryLabel }]} selectable>
+                    {clip(output)}
+                  </Text>
+                </ScrollView>
+              )}
             </>
           )}
         </View>
@@ -380,6 +395,7 @@ const styles = StyleSheet.create({
   toolDetail: { paddingHorizontal: 12, paddingBottom: 12, gap: 6 },
   toolLabel: { fontWeight: "700", letterSpacing: 0.6, marginTop: 4 },
   code: { borderRadius: 8, maxHeight: 280 },
+  codeLive: { borderRadius: 8, overflow: "hidden" },
   codeText: { fontFamily: "Menlo", fontSize: 12, lineHeight: 17, padding: 10 },
   end: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 24, marginTop: 14, marginBottom: 6 },
   endRule: { flex: 1, height: StyleSheet.hairlineWidth },
