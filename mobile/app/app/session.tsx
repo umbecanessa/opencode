@@ -61,10 +61,7 @@ export default function Session() {
   const list = useRef<FlatList<Item>>(null)
   const pinned = useRef(true)
   const scrolling = useRef(false)
-  const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const loadingOlder = useRef(false)
-
-  useEffect(() => () => clearTimeout(autoScrollTimer.current), [])
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   // Live output for open, running shell rows: map a tool part to the shell it spawned (matched by
@@ -278,8 +275,7 @@ export default function Session() {
   )
 
   const onScroll = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent
-    const near = contentSize.height - (contentOffset.y + layoutMeasurement.height) < 96
+    const near = e.nativeEvent.contentOffset.y < 96
     // Content growth and programmatic scrolling also emit scroll events. Only a user's
     // scroll may unlock following; otherwise a streaming update can unlock itself.
     if (!scrolling.current) return
@@ -287,28 +283,11 @@ export default function Session() {
     setAtBottom(near)
   }
 
-  const cancelAutoScroll = () => {
-    if (autoScrollTimer.current === undefined) return
-    clearTimeout(autoScrollTimer.current)
-    autoScrollTimer.current = undefined
-  }
-
-  // Content grows in several layout passes while a response streams. Calling scrollToEnd
-  // synchronously from onContentSizeChange races the next pass (and keyboard inset changes),
-  // which is what causes the list to jump and then settle slightly above the bottom.
-  const scheduleAutoScroll = () => {
-    if (!pinned.current || scrolling.current) return
-    cancelAutoScroll()
-    autoScrollTimer.current = setTimeout(() => {
-      autoScrollTimer.current = undefined
-      if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
-    }, 100)
-  }
-
   const send = async (text: string, files: PromptFile[] = []) => {
     if (!c) return
     setSending(true)
     pinned.current = true
+    list.current?.scrollToOffset({ offset: 0, animated: false })
     try {
       const res = await c.prompt(params.id, text, files)
       // The list view exposes the user message with top-level text/files; echo the sent prompt from the
@@ -408,7 +387,8 @@ export default function Session() {
       ) : (
         <FlatList
           ref={list}
-          data={items}
+           data={[...items].reverse()}
+           inverted
           keyExtractor={(i) => i.key}
           renderItem={renderItem}
           contentContainerStyle={styles.content}
@@ -416,7 +396,6 @@ export default function Session() {
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
            onScrollBeginDrag={() => {
-             cancelAutoScroll()
              pinned.current = false
              scrolling.current = true
            }}
@@ -425,7 +404,6 @@ export default function Session() {
             scrolling.current = false
           }}
            onMomentumScrollBegin={() => {
-             cancelAutoScroll()
              scrolling.current = true
            }}
           onMomentumScrollEnd={(e) => {
@@ -433,17 +411,16 @@ export default function Session() {
             scrolling.current = false
           }}
           scrollEventThrottle={64}
-          onStartReached={older}
-          onStartReachedThreshold={0.5}
+          onEndReached={older}
+          onEndReachedThreshold={0.5}
            // Keep the visible row anchored when older history is prepended or offscreen
            // streaming rows change height. Never toggle this native behavior during a gesture.
-           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+           maintainVisibleContentPosition={{ minIndexForVisible: 0, autoscrollToTopThreshold: 96 }}
            removeClippedSubviews={false}
-           onContentSizeChange={scheduleAutoScroll}
-          ListHeaderComponent={
+          ListFooterComponent={
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
           }
-          ListFooterComponent={
+          ListHeaderComponent={
             <View style={{ paddingBottom: 12 }}>
               {changes.length > 0 && (
                 <View style={{ marginHorizontal: 16, marginVertical: 8, borderRadius: 16, backgroundColor: t.surface, overflow: "hidden" }}>
@@ -477,7 +454,7 @@ export default function Session() {
             pinned.current = true
             scrolling.current = false
             setAtBottom(true)
-            list.current?.scrollToEnd({ animated: false })
+            list.current?.scrollToOffset({ offset: 0, animated: false })
           }}
           style={({ pressed }) => [
             styles.jump,
