@@ -2493,6 +2493,7 @@ export type ConfigEntry =
             env?: Array<string>
             package?: string
             compatibility?: ProviderCompatibility
+            discover?: boolean
             settings?: ConfigProviderSettings
             headers?: { [x: string]: string }
             body?: { [x: string]: JsonValue }
