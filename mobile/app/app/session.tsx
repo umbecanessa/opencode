@@ -62,6 +62,9 @@ export default function Session() {
   const pinned = useRef(true)
   const scrolling = useRef(false)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const loadingOlder = useRef(false)
+
+  useEffect(() => () => clearTimeout(autoScrollTimer.current), [])
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   // Live output for open, running shell rows: map a tool part to the shell it spawned (matched by
@@ -235,13 +238,15 @@ export default function Session() {
   }, [c, params.id, scheduleRefresh])
 
   const older = useCallback(() => {
-    if (!c || !cursor) return
+    if (!c || !cursor || loadingOlder.current) return
+    loadingOlder.current = true
     c.messages(params.id, cursor)
       .then((page) => {
         setMessages((m) => [...m, ...(page.data as Message[]).filter((x) => !m.some((y) => y.id === x.id))])
         setCursor(page.cursor.next ?? undefined)
       })
       .catch(() => {})
+      .finally(() => { loadingOlder.current = false })
   }, [c, params.id, cursor])
 
   const items = useMemo(() => {
@@ -412,6 +417,7 @@ export default function Session() {
           onScroll={onScroll}
            onScrollBeginDrag={() => {
              cancelAutoScroll()
+             pinned.current = false
              scrolling.current = true
            }}
           onScrollEndDrag={(e) => {
@@ -429,8 +435,10 @@ export default function Session() {
           scrollEventThrottle={64}
           onStartReached={older}
           onStartReachedThreshold={0.5}
-           // Do not use maintainVisibleContentPosition here: it competes with bottom anchoring
-           // while streaming and is unnecessary because older pages are loaded above the transcript.
+           // Keep the visible row anchored when older history is prepended or offscreen
+           // streaming rows change height. Never toggle this native behavior during a gesture.
+           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+           removeClippedSubviews={false}
            onContentSizeChange={scheduleAutoScroll}
           ListHeaderComponent={
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
