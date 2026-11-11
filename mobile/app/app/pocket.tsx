@@ -2,7 +2,7 @@ import Ionicons from "@expo/vector-icons/Ionicons"
 import { useState } from "react"
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../src/components/LargeTitle"
-import { usePocket } from "../src/state/pocket"
+import { generatePocketKey, usePocket } from "../src/state/pocket"
 import { useTheme } from "../src/theme"
 
 export default function Pocket() {
@@ -25,62 +25,75 @@ export default function Pocket() {
     <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
       <LargeTitle title="Pocket" subtitle="Voice recorder capture" />
 
-      {!pocket.hasKey && (
-        <View style={[styles.card, { backgroundColor: t.surface }]}>
-          <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>Session key</Text>
-          <Text style={[t.font.footnote, { color: t.tertiaryLabel, marginTop: 4 }]}>
-            The 16-character key from pocket-libre pairing (also in ~/.pocket-libre/config.toml). Stored in the
-            keychain.
-          </Text>
-          <TextInput
-            value={keyInput}
-            onChangeText={setKeyInput}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            secureTextEntry
-            placeholder="16-character key"
-            placeholderTextColor={t.tertiaryLabel}
-            style={[
-              styles.input,
-              { borderColor: t.separator, color: t.label, backgroundColor: t.background }
+      <View style={[styles.card, { backgroundColor: t.surface }]}>
+        <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>
+          {pocket.hasKey ? "Pair another recorder" : "Pair a recorder"}
+        </Text>
+        <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+          Reset the recorder first: triple-click the side button (the LED blinks red), then press and hold it until
+          the blinking stops and the LED pulses blue. Scan, then tap the recorder to make it adopt the key below.
+        </Text>
+        <TextInput
+          value={keyInput}
+          onChangeText={(v) => setKeyInput(v.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 16))}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          placeholder="16-character key"
+          placeholderTextColor={t.tertiaryLabel}
+          editable={!pocket.pairing}
+          style={[styles.input, { borderColor: t.separator, color: t.label, backgroundColor: t.background }]}
+        />
+        <View style={{ flexDirection: "row", gap: 10 }}>
+          <Pressable
+            disabled={pocket.pairing}
+            onPress={() => setKeyInput(generatePocketKey())}
+            style={({ pressed }) => [
+              styles.button,
+              { backgroundColor: t.fill.tertiary, opacity: pressed || pocket.pairing ? 0.6 : 1, flex: 1 },
             ]}
-          />
-          <Pressable
-            disabled={keyInput.trim().length < 8 || pocket.busy}
-            onPress={() => pocket.saveKey(keyInput).then(() => setKeyInput(""))}
-            style={({ pressed }) => [styles.button, { opacity: pressed ? 0.7 : 1 }]}
           >
-            <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>Save key</Text>
+            <Text style={[t.font.footnote, { color: t.label, fontWeight: "600" }]}>Generate key</Text>
           </Pressable>
-        </View>
-      )}
-
-      {pocket.hasKey && !pocket.device && (
-        <View style={[styles.card, { backgroundColor: t.surface }]}>
-          <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>Choose a recorder</Text>
-          {pocket.devices.map((d) => (
-            <Pressable key={d.id} onPress={() => pocket.pick(d)} style={styles.row}>
-              <Ionicons name="ear-outline" size={20} color={t.tint} />
-              <Text style={[t.font.body, { color: t.label, flex: 1 }]} numberOfLines={1}>
-                {d.name}
-              </Text>
-            </Pressable>
-          ))}
           <Pressable
-            disabled={pocket.scanning || pocket.busy}
+            disabled={pocket.scanning || pocket.pairing}
             onPress={pocket.scan}
-            style={({ pressed }) => [styles.button, { opacity: pressed || pocket.scanning ? 0.6 : 1 }]}
+            style={({ pressed }) => [styles.button, { opacity: pressed || pocket.scanning ? 0.6 : 1, flex: 1 }]}
           >
             {pocket.scanning ? (
               <ActivityIndicator color={t.tint} />
             ) : (
-              <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>
-                {pocket.devices.length ? "Scan again" : "Scan for recorders"}
+              <Text style={[t.font.footnote, { color: t.tint, fontWeight: "600" }]}>
+                {pocket.devices.length ? "Scan again" : "Scan"}
               </Text>
             )}
           </Pressable>
         </View>
-      )}
+        {pocket.pairing && (
+          <View style={styles.row}>
+            <ActivityIndicator color={t.tint} />
+            <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>Pairing — keep the recorder close…</Text>
+          </View>
+        )}
+        {pocket.devices.map((d) => (
+          <Pressable
+            key={d.id}
+            disabled={pocket.pairing}
+            onPress={() => pocket.pair(d, keyInput)}
+            style={({ pressed }) => [styles.row, { opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Ionicons name="ear-outline" size={20} color={t.tint} />
+            <Text style={[t.font.body, { color: t.label, flex: 1 }]} numberOfLines={1}>
+              {d.name}
+            </Text>
+            <Ionicons name="link" size={16} color={t.tertiaryLabel} />
+          </Pressable>
+        ))}
+        {keyInput.length === 16 && !pocket.pairing && (
+          <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+            A recorder a computer already paired works too: enter its existing key and tap it — no reset needed.
+          </Text>
+        )}
+      </View>
 
       {pocket.device && (
         <View style={[styles.card, { backgroundColor: t.surface }]}>

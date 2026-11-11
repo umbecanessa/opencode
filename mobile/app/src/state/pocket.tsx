@@ -3,7 +3,7 @@ import * as SecureStore from "expo-secure-store"
 import { createContext, useContext, useEffect, useState } from "react"
 import { Client } from "../api/client"
 import { PocketDevice } from "../pocket/device"
-import { pullPocket, type PocketRecording, type PullProgress } from "../pocket/sync"
+import { pairPocket, pullPocket, type PocketRecording, type PullProgress } from "../pocket/sync"
 import { useHosts } from "./hosts"
 
 const KEY_STORE = "pocket_session_key"
@@ -21,13 +21,25 @@ type PocketState = {
   devices: Device[]
   scanning: boolean
   busy: boolean
+  pairing: boolean
   progress?: PullProgress
   error?: string
   recent: Ship[]
   saveKey: (key: string) => Promise<void>
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
+  pair: (device: Device, key: string) => Promise<void>
   pull: () => Promise<void>
+}
+
+// Same alphabet pocket-libre uses; the first 8 characters double as the
+// recorder's WiFi AP password, so treat the key as a secret.
+export function generatePocketKey() {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+  const bytes = new Uint8Array(16)
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes)
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256)
+  return [...bytes].map((b) => alphabet[b % alphabet.length]).join("")
 }
 
 const PocketContext = createContext<PocketState | undefined>(undefined)
@@ -38,6 +50,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [device, setDevice] = useState<Device>()
   const [devices, setDevices] = useState<Device[]>([])
   const [scanning, setScanning] = useState(false)
+  const [pairing, setPairing] = useState(false)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<PullProgress>()
   const [error, setError] = useState<string>()
@@ -79,6 +92,28 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     setDevices([])
     if (next) await AsyncStorage.setItem(DEVICE_KEY, JSON.stringify(next))
     else await AsyncStorage.removeItem(DEVICE_KEY)
+  }
+
+  // Handshake a hardware-reset recorder: it adopts our key on the first SK
+  // write, so pairing is one command on a fresh connection — no other setup.
+  const pair = async (next: Device, key: string) => {
+    const clean = key.trim().toUpperCase()
+    if (clean.length !== 16) {
+      setError("The session key must be 16 characters (A–Z, 0–9).")
+      return
+    }
+    setPairing(true)
+    setError(undefined)
+    try {
+      await pairPocket({ device: next, key: clean })
+      await SecureStore.setItemAsync(KEY_STORE, clean)
+      setHasKey(true)
+      await pick(next)
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setPairing(false)
+    }
   }
 
   const pull = async () => {
@@ -124,7 +159,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, progress, error, recent, saveKey, scan, pick, pull }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, progress, error, recent, saveKey, scan, pick, pair, pull }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {

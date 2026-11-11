@@ -92,6 +92,31 @@ export async function pullPocket(input: {
   }
 }
 
+// Pairing (PROTOCOL.md): after a hardware reset the device takes the FIRST
+// APP&SK& it is given (MCU&SK&OK + MCU&WIFIO) and drops that connection about
+// a second later; every connection after that authenticates with the new key.
+export async function pairPocket(input: { device: { id: string; name: string }; key: string }): Promise<void> {
+  const device = await PocketDevice.connect(input.device.id, input.device.name)
+  const lines = new LineInbox()
+  const offLine = device.onLine((line) => lines.push(line))
+  try {
+    await device.command(`APP&SK&${input.key}`)
+    const taken = lines.next((l) => l.startsWith("MCU&SK&OK"), 12_000, "pairing")
+    const refused = lines
+      .next((l) => l.startsWith("MCU&SK&ERR"), 12_000, "pairing")
+      .then(() => {
+        throw new Error(
+          `${input.device.name} already has a session key. Hardware-reset it (triple-click the side button, then press and hold until the red blinking stops and the LED pulses blue) and pair again.`,
+        )
+      })
+    await Promise.race([taken, refused])
+    await lines.next((l) => l.startsWith("MCU&WIFIO"), 5_000, "MCU&WIFIO").catch(() => undefined)
+  } finally {
+    offLine()
+    await device.close()
+  }
+}
+
 class LineInbox {
   private pending: string[] = []
   private waiters: { pred: (l: string) => boolean; resolve: (l: string) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }[] = []
