@@ -61,6 +61,10 @@ export default function Session() {
   const list = useRef<FlatList<Item>>(null)
   const pinned = useRef(true)
   const scrolling = useRef(false)
+  const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const loadingOlder = useRef(false)
+
+  useEffect(() => () => clearTimeout(autoScrollTimer.current), [])
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   // Live output for open, running shell rows: map a tool part to the shell it spawned (matched by
@@ -234,13 +238,15 @@ export default function Session() {
   }, [c, params.id, scheduleRefresh])
 
   const older = useCallback(() => {
-    if (!c || !cursor) return
+    if (!c || !cursor || loadingOlder.current) return
+    loadingOlder.current = true
     c.messages(params.id, cursor)
       .then((page) => {
         setMessages((m) => [...m, ...(page.data as Message[]).filter((x) => !m.some((y) => y.id === x.id))])
         setCursor(page.cursor.next ?? undefined)
       })
       .catch(() => {})
+      .finally(() => { loadingOlder.current = false })
   }, [c, params.id, cursor])
 
   const items = useMemo(() => {
@@ -279,6 +285,24 @@ export default function Session() {
     if (!scrolling.current) return
     pinned.current = near
     setAtBottom(near)
+  }
+
+  const cancelAutoScroll = () => {
+    if (autoScrollTimer.current === undefined) return
+    clearTimeout(autoScrollTimer.current)
+    autoScrollTimer.current = undefined
+  }
+
+  // Content grows in several layout passes while a response streams. Calling scrollToEnd
+  // synchronously from onContentSizeChange races the next pass (and keyboard inset changes),
+  // which is what causes the list to jump and then settle slightly above the bottom.
+  const scheduleAutoScroll = () => {
+    if (!pinned.current || scrolling.current) return
+    cancelAutoScroll()
+    autoScrollTimer.current = setTimeout(() => {
+      autoScrollTimer.current = undefined
+      if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
+    }, 100)
   }
 
   const send = async (text: string, files: PromptFile[] = []) => {
@@ -391,12 +415,19 @@ export default function Session() {
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
-          onScrollBeginDrag={() => { scrolling.current = true }}
+           onScrollBeginDrag={() => {
+             cancelAutoScroll()
+             pinned.current = false
+             scrolling.current = true
+           }}
           onScrollEndDrag={(e) => {
             onScroll(e)
             scrolling.current = false
           }}
-          onMomentumScrollBegin={() => { scrolling.current = true }}
+           onMomentumScrollBegin={() => {
+             cancelAutoScroll()
+             scrolling.current = true
+           }}
           onMomentumScrollEnd={(e) => {
             onScroll(e)
             scrolling.current = false
@@ -404,18 +435,11 @@ export default function Session() {
           scrollEventThrottle={64}
           onStartReached={older}
           onStartReachedThreshold={0.5}
-          // Constant, not toggled: flipping the prop between undefined and an object reconfigures the
-          // scroll view mid-scroll and jumps the content. It only stabilizes prepend (older pages), never
-          // growth at the bottom, so it is safe to keep always on.
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          // A user's touch owns the scroll: never scrollToEnd while a drag or momentum is in flight,
-          // or a streaming delta snaps the list back out from under the finger.
-          onLayout={() => {
-            if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
-          }}
-          onContentSizeChange={() => {
-            if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
-          }}
+           // Keep the visible row anchored when older history is prepended or offscreen
+           // streaming rows change height. Never toggle this native behavior during a gesture.
+           maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+           removeClippedSubviews={false}
+           onContentSizeChange={scheduleAutoScroll}
           ListHeaderComponent={
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
           }
