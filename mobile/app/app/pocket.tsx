@@ -1,5 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
-import { useState } from "react"
+import { useLocalSearchParams } from "expo-router"
+import { useEffect, useRef, useState } from "react"
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../src/components/LargeTitle"
 import { usePocket } from "../src/state/pocket"
@@ -8,9 +9,24 @@ import { useTheme } from "../src/theme"
 export default function Pocket() {
   const t = useTheme()
   const pocket = usePocket()
+  // opencode-mobile://pocket?action=pull is what the Back Tap shortcut opens;
+  // the device is restored from storage a beat after first mount, hence the ref.
+  const params = useLocalSearchParams<{ action?: string }>()
+  const autoFired = useRef(false)
   const [target, setTarget] = useState<string>()
   const [helpOpen, setHelpOpen] = useState(false)
   const [keyInput, setKeyInput] = useState("")
+
+  // pocket is a fresh object each provider render; depending on it would re-fire the pull
+  // on every state change. The ref makes this a once-per-deep-link side effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (params.action !== "pull" || autoFired.current) return
+    if (!pocket.device && !pocket.hasKey) return
+    autoFired.current = true
+    if (pocket.device) pocket.pull()
+    else pocket.scan()
+  }, [params.action, pocket.device, pocket.hasKey])
 
   // A refused pairing needs the fallback card, whether or not the user opened it.
   const showHelp = helpOpen || pocket.needsKey
@@ -160,6 +176,10 @@ export default function Pocket() {
               <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>Pull recordings</Text>
             )}
           </Pressable>
+          <Text style={[t.font.footnote, { color: t.tertiaryLabel, textAlign: "center" }]}>
+            Tip: a Back Tap shortcut to opencode-mobile://pocket?action=pull ships new recordings the moment you stop
+            one.
+          </Text>
         </View>
       )}
 
