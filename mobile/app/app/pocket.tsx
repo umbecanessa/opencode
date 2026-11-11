@@ -18,14 +18,14 @@ export default function Pocket() {
   const [keyInput, setKeyInput] = useState("")
 
   // pocket is a fresh object each provider render; depending on it would re-fire the pull
-  // on every state change. The ref makes this a once-per-deep-link side effect.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // on every state change, so the ref makes this a once-per-deep-link side effect.
   useEffect(() => {
     if (params.action !== "pull" || autoFired.current) return
     if (!pocket.device && !pocket.hasKey) return
     autoFired.current = true
     if (pocket.device) pocket.pull()
     else pocket.scan()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.action, pocket.device, pocket.hasKey])
 
   // A refused pairing needs the fallback card, whether or not the user opened it.
