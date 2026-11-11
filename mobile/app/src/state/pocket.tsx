@@ -3,7 +3,7 @@ import * as SecureStore from "expo-secure-store"
 import { createContext, useContext, useEffect, useState } from "react"
 import { Client } from "../api/client"
 import { PocketDevice } from "../pocket/device"
-import { pairPocket, pullPocket, type PocketRecording, type PullProgress } from "../pocket/sync"
+import { PairRefusedError, pairPocket, pullPocket, type PocketRecording, type PullProgress } from "../pocket/sync"
 import { useHosts } from "./hosts"
 
 const KEY_STORE = "pocket_session_key"
@@ -22,13 +22,13 @@ type PocketState = {
   scanning: boolean
   busy: boolean
   pairing: boolean
+  needsKey: boolean
   progress?: PullProgress
   error?: string
   recent: Ship[]
-  saveKey: (key: string) => Promise<void>
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
-  pair: (device: Device, key: string) => Promise<void>
+  pair: (device: Device, key?: string) => Promise<void>
   pull: () => Promise<void>
 }
 
@@ -52,6 +52,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [scanning, setScanning] = useState(false)
   const [pairing, setPairing] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [needsKey, setNeedsKey] = useState(false)
   const [progress, setProgress] = useState<PullProgress>()
   const [error, setError] = useState<string>()
   const [recent, setRecent] = useState<Ship[]>([])
@@ -66,16 +67,10 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     })
   }, [])
 
-  const saveKey = async (value: string) => {
-    const clean = value.trim()
-    if (!clean) return
-    await SecureStore.setItemAsync(KEY_STORE, clean)
-    setHasKey(true)
-  }
-
   const scan = async () => {
     setScanning(true)
     setError(undefined)
+    setNeedsKey(false)
     try {
       const found = await PocketDevice.scan()
       setDevices(found.sort((a, b) => a.name.localeCompare(b.name)))
@@ -94,22 +89,27 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     else await AsyncStorage.removeItem(DEVICE_KEY)
   }
 
-  // Handshake a hardware-reset recorder: it adopts our key on the first SK
-  // write, so pairing is one command on a fresh connection — no other setup.
-  const pair = async (next: Device, key: string) => {
-    const clean = key.trim().toUpperCase()
-    if (clean.length !== 16) {
-      setError("The session key must be 16 characters (A–Z, 0–9).")
-      return
-    }
+  // Handshake a recorder with zero user input: a hardware-reset device adopts whatever
+  // key we send first, and an already-paired one accepts the key stored in the keychain
+  // (pairPocket doubles as adoption). Only a refusal by a stranger-keyed device surfaces.
+  const pair = async (next: Device, explicit?: string) => {
     setPairing(true)
     setError(undefined)
+    setNeedsKey(false)
     try {
-      await pairPocket({ device: next, key: clean })
-      await SecureStore.setItemAsync(KEY_STORE, clean)
+      const saved = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
+      const clean = explicit?.trim().toUpperCase()
+      if (clean && !/^[A-Z0-9]{16}$/.test(clean)) {
+        setError("The session key must be 16 characters (A–Z, 0–9).")
+        return
+      }
+      const key = clean ?? saved ?? generatePocketKey()
+      await pairPocket({ device: next, key })
+      await SecureStore.setItemAsync(KEY_STORE, key)
       setHasKey(true)
       await pick(next)
     } catch (e) {
+      if (e instanceof PairRefusedError) setNeedsKey(true)
       setError(message(e))
     } finally {
       setPairing(false)
@@ -159,7 +159,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, progress, error, recent, saveKey, scan, pick, pair, pull }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, progress, error, recent, scan, pick, pair, pull }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {
