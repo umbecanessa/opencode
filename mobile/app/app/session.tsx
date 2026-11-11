@@ -61,6 +61,7 @@ export default function Session() {
   const list = useRef<FlatList<Item>>(null)
   const pinned = useRef(true)
   const scrolling = useRef(false)
+  const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const throttle = useRef<{ timer?: ReturnType<typeof setTimeout>; last: number }>({ last: 0 })
 
   // Live output for open, running shell rows: map a tool part to the shell it spawned (matched by
@@ -281,6 +282,24 @@ export default function Session() {
     setAtBottom(near)
   }
 
+  const cancelAutoScroll = () => {
+    if (autoScrollTimer.current === undefined) return
+    clearTimeout(autoScrollTimer.current)
+    autoScrollTimer.current = undefined
+  }
+
+  // Content grows in several layout passes while a response streams. Calling scrollToEnd
+  // synchronously from onContentSizeChange races the next pass (and keyboard inset changes),
+  // which is what causes the list to jump and then settle slightly above the bottom.
+  const scheduleAutoScroll = () => {
+    if (!pinned.current || scrolling.current) return
+    cancelAutoScroll()
+    autoScrollTimer.current = setTimeout(() => {
+      autoScrollTimer.current = undefined
+      if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
+    }, 100)
+  }
+
   const send = async (text: string, files: PromptFile[] = []) => {
     if (!c) return
     setSending(true)
@@ -391,12 +410,18 @@ export default function Session() {
           keyboardDismissMode="interactive"
           keyboardShouldPersistTaps="handled"
           onScroll={onScroll}
-          onScrollBeginDrag={() => { scrolling.current = true }}
+           onScrollBeginDrag={() => {
+             cancelAutoScroll()
+             scrolling.current = true
+           }}
           onScrollEndDrag={(e) => {
             onScroll(e)
             scrolling.current = false
           }}
-          onMomentumScrollBegin={() => { scrolling.current = true }}
+           onMomentumScrollBegin={() => {
+             cancelAutoScroll()
+             scrolling.current = true
+           }}
           onMomentumScrollEnd={(e) => {
             onScroll(e)
             scrolling.current = false
@@ -404,18 +429,9 @@ export default function Session() {
           scrollEventThrottle={64}
           onStartReached={older}
           onStartReachedThreshold={0.5}
-          // Constant, not toggled: flipping the prop between undefined and an object reconfigures the
-          // scroll view mid-scroll and jumps the content. It only stabilizes prepend (older pages), never
-          // growth at the bottom, so it is safe to keep always on.
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          // A user's touch owns the scroll: never scrollToEnd while a drag or momentum is in flight,
-          // or a streaming delta snaps the list back out from under the finger.
-          onLayout={() => {
-            if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
-          }}
-          onContentSizeChange={() => {
-            if (pinned.current && !scrolling.current) list.current?.scrollToEnd({ animated: false })
-          }}
+           // Do not use maintainVisibleContentPosition here: it competes with bottom anchoring
+           // while streaming and is unnecessary because older pages are loaded above the transcript.
+           onContentSizeChange={scheduleAutoScroll}
           ListHeaderComponent={
             cursor ? <ActivityIndicator style={{ marginVertical: 16 }} color={t.tertiaryLabel} /> : <View style={{ height: 8 }} />
           }
