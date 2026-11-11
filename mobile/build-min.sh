@@ -1,6 +1,10 @@
 #!/bin/bash
 # Builds the OpenCode Mobile dev client from the fork and installs it on the
 # Wi-Fi-paired iPhone. Progress: ~/mobile-build.log
+# Note: codesigning app groups fails from a plain ssh login session; bootstrap
+# this script as a LaunchAgent (gui/<uid>) so xcodebuild signs inside the GUI
+# session and -allowProvisioningUpdates can sync capabilities. Also needs
+# `pmset -c disablesleep 1` (system sleep re-locks keychains mid-build).
 set -uo pipefail
 exec > ~/mobile-build.log 2>&1
 
@@ -34,8 +38,15 @@ if [ ! -f ios/Pods/Manifest.lock ]; then
 fi
 
 step "find scheme"
-SCHEME=$(xcodebuild -list -project ios/*.xcodeproj 2>/dev/null | awk '/Schemes:/{flag=1;next}flag&&NF{print $1;exit}')
-[ -z "$SCHEME" ] && SCHEME=$(basename ios/*.xcodeproj .xcodeproj)
+# The workspace basename is the app scheme. Do not read it off `xcodebuild -list`:
+# its sorted scheme list starts with OneSignalNotificationServiceExtension, which
+# has no .xcodeproj of its own and breaks the build with a bogus -project path.
+WS=$(ls -d ios/*.xcworkspace 2>/dev/null | head -1)
+if [ -n "$WS" ]; then
+  SCHEME=$(basename "$WS" .xcworkspace)
+else
+  SCHEME=$(basename "$(ls -d ios/*.xcodeproj | head -1)" .xcodeproj)
+fi
 echo "scheme: $SCHEME"
 
 step "build (debug, device)"
