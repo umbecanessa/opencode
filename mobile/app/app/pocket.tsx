@@ -1,10 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import * as ExpoLinking from "expo-linking"
 import { useLocalSearchParams } from "expo-router"
-import { useEffect, useRef, useState } from "react"
-import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
+import { useEffect, useState } from "react"
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../src/components/LargeTitle"
-import { consumePendingIntentAction } from "../modules/pocket"
 import { usePocket } from "../src/state/pocket"
 import { useTheme } from "../src/theme"
 
@@ -15,44 +14,22 @@ function actionInUrl(url: string) {
 export default function Pocket() {
   const t = useTheme()
   const pocket = usePocket()
-  // Deep links arrive three ways: a fresh route mount (?action=), a URL event while
-  // the app resumes onto this already-mounted route (the Back Tap case), and a
-  // pending App Intent flag written by the native Toggle Pocket Recording action.
-  // All funnel through runAction, which fires once per invocation.
+  // Route-param and URL-event deliveries; the provider owns dedupe and also polls
+  // the native App Intent's stashed action app-wide (see state/pocket.tsx).
   const params = useLocalSearchParams<{ action?: string }>()
-  const firedAt = useRef(0)
   const [target, setTarget] = useState<string>()
   const [helpOpen, setHelpOpen] = useState(false)
   const [keyInput, setKeyInput] = useState("")
 
-  const runAction = (action: string | null | undefined) => {
-    if (action !== "record" && action !== "pull") return
-    if (Date.now() - firedAt.current < 3_000) return
-    if (!pocket.device && !pocket.hasKey) return
-    firedAt.current = Date.now()
-    if (!pocket.device) pocket.scan()
-    else if (action === "record") (pocket.recording ? pocket.stopRecording : pocket.startRecording)()
-    else pocket.pull()
-  }
-
   useEffect(() => {
     // Cold start or fresh navigation: params carry the action.
-    runAction(params.action)
+    pocket.runDeepAction(params.action)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.action])
 
   useEffect(() => {
-    // Resume onto this mounted route: expo-router may see no param change at all.
-    const sub = ExpoLinking.addEventListener("url", ({ url }) => runAction(actionInUrl(url)))
-    return () => sub.remove()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  useEffect(() => {
-    // The native App Intent stashes its action where the URL handoff cannot race it.
-    const run = () => runAction(consumePendingIntentAction())
-    run()
-    const sub = AppState.addEventListener("change", (s) => s === "active" && run())
+    // Resume onto an already-mounted route: expo-router may see no param change at all.
+    const sub = ExpoLinking.addEventListener("url", ({ url }) => pocket.runDeepAction(actionInUrl(url)))
     return () => sub.remove()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

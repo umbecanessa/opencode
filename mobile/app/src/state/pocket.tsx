@@ -1,6 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage"
 import * as SecureStore from "expo-secure-store"
-import { createContext, useContext, useEffect, useState } from "react"
+import { createContext, useContext, useEffect, useRef, useState } from "react"
+import { AppState } from "react-native"
+import { consumePendingIntentAction } from "../../modules/pocket"
 import { Client } from "../api/client"
 import { PocketDevice } from "../pocket/device"
 import { PairRefusedError, pairPocket, pullPocket, setRemoteRecording, type PocketRecording, type PullProgress } from "../pocket/sync"
@@ -34,6 +36,7 @@ type PocketState = {
   pair: (device: Device, key?: string) => Promise<void>
   startRecording: () => Promise<void>
   stopRecording: () => Promise<void>
+  runDeepAction: (action: string | null | undefined) => void
   pull: () => Promise<void>
 }
 
@@ -146,6 +149,9 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   // Stopping ships the fresh recording right away: pull sees it in the device listing.
+  // One blind retry: the recorder is flaky about accepting a fresh connection while
+  // its mic is hot (same family as the post-recording wedge), and a short settle
+  // delay gives the link a chance before the second attempt.
   const stopRecording = async () => {
     const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
     if (!key || !device) {
@@ -155,14 +161,22 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     setRecBusy(true)
     setError(undefined)
     try {
-      await setRemoteRecording({ device, key, on: false })
+      try {
+        await setRemoteRecording({ device, key, on: false })
+      } catch {
+        await sleep(2_500)
+        await setRemoteRecording({ device, key, on: false })
+      }
       setRecording(false)
       setRecordingName(undefined)
     } catch (e) {
-      setError(message(e))
+      setError(`Could not stop the recorder: ${message(e)}. It keeps recording — its own button always works.`)
+      return
     } finally {
       setRecBusy(false)
     }
+    // Let the device close out the file before the pull lists it.
+    await sleep(1_500)
     await pull()
   }
 
@@ -207,9 +221,38 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }
 
+  // One entry point for every deep-link flavor (route params, URL events, the native
+  // App Intent's stashed action). Last-fired gating means a delivery that arrives
+  // through two paths at once still performs the toggle exactly once.
+  const lastActionAt = useRef(0)
+  const runDeepAction = (action: string | null | undefined) => {
+    if (action !== "record" && action !== "pull") return
+    if (Date.now() - lastActionAt.current < 3_000) return
+    lastActionAt.current = Date.now()
+    if (!device) void scan()
+    else if (action === "record") void (recording ? stopRecording() : startRecording())
+    else void pull()
+  }
+
+  // The App Intent cannot reach JS by any event when the app is already active, so
+  // the stashed flag is polled app-wide — cheap UserDefaults reads, and this is the
+  // only reliable delivery path iOS leaves for in-process intents. No deps: the
+  // effect must close over fresh state each render (the context object is rebuilt
+  // per render anyway).
+  useEffect(() => {
+    const run = () => runDeepAction(consumePendingIntentAction())
+    run()
+    const timer = setInterval(run, 1_200)
+    const sub = AppState.addEventListener("change", (s) => s === "active" && run())
+    return () => {
+      clearInterval(timer)
+      sub.remove()
+    }
+  })
+
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, scan, pick, pair, startRecording, stopRecording, pull }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {
@@ -232,6 +275,10 @@ async function resolveDirectory(client: Client) {
 
 function message(e: unknown) {
   return e instanceof Error ? e.message : String(e)
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
