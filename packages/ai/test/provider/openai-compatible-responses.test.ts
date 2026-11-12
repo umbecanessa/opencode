@@ -3,7 +3,6 @@ import { Effect } from "effect"
 import { ai, LLMEvent, Media, Message, ToolDefinition } from "../../src/effect.js"
 import { configure } from "../../src/providers/openai-compatible-responses.js"
 import { OpenAI } from "../../src/providers.js"
-import { OpenResponses } from "../../src/protocols/open-responses.js"
 import { OpenAICompatibleResponses } from "../../src/protocols/openai-compatible-responses.js"
 import { OpenAIResponses } from "../../src/protocols/openai-responses.js"
 import { LLMClient } from "../../src/route.js"
@@ -13,10 +12,10 @@ import { fixedResponse } from "../lib/http.js"
 import { sseEvents } from "../lib/sse.js"
 
 describe("Open Responses-compatible route", () => {
-  it.effect("uses the Open Responses baseline for a configured deployment", () =>
+  it.effect("extends the Open Responses baseline for a configured deployment", () =>
     Effect.gen(function* () {
-      expect(OpenAICompatibleResponses.route.body).toBe(OpenResponses.protocol.body)
-      expect(OpenAICompatibleResponses.route.transport).toBe(OpenResponses.httpTransport)
+      // The route keeps Open Responses semantics, extended only with the hosted image_generation tool vocabulary.
+      expect(OpenAICompatibleResponses.route.protocol).toBe("openai-compatible-responses")
       expect(OpenAICompatibleResponses.route.body).not.toBe(OpenAIResponses.protocol.body)
 
       const model = configure({
@@ -33,7 +32,7 @@ describe("Open Responses-compatible route", () => {
       )
 
       expect(prepared.route).toBe("openai-compatible-responses")
-      expect(prepared.protocol).toBe("open-responses")
+      expect(prepared.protocol).toBe("openai-compatible-responses")
       expect(prepared.model).toMatchObject({
         id: "example-model",
         provider: "example",
@@ -157,18 +156,66 @@ describe("Open Responses-compatible route", () => {
     }),
   )
 
-  it.effect("rejects OpenAI-native tools", () =>
+  it.effect("lowers the hosted OpenAI image generation tool", () =>
+    Effect.gen(function* () {
+      const model = configure({
+        apiKey: "test-key",
+        baseURL: "https://responses.example.test/v1",
+      }).model("example-model")
+      const tool = OpenAI.imageGeneration({ action: "generate", quality: "high", size: "1024x1024" })
+      const prepared = yield* compileRequest(
+        ai.request({ model, prompt: "Show me a rooftop garden.", tools: [tool], toolChoice: tool }),
+      )
+
+      expect(prepared.body.tools).toEqual([
+        { type: "image_generation", action: "generate", quality: "high", size: "1024x1024" },
+      ])
+      // A forced hosted tool is chosen by type, not as a function tool.
+      expect(prepared.body.tool_choice).toEqual({ type: "image_generation" })
+    }),
+  )
+
+  it.effect("keeps other tool choices as function choices", () =>
+    Effect.gen(function* () {
+      const model = configure({
+        apiKey: "test-key",
+        baseURL: "https://responses.example.test/v1",
+      }).model("example-model")
+      const prepared = yield* compileRequest(
+        ai.request({
+          model,
+          prompt: "Draw.",
+          tools: [OpenAI.imageGeneration()],
+          toolChoice: { type: "required" },
+        }),
+      )
+
+      expect(prepared.body.tool_choice).toBe("required")
+    }),
+  )
+
+  it.effect("rejects OpenAI-native tools that are not hosted images", () =>
     Effect.gen(function* () {
       const model = configure({
         apiKey: "test-key",
         baseURL: "https://responses.example.test/v1",
       }).model("example-model")
       const error = yield* compileRequest(
-        ai.request({ model, prompt: "Draw.", tools: [OpenAI.imageGeneration()] }),
+        ai.request({
+          model,
+          prompt: "Search.",
+          tools: [
+            ToolDefinition.make({
+              name: "web_search",
+              description: "Search the web",
+              inputSchema: {},
+              native: { openai: { type: "web_search" } },
+            }),
+          ],
+        }),
       ).pipe(Effect.flip)
 
       expect(error.reason._tag).toBe("InvalidRequest")
-      expect(error.message).toContain("Open Responses does not support provider-native tool image_generation")
     }),
   )
 
@@ -1009,6 +1056,60 @@ describe("Open Responses-compatible route", () => {
         },
         max_tool_calls: 2,
         parallel_tool_calls: false,
+      })
+    }),
+  )
+
+  it.effect("folds completed hosted image_generation items into a provider-executed file result", () =>
+    Effect.gen(function* () {
+      const model = configure({
+        apiKey: "test-key",
+        baseURL: "https://responses.example.test/v1",
+      }).model("example-model")
+      const response = yield* LLMClient.generate(ai.request({ model, prompt: "Draw." })).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              {
+                type: "response.output_item.done",
+                item: { type: "image_generation_call", id: "igfc_1", status: "completed", result: "aW1n", output_format: "png" },
+              },
+              { type: "response.completed", response: { id: "resp_1" } },
+            ),
+          ),
+        ),
+      )
+
+      expect(response.events.find((event) => event.type === "tool-result" && event.providerExecuted)).toMatchObject({
+        name: "image_generation",
+        result: { type: "content", value: [{ type: "file", uri: "data:image/png;base64,aW1n", mime: "image/png" }] },
+      })
+    }),
+  )
+
+  it.effect("reports a hosted image_generation item error as a tool result error", () =>
+    Effect.gen(function* () {
+      const model = configure({
+        apiKey: "test-key",
+        baseURL: "https://responses.example.test/v1",
+      }).model("example-model")
+      const response = yield* LLMClient.generate(ai.request({ model, prompt: "Draw." })).pipe(
+        Effect.provide(
+          fixedResponse(
+            sseEvents(
+              {
+                type: "response.output_item.done",
+                item: { type: "image_generation_call", id: "igfc_1", status: "failed", error: { message: "no" } },
+              },
+              { type: "response.completed", response: { id: "resp_1" } },
+            ),
+          ),
+        ),
+      )
+
+      expect(response.events.find((event) => event.type === "tool-result" && event.providerExecuted)).toMatchObject({
+        name: "image_generation",
+        result: { type: "error", value: { message: "no" } },
       })
     }),
   )

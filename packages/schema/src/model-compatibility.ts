@@ -46,6 +46,8 @@ export const Compatibility = Schema.Struct({
   supportsEffortUpdates: Schema.Boolean.pipe(optional),
   /** System One: where the decision host reads media. Unset keeps the route default. */
   mediaInput: MediaInput.pipe(optional),
+  /** Hosted tools a chat model can run server-side, e.g. `image_generation` through a Responses endpoint. Explicit because a chat model's image output capability does not imply the hosted tool exists. */
+  hostedImageTools: Schema.Array(Schema.String).pipe(optional),
 }).annotate({ identifier: "Model.Compatibility" })
 
 // Provider defaults inherited by its models. Model-version features stay model-only.

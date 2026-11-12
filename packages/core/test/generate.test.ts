@@ -1,4 +1,4 @@
-import { describe, expect } from "bun:test"
+import { describe, expect, test } from "bun:test"
 import {
   AIError,
   AuthenticationError,
@@ -6,6 +6,7 @@ import {
   InvalidRequestError,
   LanguageModel,
   LLMClient,
+  LLMEvent,
   ProviderInternalError,
   QuotaExceededError,
   RateLimitError,
@@ -653,3 +654,139 @@ const DECISION_RESPONSE =
   '{"model":"typesafe/jev-1.13-20260917","answers":{"department":{"type":"choice","choice":"billing","probabilities":{"billing":1,"sales":0,"technical":0},"confidence":1},"urgency":{"type":"score","score":1.02,"legend":{"0":"Can wait for normal support","1":"Needs prompt attention","2":"Actively blocking revenue"},"probabilities":{"0":0.01,"1":0.96,"2":0.03},"confidence":0.95},"refund":{"type":"noul","noul":0.99}},"usage":{"input_tokens":422,"output_tokens":69,"cost":0.000017724},"id":"gen-dec-1790088886-JRlffOLUwQdx4Lltu2se","provider":"TypeSafe"}'
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52])
+
+describe("hosted image generation", () => {
+  const hostedInfo = Info.make({
+    ...Info.default(Provider.ID.make("test-provider"), ID.make("luna")),
+    package: Provider.aisdk("@ai-sdk/perplexity"),
+    compatibility: { hostedImageTools: ["image_generation"] },
+  })
+  const hostedRef = Ref.make({ providerID: Provider.ID.make("test-provider"), id: ID.make("luna") })
+  const hostedModels = Layer.mock(Model.Service, {
+    get: (_providerID, modelID) =>
+      Effect.succeed(
+        modelID === hostedInfo.id ? hostedInfo : modelID === ID.make("unknown-model") ? undefined : selected,
+      ),
+    available: () => Effect.succeed([hostedInfo, selected]),
+  })
+  const hostedIt = testEffect(
+    Generate.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          hostedModels,
+          ModelResolver.layer.pipe(Layer.provide(Layer.mergeAll(providers, hostedModels, integrations, npm, aisdk))),
+          client,
+          RequestExecutor.fetchLayer,
+        ),
+      ),
+    ),
+  )
+
+  hostedIt.effect("runs image_generation on the chat model and returns its image", () =>
+    Effect.gen(function* () {
+      const generate = yield* Generate.Service
+      const llm = yield* TestLLM.Test
+      yield* llm.push([
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolCall({ id: "igfc_1", name: "image_generation", input: {}, providerExecuted: true }),
+        LLMEvent.toolResult({
+          id: "igfc_1",
+          name: "image_generation",
+          result: { type: "content", value: [{ type: "file", uri: "data:image/png;base64,aW1n", mime: "image/png" }] },
+          providerExecuted: true,
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
+      ])
+      const result = yield* generate.hostedImage({ model: hostedRef, prompt: "A black circle" })
+
+      expect(result).toEqual({ images: [{ type: "image", data: "aW1n", mime: "image/png" }] })
+      const [request] = yield* llm.requests()
+      expect(request.toolChoice).toMatchObject({ type: "tool", name: "image_generation" })
+      expect(request.tools?.at(0)).toMatchObject({ name: "image_generation", native: { openai: { action: "generate" } } })
+      expect(
+        request.messages
+          .flatMap((message) => message.content)
+          .some((part) => part.type === "text" && part.text === "A black circle"),
+      ).toBe(true)
+    }),
+  )
+
+  hostedIt.effect("edits with input images as media parts", () =>
+    Effect.gen(function* () {
+      const generate = yield* Generate.Service
+      const llm = yield* TestLLM.Test
+      yield* llm.push([
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.toolCall({ id: "igfc_1", name: "image_generation", input: {}, providerExecuted: true }),
+        LLMEvent.toolResult({
+          id: "igfc_1",
+          name: "image_generation",
+          result: { type: "content", value: [{ type: "file", uri: "data:image/png;base64,aW1n", mime: "image/png" }] },
+          providerExecuted: true,
+        }),
+        LLMEvent.stepFinish({ index: 0, reason: { normalized: "stop" } }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
+      ])
+      const result = yield* generate.hostedImage({
+        model: hostedRef,
+        prompt: "Make it night",
+        images: [{ data: "aW1n", mime: "image/png", name: "in.png" }],
+      })
+
+      expect(result.images).toHaveLength(1)
+      const [request] = yield* llm.requests()
+      expect(request.tools?.at(0)).toMatchObject({ native: { openai: { action: "edit" } } })
+      const content = request.messages.at(-1)?.content ?? []
+      expect(content.some((part) => part.type === "media" && part.filename === "in.png")).toBe(true)
+      expect(content.some((part) => part.type === "text" && part.text === "Make it night")).toBe(true)
+    }),
+  )
+
+  hostedIt.effect("fails when the model is not configured for hosted images", () =>
+    Effect.gen(function* () {
+      const generate = yield* Generate.Service
+      const error = yield* generate
+        .hostedImage({ model: reference, prompt: "x" })
+        .pipe(Effect.flip)
+      expect(error).toMatchObject({ _tag: "Generate.UnsupportedModelError", capability: "image" })
+      expect(error.message).toContain("is not configured for hosted image generation")
+      expect(yield* (yield* TestLLM.Test).requests()).toEqual([])
+    }),
+  )
+
+  hostedIt.effect("fails with a model-not-found error for unknown models", () =>
+    Effect.gen(function* () {
+      const generate = yield* Generate.Service
+      const error = yield* generate
+        .hostedImage({ model: Ref.make({ providerID: selected.providerID, id: ID.make("unknown-model") }), prompt: "x" })
+        .pipe(Effect.flip)
+      expect(error._tag).toBe("Generate.ModelNotFoundError")
+    }),
+  )
+
+  hostedIt.effect("fails when the hosted tool ran but returned no image", () =>
+    Effect.gen(function* () {
+      const generate = yield* Generate.Service
+      const llm = yield* TestLLM.Test
+      yield* llm.push([
+        LLMEvent.stepStart({ index: 0 }),
+        LLMEvent.finish({ reason: { normalized: "stop" } }),
+      ])
+      const error = yield* generate.hostedImage({ model: hostedRef, prompt: "x" }).pipe(Effect.flip)
+      expect(error).toMatchObject({ _tag: "Generate.ProviderRequestError" })
+      expect(error.message).toContain("returned no image")
+    }),
+  )
+
+  test("withHostedImagesPackage moves packages to their built-in Responses sibling", () => {
+    expect(
+      ModelResolver.withHostedImagesPackage({
+        ...hostedInfo,
+        package: "@opencode/ai/providers/openai-compatible",
+      }).package,
+    ).toBe("@opencode/ai/providers/openai-compatible/responses")
+    // Packages without a built-in Responses sibling are left alone; resolution fails explicitly later.
+    expect(ModelResolver.withHostedImagesPackage(selected).package).toBe(selected.package)
+  })
+})

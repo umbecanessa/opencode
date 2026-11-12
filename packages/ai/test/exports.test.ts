@@ -209,7 +209,7 @@ describe("public exports", () => {
     expect(OpenResponses.protocol.id).toBe("open-responses")
     expect(OpenResponsesChannel.transport).toBeFunction()
     expect(OpenAICompatibleResponses.route.id).toBe("openai-compatible-responses")
-    expect(OpenAICompatibleResponses.route.protocol).toBe("open-responses")
+    expect(OpenAICompatibleResponses.route.protocol).toBe("openai-compatible-responses")
     expect(OpenAIResponses.route.id).toBe("openai-responses")
     expect(AnthropicMessages.route.id).toBe("anthropic-messages")
   })

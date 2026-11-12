@@ -54,6 +54,7 @@ const generate = makeLocationNode({
     Generate.Service.of({
       text: () => Effect.fail(new Generate.UnavailableError({ message: "no chat model in the voice test" })),
       image: () => Effect.die("unused"),
+      hostedImage: () => Effect.die("unused"),
       decisions: () => Effect.die("unused"),
     }),
   ),

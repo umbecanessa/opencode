@@ -105,14 +105,37 @@ export const Plugin = {
           !preferred.variants.some((variant) => variant.id === configured.variant)
         if (preferred && !variantMissing && (!images || acceptsImages(preferred)))
           return { model: preferred, variant: configured?.variant }
-        const providerID = (yield* ctx.session.get({ sessionID })).model?.providerID
-        const model = defaultModel(available, { providerID, images })
-        if (!model)
+        // A configured chat model with the hosted flag is a deliberate route, not a miss: run it hosted.
+        if (configured && preferred === undefined) {
+          const hosted = yield* models.get(configured.providerID, configured.model)
+          if (hosted?.enabled && Model.supportsHostedImages(hosted) && (!images || acceptsImages(hosted)))
+            return { model: hosted, variant: configured.variant, hosted: true }
+        }
+        const sessionModel = (yield* ctx.session.get({ sessionID })).model
+        const model = defaultModel(available, { providerID: sessionModel?.providerID, images })
+        if (!model) {
+          // Without a dedicated image model, the session's own model may still run the hosted tool.
+          const hosted =
+            sessionModel === undefined
+              ? undefined
+              : yield* models.get(sessionModel.providerID, sessionModel.id)
+          if (hosted?.enabled && Model.supportsHostedImages(hosted) && (!images || acceptsImages(hosted)))
+            return {
+              model: hosted,
+              // The session's `default` variant means no variant, like the runner's own normalization.
+              variant:
+                sessionModel?.variant === undefined || sessionModel.variant === Model.VariantID.make("default")
+                  ? undefined
+                  : sessionModel.variant,
+              hosted: true,
+              note: " The session model runs image_generation on its provider, because no image model is available.",
+            }
           return yield* new ToolFailure({
             message: images
               ? "None of the available image models accept input images."
-              : "No image model is available.",
+              : "No image model is available. Configure one, or set compatibility.hostedImageTools on a chat model for hosted image generation.",
           })
+        }
         if (!configured) return { model }
         const ref = `${configured.providerID}/${configured.model}${configured.variant ? `#${configured.variant}` : ""}`
         const reason = !preferred
@@ -130,10 +153,27 @@ export const Plugin = {
           }),
       })
       const model = available.find((model) => model.providerID === ref.providerID && model.id === ref.id)
-      if (model === undefined)
+      if (model === undefined) {
+        // Explicitly selected chat models with the hosted flag take the hosted route; nothing falls back.
+        const hosted = yield* models.get(ref.providerID, ref.id)
+        if (hosted?.enabled && Model.supportsHostedImages(hosted)) {
+          if (ref.variant !== undefined && !hosted.variants.some((variant) => variant.id === ref.variant))
+            return yield* new ToolFailure({
+              message:
+                hosted.variants.length === 0
+                  ? `Model "${ref.providerID}/${ref.id}" has no variants. Omit the variant.`
+                  : `Variant "${ref.variant}" is not available for "${ref.providerID}/${ref.id}". Available: ${hosted.variants.map((variant) => variant.id).join(", ")}.`,
+            })
+          if (images && !acceptsImages(hosted))
+            return yield* new ToolFailure({
+              message: `Model "${ref.providerID}/${ref.id}" does not accept input images.`,
+            })
+          return { model: hosted, variant: ref.variant, hosted: true }
+        }
         return yield* new ToolFailure({
           message: `Model "${ref.providerID}/${ref.id}" is not an available image model. Use the models tool with type: "image" to see what is available.`,
         })
+      }
       if (ref.variant !== undefined && !model.variants.some((variant) => variant.id === ref.variant))
         return yield* new ToolFailure({
           message:
@@ -234,9 +274,11 @@ export const Plugin = {
     // tool transform instead.
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.tool.reload())
 
-    // Registered only while an image model is available, re-evaluated whenever the catalog changes.
-    // Subscribing before the first read keeps a change in between from being missed.
-    const wanted = models.available(["image"]).pipe(Effect.map((available) => available.length > 0))
+    // Registered while either route exists: a dedicated image model, or a chat model configured for hosted
+    // image_generation. Subscribing before the first read keeps a change in between from being missed.
+    const wanted = Effect.all([models.available(["image"]), models.available()]).pipe(
+      Effect.map(([dedicated, chats]) => dedicated.length > 0 || chats.some(Model.supportsHostedImages)),
+    )
     let enabled = false
     const refresh = wanted.pipe(
       Effect.flatMap((next) => {
@@ -294,23 +336,30 @@ export const Plugin = {
 
               // Everything that needs the user or can fail fast happened above; the paid call runs as a background job.
               const run = Effect.gen(function* () {
-                const result = yield* generate
-                  .image({
-                    model: Model.Ref.make({
-                      providerID: model.providerID,
-                      id: model.id,
-                      ...(variant ? { variant } : {}),
-                    }),
-                    prompt: input.prompt,
-                    n: 1,
-                    ...(images ? { images } : {}),
-                  })
-                  .pipe(
-                    Effect.timeoutOrElse({
-                      duration: GENERATE_TIMEOUT,
-                      orElse: () => Effect.fail(new Error("Image generation timed out after 30 minutes.")),
-                    }),
-                  )
+                const modelRef = Model.Ref.make({
+                  providerID: model.providerID,
+                  id: model.id,
+                  ...(variant ? { variant } : {}),
+                })
+                // The resolved route is fixed: a hosted selection never falls back to a dedicated image call.
+                const result = yield* (resolved.hosted
+                  ? generate.hostedImage({
+                      model: modelRef,
+                      prompt: input.prompt,
+                      ...(images ? { images } : {}),
+                    })
+                  : generate.image({
+                      model: modelRef,
+                      prompt: input.prompt,
+                      n: 1,
+                      ...(images ? { images } : {}),
+                    })
+                ).pipe(
+                  Effect.timeoutOrElse({
+                    duration: GENERATE_TIMEOUT,
+                    orElse: () => Effect.fail(new Error("Image generation timed out after 30 minutes.")),
+                  }),
+                )
                 const image = result.images[0]
                 if (!image) return yield* Effect.fail(new Error(`${ref} returned no image.`))
                 const bytes = Buffer.from(image.data, "base64")

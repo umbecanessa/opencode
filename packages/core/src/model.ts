@@ -347,6 +347,11 @@ export function supportsText(model: Pick<Info, "capabilities">) {
   )
 }
 
+/** Whether a chat model runs `image_generation` server-side; explicit config, never inferred from output capabilities. */
+export function supportsHostedImages(model: Pick<Info, "compatibility">) {
+  return model.compatibility?.hostedImageTools?.includes("image_generation") === true
+}
+
 export function compatibility(input: unknown): Compatibility | undefined {
   if (typeof input === "string") return { reasoningField: input }
   if (typeof input !== "object" || input === null || Array.isArray(input) || !("field" in input)) return undefined

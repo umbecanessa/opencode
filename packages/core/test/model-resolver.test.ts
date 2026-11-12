@@ -7,7 +7,7 @@ import { Headers } from "effect/http"
 import { AISDKNative } from "@opencode/core/aisdk-native"
 import { Credential } from "@opencode/core/credential"
 import { Integration } from "@opencode/core/integration"
-import { Compatibility, ID, Info, Model, VariantID } from "@opencode/core/model"
+import { ID, Info, Model, VariantID } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import { Variant } from "@opencode/core/variant"
 import { ModelResolver } from "@opencode/core/model-resolver"
@@ -20,7 +20,7 @@ interface ModelOptions {
   readonly providerID?: Provider.ID
   readonly canonical?: Provider.ID
   readonly modelID?: string
-  readonly compatibility?: Compatibility
+  readonly compatibility?: Model.MutableInfo["compatibility"]
   readonly settings?: Info["settings"]
   readonly headers?: Info["headers"]
   readonly body?: Info["body"]
