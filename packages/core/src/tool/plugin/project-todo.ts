@@ -53,7 +53,7 @@ export const Plugin = {
           name,
           options: { codemode: false },
           description:
-            "Read and manage the durable per-project todo list (plain open/done tasks shared with the user's voice-note triage and UI; distinct from the session-scoped todowrite plan). Keeping it current is part of the job: add work you discover, mark items done when finished. When the user asks you to check your todos, use list: it returns this project's unassigned items plus those addressed to you (assignee naming your agent or \"all\"). Assign work to another agent or session with add/update assignee.",
+            "Read and manage the durable per-project todo list (plain open/done tasks shared with the user's voice-note triage and UI; distinct from the session-scoped todowrite plan). Keeping it current is part of the job: add work you discover, mark items done when finished. When the user asks you to check your todos, use list: it returns this project's unassigned items plus those addressed to you (assignee naming your agent, your session id, or \"all\"). Assign work to another agent or session with add/update assignee.",
           input: Input,
           output: Output,
           execute: (input, context) =>
@@ -71,23 +71,24 @@ export const Plugin = {
                 if (input.assignee !== undefined) {
                   listed = yield* todo.list({ assignee: input.assignee })
                   message = `Todos addressed to ${input.assignee}.`
-                } else if (me === undefined) {
+                } else if (info === undefined && context.sessionID === undefined) {
                   listed = yield* todo.list({ directory: scope })
                   message = "Current todos."
                 } else {
                   // Mine by default: this project's items (open to whoever works here) plus
-                  // anything addressed to this agent or to "all", even from other projects.
+                  // anything addressed to this agent, to this very session, or to "all".
                   const here = yield* todo.list({ directory: scope })
-                  const addressed = yield* Effect.all([todo.list({ assignee: me }), todo.list({ assignee: "all" })])
+                  const targets = [me, context.sessionID, "all"].filter((value): value is string => value !== undefined)
+                  const addressed = (yield* Effect.forEach(targets, (target) => todo.list({ assignee: target }))).flat()
                   const byID = new Map(
-                    [...here, ...addressed[0], ...addressed[1]]
-                      .filter((todo) => todo.assignee === undefined || todo.assignee === me || todo.assignee === "all")
+                    [...here, ...addressed]
+                      .filter((todo) => todo.assignee === undefined || targets.includes(todo.assignee))
                       .map((todo) => [todo.id, todo]),
                   )
                   listed = [...byID.values()].sort(
                     (a, b) => Number(a.status === "done") - Number(b.status === "done") || b.time_created - a.time_created,
                   )
-                  message = `Todos for agent "${me}": this project's items plus those addressed to you or \"all\".`
+                  message = `Todos for you${me === undefined ? "" : ` as agent "${me}"`}: this project's items plus those addressed to you or \"all\".`
                 }
               } else if (input.action === "add") {
                 if (input.text === undefined || input.text.trim() === "") message = "add needs text."

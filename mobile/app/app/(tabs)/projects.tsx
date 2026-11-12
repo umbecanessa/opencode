@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router"
 import { useCallback, useMemo, useState } from "react"
 import { Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../../src/components/LargeTitle"
+import { relTime } from "../../src/time"
 import { useHosts } from "../../src/state/hosts"
 import { useLive } from "../../src/state/live"
 import { useTheme } from "../../src/theme"
@@ -14,17 +15,6 @@ type Section = { title: string; data: Item[] }
 // server's own project activity time) and the rest stays behind search or a show-all toggle.
 // Tapping a project opens its session list, like the desktop sidebar's drill-in.
 const RECENT_COUNT = 7
-
-// Compact age for the row gutter: now / 12m / 3h / 5d / 2w / 8mo.
-const relTime = (ms: number) => {
-  const s = Math.max(0, (Date.now() - ms) / 1000)
-  if (s < 60) return "now"
-  if (s < 3600) return `${Math.floor(s / 60)}m`
-  if (s < 86_400) return `${Math.floor(s / 3600)}h`
-  if (s < 7 * 86_400) return `${Math.floor(s / 86_400)}d`
-  if (s < 30 * 86_400) return `${Math.floor(s / (7 * 86_400))}w`
-  return `${Math.floor(s / (30 * 86_400))}mo`
-}
 
 export default function Projects() {
   const t = useTheme()

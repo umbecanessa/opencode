@@ -3,6 +3,7 @@ import { useFocusEffect, useRouter } from "expo-router"
 import { useCallback, useMemo, useState } from "react"
 import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../../src/components/LargeTitle"
+import { relTime } from "../../src/time"
 import { useHosts } from "../../src/state/hosts"
 import { useTheme } from "../../src/theme"
 import type { TodoInfo } from "../../src/api/types"
@@ -14,6 +15,8 @@ const basename = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop(
 
 // The same durable list the desktop Todos tab and the voice triage write to: one row set per host,
 // grouped by project directory. 404s classify as "needs a newer server" instead of an empty list.
+// Adding lives solely in the title "+" (the new-todo modal); rows tap open to be read, so there is
+// no per-group composer and nothing sitting on the keyboard.
 export default function Todos() {
   const t = useTheme()
   const router = useRouter()
@@ -24,9 +27,7 @@ export default function Todos() {
   const [refreshing, setRefreshing] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const [shownDone, setShownDone] = useState<string[]>([])
-  const [adding, setAdding] = useState("")
-  const [draft, setDraft] = useState("")
-  const [assignDraft, setAssignDraft] = useState("")
+  const [expanded, setExpanded] = useState<string>()
   const [editing, setEditing] = useState<{ hostId: string; host: string; id: string; value: string } | undefined>()
 
   const fetchAll = useCallback(async () => {
@@ -131,38 +132,6 @@ export default function Todos() {
       )
   }
 
-  const addTodo = (section: Section) => {
-    const text = draft.trim()
-    const assignee = assignDraft.trim()
-    setDraft("")
-    setAssignDraft("")
-    setAdding("")
-    if (text === "") return
-    const optimistic: Row = {
-      id: `pending_${text}`,
-      directory: section.dir,
-      text,
-      status: "open",
-      source: "user",
-      ...(assignee === "" ? {} : { assignee }),
-      time_created: Date.now(),
-      time_updated: Date.now(),
-      host: section.host,
-      hostId: section.hostId,
-    }
-    setRows((prev) => [...prev, optimistic])
-    client(section.hostId)
-      ?.todoAdd(section.dir, text, assignee === "" ? undefined : assignee)
-      .then(
-        (data) =>
-          setRows((prev) => [...prev.filter((r) => !(r.hostId === section.hostId && r.id === optimistic.id)), { ...data, host: section.host, hostId: section.hostId }]),
-        (error) => {
-          setRows((prev) => prev.filter((r) => !(r.hostId === section.hostId && r.id === optimistic.id)))
-          fail(error)
-        },
-      )
-  }
-
   const manyHosts = hosts.length > 1
 
   return (
@@ -222,49 +191,44 @@ export default function Todos() {
               {section.name.toUpperCase()}
               {manyHosts ? ` · ${section.host}` : ""}
             </Text>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: 14 }}>
-              {section.done > 0 && (
-                <Pressable
-                  onPress={() =>
-                    setShownDone((prev) => (prev.includes(section.key) ? prev.filter((k) => k !== section.key) : [...prev, section.key]))
-                  }
-                  accessibilityRole="button"
-                  accessibilityLabel={`${section.done} done, toggle`}
-                  hitSlop={10}
-                >
-                  <Text style={[t.font.caption, { color: t.tertiaryLabel, textDecorationLine: "line-through" }]}>{section.done} done</Text>
-                </Pressable>
-              )}
+            {section.done > 0 && (
               <Pressable
-                onPress={() => {
-                  setAdding(section.key)
-                  setDraft("")
-                  setAssignDraft("")
-                }}
+                onPress={() =>
+                  setShownDone((prev) => (prev.includes(section.key) ? prev.filter((k) => k !== section.key) : [...prev, section.key]))
+                }
                 accessibilityRole="button"
-                accessibilityLabel={`Add todo to ${section.name}`}
+                accessibilityLabel={`${section.done} done, toggle`}
                 hitSlop={10}
-                style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
               >
-                <Ionicons name="add-circle-outline" size={22} color={t.tint} />
+                <Text style={[t.font.caption, { color: t.tertiaryLabel, textDecorationLine: "line-through" }]}>{section.done} done</Text>
               </Pressable>
-            </View>
+            )}
           </View>
         )}
         renderItem={({ item, index, section }) => {
           const done = item.status === "done"
+          const key = `${item.hostId}|${item.id}`
+          const open = expanded === key
           const editingThis = editing?.id === item.id && editing.hostId === item.hostId
+          const meta = [
+            `added ${relTime(item.time_created)}`,
+            item.time_updated > item.time_created + 60_000 ? `updated ${relTime(item.time_updated)}` : "",
+            done && item.done_at !== undefined ? `done ${relTime(item.done_at)}` : "",
+          ].filter((part) => part !== "").join(" · ")
 
           return (
             <Pressable
+              onPress={() => setExpanded(open ? undefined : key)}
               onLongPress={() => removeItem(item)}
               delayLongPress={450}
+              accessibilityRole="button"
+              accessibilityLabel={`${open ? "Collapse" : "Expand"}: ${item.text}`}
               style={({ pressed }) => [
                 styles.row,
                 {
-                  backgroundColor: pressed ? t.surfaceRaised : t.surface,
+                  backgroundColor: open ? t.surfaceRaised : pressed ? t.surfaceRaised : t.surface,
                   borderTopColor: t.separator,
-                  borderTopWidth: index === 0 && adding !== section.key ? 0 : StyleSheet.hairlineWidth,
+                  borderTopWidth: index === 0 ? 0 : StyleSheet.hairlineWidth,
                 },
                 index === 0 && styles.first,
                 index === section.data.length - 1 && styles.last,
@@ -292,28 +256,47 @@ export default function Todos() {
                     autoFocus
                   />
                 ) : (
-                  <Pressable
-                    onPress={() => setEditing({ hostId: item.hostId, host: item.host, id: item.id, value: item.text })}
-                    accessibilityRole="text"
-                    accessibilityLabel={`Edit: ${item.text}`}
-                  >
-                    <Text style={[t.font.body, { color: done ? t.tertiaryLabel : t.label }, done && { textDecorationLine: "line-through" }]}>
-                      {item.text}
-                    </Text>
-                  </Pressable>
+                  <Text style={[t.font.body, { color: done ? t.tertiaryLabel : t.label }, done && { textDecorationLine: "line-through" }]}>
+                    {item.text}
+                  </Text>
                 )}
                 {item.description && !editingThis && (
-                  <Text style={[t.font.caption, { color: t.tertiaryLabel }]} numberOfLines={2}>
+                  <Text style={[t.font.caption, { color: t.tertiaryLabel }]} numberOfLines={open ? undefined : 2}>
                     {item.description}
                   </Text>
                 )}
-                {!editingThis && (item.refs?.length ?? 0) > 0 && (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
+                {!editingThis && open && (item.refs?.length ?? 0) > 0 && (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6, marginTop: 2 }}>
                     {(item.refs ?? []).map((ref) => (
                       <Text key={ref.uri} style={[t.font.caption, styles.chip, { color: t.tertiaryLabel, backgroundColor: t.fill.tertiary }]} numberOfLines={1}>
                         {ref.label}
                       </Text>
                     ))}
+                  </View>
+                )}
+                {!editingThis && open && (
+                  <View style={styles.metaRow}>
+                    <Text style={[t.font.caption, { color: t.tertiaryLabel, flex: 1 }]} numberOfLines={1}>
+                      {meta}
+                    </Text>
+                    <Pressable
+                      onPress={() => setEditing({ hostId: item.hostId, host: item.host, id: item.id, value: item.text })}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Edit: ${item.text}`}
+                      hitSlop={10}
+                      style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+                    >
+                      <Text style={[t.font.caption, { color: t.tint, fontWeight: "600" }]}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      onPress={() => removeItem(item)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Delete: ${item.text}`}
+                      hitSlop={10}
+                      style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+                    >
+                      <Text style={[t.font.caption, { color: t.status.failed, fontWeight: "600" }]}>Delete</Text>
+                    </Pressable>
                   </View>
                 )}
               </View>
@@ -324,51 +307,12 @@ export default function Todos() {
                   </Text>
                 )}
                 <Text style={[t.font.caption, { color: t.tertiaryLabel }]}>{item.source === "user" ? "you" : item.source}</Text>
+                <Ionicons name={open ? "chevron-up" : "chevron-down"} size={13} color={t.tertiaryLabel} style={{ opacity: 0.7 }} />
               </View>
             </Pressable>
           )
         }}
       />
-      {sections.some((s) => s.key === adding) && (
-        <View style={[styles.composer, { backgroundColor: t.surface, borderTopColor: t.separator }]}>
-          <TextInput
-            style={[t.font.body, { color: t.label, flex: 1 }]}
-            placeholder="New todo…"
-            placeholderTextColor={t.tertiaryLabel}
-            value={draft}
-            onChangeText={setDraft}
-            onSubmitEditing={() => {
-              const section = sections.find((s) => s.key === adding)
-              if (section) addTodo(section)
-            }}
-            autoFocus
-            autoCorrect={false}
-            returnKeyType="done"
-          />
-          <TextInput
-            style={[t.font.subhead, styles.assign, { color: t.label, backgroundColor: t.fill.secondary }]}
-            placeholder="@assign"
-            placeholderTextColor={t.tertiaryLabel}
-            value={assignDraft}
-            onChangeText={setAssignDraft}
-            onSubmitEditing={() => {
-              const section = sections.find((s) => s.key === adding)
-              if (section) addTodo(section)
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            returnKeyType="done"
-          />
-          <Pressable
-            onPress={() => setAdding("")}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel new todo"
-            hitSlop={10}
-          >
-            <Ionicons name="close-circle" size={22} color={t.tertiaryLabel} />
-          </Pressable>
-        </View>
-      )}
     </KeyboardAvoidingView>
   )
 }
@@ -382,6 +326,5 @@ const styles = StyleSheet.create({
   last: { borderBottomLeftRadius: 14, borderBottomRightRadius: 14 },
   check: { paddingTop: 1 },
   chip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 5, overflow: "hidden" },
-  composer: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 20, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
-  assign: { width: 96, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 9, textAlign: "center" },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 16, marginTop: 6 },
 })
