@@ -34,6 +34,7 @@ type PocketState = {
   recent: Ship[]
   pending: VoicePendingCard[]
   pendingBusy?: string
+  processing: { key: string; label: string; mins: number }[]
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
   pair: (device: Device, key?: string) => Promise<void>
@@ -44,6 +45,7 @@ type PocketState = {
   loadPending: () => Promise<void>
   acceptPending: (id: string, sessionID: string) => Promise<void>
   rememberPending: (id: string) => Promise<void>
+  dismissPending: (id: string) => Promise<void>
   listSessions: () => Promise<{ id: string; title?: string }[]>
 }
 
@@ -76,6 +78,10 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [recent, setRecent] = useState<Ship[]>([])
   const [pending, setPending] = useState<VoicePendingCard[]>([])
   const [pendingBusy, setPendingBusy] = useState<string>()
+  const [processing, setProcessing] = useState<{ key: string; label: string; mins: number }[]>([])
+  // Recordings whose card has been seen or consumed; keeps shipped history rows from
+  // reappearing as "processing" forever (or after triage).
+  const resolved = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     SecureStore.getItemAsync(KEY_STORE)
@@ -242,13 +248,33 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     return client
   }
 
+// A shipped clip stops showing as "processing" this long after upload even if no card landed
+// (whisper down, job lost in a server restart); the shipped row then goes quiet.
+const PROCESSING_WINDOW = 30 * 60_000
+
   const loadPending = async () => {
     try {
-      setPending(await triageClient().voicePending())
+      const cards = await triageClient().voicePending()
+      for (const card of cards) if (card.recordingId) resolved.current.add(card.recordingId)
+      setPending(cards)
+      const stamp = Date.now()
+      setProcessing(
+        recent
+          .filter((s) => stamp - s.at < PROCESSING_WINDOW && !resolved.current.has(`${s.date}_${s.name}`))
+          .map((s) => ({ key: `${s.date}_${s.name}`, label: `${s.date} ${s.name}`, mins: Math.max(1, Math.round((stamp - s.at) / 60_000)) })),
+      )
     } catch {
       // An unreachable host is not a screen error: the pending section simply stays as-is.
     }
   }
+
+  // While any shipped clip still awaits its card, poll faster than the screen's 15s cycle.
+  useEffect(() => {
+    if (processing.length === 0) return
+    const timer = setTimeout(() => void loadPending(), 8_000)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processing, pending])
 
   // "Add to this session": the server moves the note into the picked session's inbox
   // (idempotent per session and recording) and consumes it from the Voice Inbox.
@@ -256,6 +282,8 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     setPendingBusy(id)
     try {
       await triageClient().voiceAccept(id, sessionID)
+      const card = pending.find((c) => c.id === id)
+      if (card?.recordingId) resolved.current.add(card.recordingId)
       setPending((prev) => prev.filter((card) => card.id !== id))
     } catch (e) {
       setError(message(e))
@@ -271,6 +299,24 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     try {
       const client = triageClient()
       await client.voiceRemember(id, await resolveDirectory(client))
+      const card = pending.find((c) => c.id === id)
+      if (card?.recordingId) resolved.current.add(card.recordingId)
+      setPending((prev) => prev.filter((card) => card.id !== id))
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setPendingBusy(undefined)
+    }
+  }
+
+  // Throw the note away: cancelled in the Voice Inbox, delivered nowhere. The recording file
+  // itself stays on the host until the 30-day retention sweep.
+  const dismissPending = async (id: string) => {
+    setPendingBusy(id)
+    try {
+      await triageClient().voiceDismiss(id)
+      const card = pending.find((c) => c.id === id)
+      if (card?.recordingId) resolved.current.add(card.recordingId)
       setPending((prev) => prev.filter((card) => card.id !== id))
     } catch (e) {
       setError(message(e))
@@ -320,7 +366,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, listSessions }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, processing, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {

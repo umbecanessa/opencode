@@ -196,6 +196,7 @@ export class Client {
         .filter((entry) => entry.type === "synthetic" && entry.payload?.metadata?.source === "voice")
         .map((entry) => ({
           id: entry.id,
+          recordingId: typeof entry.payload?.metadata?.recordingId === "string" ? entry.payload.metadata.recordingId : undefined,
           created: epochMillis(entry.time?.created),
           recordedAt: epochMillis(entry.payload?.metadata?.recordedAt),
           duration: typeof entry.payload?.metadata?.duration === "number" ? entry.payload.metadata.duration : undefined,
@@ -214,6 +215,15 @@ export class Client {
       method: "POST",
       body: JSON.stringify(directory ? { itemId, directory } : { itemId }),
     })
+
+  // Delete a pending card without delivering it anywhere (the inbox cancel route answers 204).
+  // A 404 means it was already consumed — the card is done either way.
+  voiceDismiss = async (itemId: string) => {
+    const res = await this.send(`/api/session/ses_voice_inbox/inbox/${itemId}`, { method: "DELETE", timeout: 10_000 })
+    if (res.status === 204 || res.status === 404) return
+    if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
+    throw new Error(`${this.host.name}: dismiss ${res.status}`)
+  }
 
   fsRead = async (l: Location, path: string, limit = 2_000_000): Promise<FileContent> => {
     const encodedPath = path.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/")

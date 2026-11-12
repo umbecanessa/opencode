@@ -260,6 +260,25 @@ export default function Pocket() {
         <Text style={[t.font.footnote, styles.note, { color: t.status.failed }]}>{pocket.error}</Text>
       )}
 
+      {pocket.processing.length > 0 && (
+        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
+          <Text style={[t.font.headline, { color: t.label, fontWeight: "600", marginBottom: 6 }]}>
+            Transcribing
+          </Text>
+          {pocket.processing.map((job) => (
+            <View key={job.key} style={styles.row}>
+              <ActivityIndicator size="small" color={t.tint} />
+              <Text style={[t.font.footnote, { color: t.label, flex: 1 }]} numberOfLines={1}>
+                {job.label}
+              </Text>
+              <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+                {job.mins} min
+              </Text>
+            </View>
+          ))}
+        </View>
+      )}
+
       {pocket.pending.length > 0 && (
         <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
           <Text style={[t.font.headline, { color: t.label, fontWeight: "600", marginBottom: 6 }]}>
@@ -321,7 +340,7 @@ export default function Pocket() {
                     </Pressable>
                   </View>
                 ) : (
-                  <View style={{ flexDirection: "row", gap: 8 }}>
+                  <View style={{ flexDirection: "row", gap: 8, flexWrap: "wrap", rowGap: 8 }}>
                     <Pressable
                       disabled={busy}
                       onPress={() => {
@@ -344,6 +363,14 @@ export default function Pocket() {
                     >
                       <Ionicons name="bookmark-outline" size={15} color={t.tint} />
                       <Text style={[t.font.footnote, { color: t.tint }]}>Remember</Text>
+                    </Pressable>
+                    <Pressable
+                      disabled={busy}
+                      onPress={() => pocket.dismissPending(card.id)}
+                      style={({ pressed }) => [styles.pill, { borderColor: t.separator, opacity: pressed ? 0.6 : busy ? 0.4 : 1 }]}
+                    >
+                      <Ionicons name="trash-outline" size={15} color={t.tertiaryLabel} />
+                      <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>Delete</Text>
                     </Pressable>
                   </View>
                 )}
