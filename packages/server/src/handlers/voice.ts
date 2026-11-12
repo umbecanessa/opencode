@@ -280,13 +280,25 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                         ),
                         Effect.catch(() => Effect.succeed(undefined)),
                       )
+                // Prompt restraint is not enough (observed live: a capable model invented "global"
+                // despite an explicit existing-names-only list). Drop any suggestion that is not a
+                // real project; a wrong chip routes the user to a project that does not exist.
+                const suggestedProject =
+                  enrichment?.project !== undefined && projectNames.includes(enrichment.project)
+                    ? enrichment.project
+                    : undefined
+                if (enrichment?.project !== undefined && suggestedProject === undefined)
+                  yield* Effect.logWarning("voice enrichment suggested a nonexistent project; dropped", {
+                    suggestion: enrichment.project,
+                    audioPath: payload.audioPath,
+                  })
                 const note = {
                   transcript: transcribed.text,
                   title: payload.title,
                   summary: silent ? "No speech detected — the clip was probably silent." : enrichment?.summary,
                   todos: enrichment?.todos,
                   segments: transcribed.segments,
-                  suggestedProject: enrichment?.project,
+                  suggestedProject,
                   device: payload.device,
                   recordingId: payload.recordingId,
                   audioPath: payload.audioPath,
