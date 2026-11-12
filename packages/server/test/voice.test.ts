@@ -312,6 +312,73 @@ it.live(
   { timeout: 45_000 },
 )
 
+it.live(
+  "gates a silent clip when whisper hallucinates low-confidence text",
+  () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-gate-")))
+      const global = path.join(tmp.path, "global")
+      yield* Effect.promise(() => fs.mkdir(global))
+      // Whisper over silence: confident-looking text, no timestamp overflow, but mean logprob far
+      // below real speech (-0.4). Only the logprob dimension can distinguish it, which is the point.
+      const whisper = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request) {
+          if (!new URL(request.url).pathname.endsWith("/audio/transcriptions"))
+            return new Response("not found", { status: 404 })
+          return Response.json({
+            text: "You",
+            language: "en",
+            segments: [{ id: 0, start: 0, end: 1.2, text: "You", avg_logprob: -5.2 }],
+          })
+        },
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => whisper.stop()))
+      const handler = yield* ServerFetch.make(
+        {
+          database: { path: ":memory:" },
+          config: {
+            directory: global,
+            content: JSON.stringify({ experimental: { voice: { transcribe: { url: `http://127.0.0.1:${whisper.port}/v1` } } } }),
+          },
+          fs: { filewatcher: false },
+          models: { fetch: false },
+        },
+        { overrides: [Generate.node.replace(generate)] },
+      )
+      const send = (pathname: string, init?: RequestInit) =>
+        Effect.promise(() => handler(new Request(`http://opencode.local${pathname}`, init)))
+
+      const upload = yield* send("/api/experimental/fs/write?path=" + encodeURIComponent(path.join(global, "voice", "silent.mp3")), {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00]),
+      })
+      expect(upload.status).toBe(200)
+      const audioPath = ((yield* Effect.promise(() => upload.json())) as { data: { path: string } }).data.path
+
+      const transcribeRes = yield* send("/api/experimental/voice/transcribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audioPath, recordingId: "20261112silent", duration: 6 }),
+      })
+      expect(transcribeRes.status).toBe(200)
+
+      const item = yield* Effect.gen(function* () {
+        const inbox = yield* send("/api/session/ses_voice_inbox/inbox")
+        const entries = ((yield* Effect.promise(() => inbox.json())) as {
+          data: Array<{ payload: { metadata: Record<string, unknown> } }>
+        }).data
+        const found = entries.find((entry) => entry.payload.metadata.recordingId === "20261112silent")
+        if (found === undefined) return yield* Effect.fail("pending")
+        return found
+      }).pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.timeout("30 seconds"))
+      expect(item.payload.metadata.summary).toBe("No speech detected — the clip was probably silent.")
+    }),
+  { timeout: 45_000 },
+)
+
 it.live("routes pending voice notes to sessions or project memory", () =>
   Effect.gen(function* () {
     const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-triage-")))

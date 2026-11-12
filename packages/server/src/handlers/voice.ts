@@ -331,9 +331,10 @@ function voiceItemID(sessionID: Session.ID, payload: { readonly itemId?: Session
   return derivedID(sessionID, payload.recordingId)
 }
 
-/** Whisper produces confident garbage over near-silence; a segment claiming speech past the file's end (observed: 27.1s on a 9.1s clip) is the tell. Empty text is its quiet cousin. */
+/** Whisper produces confident garbage over near-silence; a segment claiming speech past the file's end (observed: 27.1s on a 9.1s clip) is the tell. Empty text is its quiet cousin, and low mean token log-probability is the loudest: real speech sits near -0.4, silence hallucinations below -5 (observed on a 6s silent clip). */
 function isSilenceHallucination(audio: Transcribe.Audio, duration?: number) {
   if (audio.text.trim() === "") return true
+  if ((audio.segments ?? []).some((segment) => (segment.avgLogprob ?? 0) < -1.5)) return true
   if (duration === undefined) return false
   return (audio.segments ?? []).some((segment) => segment.end > duration + 2)
 }

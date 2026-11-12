@@ -114,6 +114,9 @@ export const TranscriptionSegment = Schema.Struct({
   startSeconds: Schema.Number,
   endSeconds: Schema.Number,
   speaker: Schema.optional(Schema.String),
+  // whisper's verbose_json reports mean token log-probability; strongly negative values mark
+  // low-confidence output, which over near-silent audio is the hallucination tell.
+  avgLogprob: Schema.optional(Schema.Number),
 }).annotate({ identifier: "Transcription.Segment" })
 export type TranscriptionSegment = Schema.Schema.Type<typeof TranscriptionSegment>
 

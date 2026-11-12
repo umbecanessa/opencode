@@ -14,6 +14,7 @@ export interface Segment {
   readonly end: number
   readonly text: string
   readonly speaker?: string
+  readonly avgLogprob?: number
 }
 
 export interface Audio {
@@ -81,6 +82,7 @@ export const layer = Layer.effect(
                   end: segment.endSeconds,
                   text: segment.text,
                   ...(segment.speaker === undefined ? {} : { speaker: segment.speaker }),
+                  ...(segment.avgLogprob === undefined ? {} : { avgLogprob: segment.avgLogprob }),
                 }),
               ),
             }),

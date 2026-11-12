@@ -52,6 +52,7 @@ const Segment = Schema.Struct({
   start: Schema.Number,
   end: Schema.Number,
   speaker: Schema.optional(Schema.String),
+  avg_logprob: Schema.optional(Schema.Number),
 })
 
 const Usage = Schema.Union([
@@ -215,6 +216,7 @@ const segment = (value: Schema.Schema.Type<typeof Segment>): TranscriptionSegmen
   startSeconds: value.start,
   endSeconds: value.end,
   speaker: value.speaker,
+  avgLogprob: value.avg_logprob,
 })
 
 const onEvent = Effect.fnUntraced(function* (state: State, frame: string) {
