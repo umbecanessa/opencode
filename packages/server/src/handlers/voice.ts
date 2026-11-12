@@ -250,12 +250,22 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                   })
                 // Real projects only: the model chooses from projects that actually exist on this
                 // host (or nothing), so the card's chip names something the user can route to.
+                // Most projects carry no display name; the canonical directory's basename is what
+                // people actually call them (opencode-src, universe-network), the hash id last.
                 const projectNames = silent
                   ? []
                   : yield* project
                       .list()
                       .pipe(
-                        Effect.map((infos) => [...new Set(infos.map((info) => (info.name ?? info.id) as string))].slice(0, 80)),
+                        Effect.map((infos) =>
+                          [
+                            ...new Set(
+                              infos.map((info) =>
+                                info.name ?? (basename(String(info.canonical)).replace(/[:/\\]+$/, "") || String(info.id)),
+                              ),
+                            ),
+                          ].slice(0, 80),
+                        ),
                         Effect.catch(() => Effect.succeed([] as string[])),
                       )
                 // Enrichment is best-effort: a missing or misbehaving chat model must not lose the transcript.
