@@ -78,6 +78,21 @@ it.live("manages durable project todos over /api/experimental/todo", () =>
     const every = yield* json(yield* call("GET", "/api/experimental/todo?status=open"))
     expect(every.data.map((todo: { directory: string }) => todo.directory).sort()).toEqual([root, "/todo-test/beta"])
 
+    // Assignment: add addresses a row to an agent or session; the assignee filter finds it from
+    // any project, and an empty assignee reopens the row to the whole project.
+    const assigned = yield* json(
+      yield* call("POST", "/api/experimental/todo", { directory: "/todo-test/beta", text: "Fix the badge", assignee: "sentry" }),
+    )
+    expect(assigned.data.assignee).toBe("sentry")
+    const mine = yield* json(yield* call("GET", "/api/experimental/todo?assignee=sentry"))
+    expect(mine.data.map((todo: { id: string }) => todo.id)).toEqual([assigned.data.id])
+    const unassignedHere = yield* json(yield* call("GET", `/api/experimental/todo?directory=${root}`))
+    expect(unassignedHere.data.some((todo: { assignee?: string }) => todo.assignee !== undefined)).toBe(false)
+    const reopenedToAll = yield* json(
+      yield* call("PATCH", `/api/experimental/todo/${assigned.data.id}`, { assignee: "" }),
+    )
+    expect(reopenedToAll.data.assignee).toBeUndefined()
+
     const removed = yield* json(yield* call("DELETE", "/api/experimental/todo/todo_stable_id"))
     expect(removed.data).toEqual({ removed: true })
     const missing = yield* call("DELETE", "/api/experimental/todo/todo_stable_id")

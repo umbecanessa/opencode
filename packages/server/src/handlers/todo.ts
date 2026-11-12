@@ -13,11 +13,12 @@ export const makeTodo = Effect.gen(function* () {
   const missing = (id: string) => new TodoNotFoundError({ id, message: `Todo not found: ${id}` })
 
   return {
-    list: (query: { readonly directory?: string; readonly status?: Todo.Status }) =>
+    list: (query: { readonly directory?: string; readonly status?: Todo.Status; readonly assignee?: string }) =>
       todo
         .list({
           ...(query.directory === undefined ? {} : { directory: query.directory }),
           ...(query.status === undefined ? {} : { status: query.status }),
+          ...(query.assignee === undefined ? {} : { assignee: query.assignee }),
         })
         .pipe(Effect.map((data) => ({ data }))),
     add: (payload: TodoSchema.AddInput) =>
@@ -31,6 +32,7 @@ export const makeTodo = Effect.gen(function* () {
             ...(payload.description === undefined ? {} : { description: payload.description }),
             ...(payload.refs === undefined ? {} : { refs: payload.refs }),
             ...(payload.source === undefined ? {} : { source: payload.source }),
+            ...(payload.assignee === undefined ? {} : { assignee: payload.assignee }),
             ...(payload.id === undefined ? {} : { id: payload.id }),
           }),
         }

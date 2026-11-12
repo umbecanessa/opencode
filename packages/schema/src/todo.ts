@@ -25,6 +25,11 @@ export const Info = Schema.Struct({
   status: Status,
   done_at: optional(NonNegativeInt.annotate({ description: "Epoch millis when marked done" })),
   source: Source,
+  assignee: optional(
+    Schema.String.annotate({
+      description: "Who this todo is addressed to: an agent name, a session id, or \"all\"; absent means open to anyone in the project",
+    }),
+  ),
   time_created: NonNegativeInt,
   time_updated: NonNegativeInt,
 }).annotate({ identifier: "Todo.Info" })
@@ -36,6 +41,7 @@ export const AddInput = Schema.Struct({
   description: optional(Schema.String),
   refs: optional(Schema.Array(Ref)),
   source: optional(Source),
+  assignee: optional(Schema.String.annotate({ description: "Agent name, session id, or \"all\"; absent means open to anyone in the project" })),
   id: optional(Schema.String.annotate({ description: "Caller-chosen id; an existing id is ignored and the stored todo returned" })),
 }).annotate({ identifier: "Todo.AddInput" })
 
@@ -45,4 +51,5 @@ export const UpdateInput = Schema.Struct({
   description: optional(Schema.String),
   refs: optional(Schema.Array(Ref)),
   status: optional(Status),
+  assignee: optional(Schema.String.annotate({ description: "Reassign, or pass an empty string to open it to the whole project" })),
 }).annotate({ identifier: "Todo.UpdateInput" })

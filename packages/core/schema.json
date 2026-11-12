@@ -1,8 +1,8 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "3d6133dd-fc53-46f4-8fb7-54cf4b5dab14",
-  "prevIds": ["70d11ef2-0276-4c8b-b605-213bda2b3b9f"],
+  "id": "5c46284e-cf43-424b-8ab0-e01201a9658f",
+  "prevIds": ["3d6133dd-fc53-46f4-8fb7-54cf4b5dab14"],
   "ddl": [
     {
       "name": "account_state",
@@ -2309,6 +2309,16 @@
       "default": null,
       "generated": null,
       "name": "source",
+      "entityType": "columns",
+      "table": "project_todo"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "assignee",
       "entityType": "columns",
       "table": "project_todo"
     },

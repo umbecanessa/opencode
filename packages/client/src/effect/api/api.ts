@@ -2592,6 +2592,7 @@ export type ExperimentalArtifactsDeleteOperation<E = never> = (
 export type ExperimentalTodoListInput = {
   readonly directory?: string | undefined
   readonly status?: ("open" | "done") | undefined
+  readonly assignee?: string | undefined
 }
 export type ExperimentalTodoListOutput = ReadonlyArray<{
   readonly id: string
@@ -2602,6 +2603,7 @@ export type ExperimentalTodoListOutput = ReadonlyArray<{
   readonly status: "open" | "done"
   readonly done_at?: number | undefined
   readonly source: "voice" | "agent" | "user"
+  readonly assignee?: string | undefined
   readonly time_created: number
   readonly time_updated: number
 }>
@@ -2615,6 +2617,7 @@ export type ExperimentalTodoAddInput = {
   readonly description?: string | undefined
   readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
   readonly source?: ("voice" | "agent" | "user") | undefined
+  readonly assignee?: string | undefined
   readonly id?: string | undefined
 }
 export type ExperimentalTodoAddOutput = {
@@ -2626,6 +2629,7 @@ export type ExperimentalTodoAddOutput = {
   readonly status: "open" | "done"
   readonly done_at?: number | undefined
   readonly source: "voice" | "agent" | "user"
+  readonly assignee?: string | undefined
   readonly time_created: number
   readonly time_updated: number
 }
@@ -2639,6 +2643,7 @@ export type ExperimentalTodoUpdateInput = {
   readonly description?: string | undefined
   readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
   readonly status?: ("open" | "done") | undefined
+  readonly assignee?: string | undefined
 }
 export type ExperimentalTodoUpdateOutput = {
   readonly id: string
@@ -2649,6 +2654,7 @@ export type ExperimentalTodoUpdateOutput = {
   readonly status: "open" | "done"
   readonly done_at?: number | undefined
   readonly source: "voice" | "agent" | "user"
+  readonly assignee?: string | undefined
   readonly time_created: number
   readonly time_updated: number
 }

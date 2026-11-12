@@ -215,13 +215,13 @@ export class Client {
   // feature; screens surface that as "needs a newer server" rather than an empty list.
   todos = () => this.request<{ data: TodoInfo[] }>("/api/experimental/todo").then((r) => r.data)
 
-  todoAdd = (directory: string, text: string) =>
+  todoAdd = (directory: string, text: string, assignee?: string) =>
     this.request<{ data: TodoInfo }>("/api/experimental/todo", {
       method: "POST",
-      body: JSON.stringify({ directory, text }),
+      body: JSON.stringify(assignee ? { directory, text, assignee } : { directory, text }),
     }).then((r) => r.data)
 
-  todoSet = (id: string, patch: { text?: string; status?: "open" | "done" }) =>
+  todoSet = (id: string, patch: { text?: string; status?: "open" | "done"; assignee?: string }) =>
     this.request<{ data: TodoInfo }>(`/api/experimental/todo/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(patch),

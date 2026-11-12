@@ -95,6 +95,8 @@ export type TodoInfo = {
   status: "open" | "done"
   done_at?: number
   source: "voice" | "agent" | "user"
+  // Addressed to an agent name, a session id, or "all"; absent means open to anyone in the project.
+  assignee?: string
   time_created: number
   time_updated: number
 }

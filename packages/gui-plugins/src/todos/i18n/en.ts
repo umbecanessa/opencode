@@ -1,7 +1,11 @@
 export default {
   title: "Todos",
   "add.placeholder": "Add a todo to this project",
+  "add.target": "Add to {project}",
   "add.aria": "Add todo",
+  "assignee.placeholder": "@assign",
+  "assignee.hint": "Addressed to an agent, a session, or \"all\"; open to anyone in the project when empty",
+  "target.clear": "Add to the current project instead",
   refresh: "Refresh",
   loading: "Loading.",
   error: "Project todos are unavailable",

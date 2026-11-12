@@ -1,5 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useFocusEffect, useRouter } from "expo-router"
+import { useCallback, useMemo, useState } from "react"
 import { Alert, KeyboardAvoidingView, Platform, Pressable, RefreshControl, SectionList, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../../src/components/LargeTitle"
 import { useHosts } from "../../src/state/hosts"
@@ -15,6 +16,7 @@ const basename = (dir: string) => dir.replace(/[\\/]+$/, "").split(/[\\/]/).pop(
 // grouped by project directory. 404s classify as "needs a newer server" instead of an empty list.
 export default function Todos() {
   const t = useTheme()
+  const router = useRouter()
   const { hosts, client } = useHosts()
   const [rows, setRows] = useState<Row[]>([])
   const [stale, setStale] = useState<string[]>([])
@@ -24,6 +26,7 @@ export default function Todos() {
   const [shownDone, setShownDone] = useState<string[]>([])
   const [adding, setAdding] = useState("")
   const [draft, setDraft] = useState("")
+  const [assignDraft, setAssignDraft] = useState("")
   const [editing, setEditing] = useState<{ hostId: string; host: string; id: string; value: string } | undefined>()
 
   const fetchAll = useCallback(async () => {
@@ -43,17 +46,21 @@ export default function Todos() {
     setFailed(next.failed)
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    fetchAll().then((next) => {
-      if (cancelled) return
-      apply(next)
-      setLoaded(true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [fetchAll, apply])
+  // Reload on focus, not just on mount: todos added from the new-todo modal or another device
+  // should be there when you come back to the tab, without a manual pull.
+  useFocusEffect(
+    useCallback(() => {
+      let cancelled = false
+      fetchAll().then((next) => {
+        if (cancelled) return
+        apply(next)
+        setLoaded(true)
+      })
+      return () => {
+        cancelled = true
+      }
+    }, [fetchAll, apply]),
+  )
 
   // Sections are project groups across hosts, open rows first; done rows join only when expanded.
   const sections = useMemo<Section[]>(() => {
@@ -126,7 +133,9 @@ export default function Todos() {
 
   const addTodo = (section: Section) => {
     const text = draft.trim()
+    const assignee = assignDraft.trim()
     setDraft("")
+    setAssignDraft("")
     setAdding("")
     if (text === "") return
     const optimistic: Row = {
@@ -135,6 +144,7 @@ export default function Todos() {
       text,
       status: "open",
       source: "user",
+      ...(assignee === "" ? {} : { assignee }),
       time_created: Date.now(),
       time_updated: Date.now(),
       host: section.host,
@@ -142,7 +152,7 @@ export default function Todos() {
     }
     setRows((prev) => [...prev, optimistic])
     client(section.hostId)
-      ?.todoAdd(section.dir, text)
+      ?.todoAdd(section.dir, text, assignee === "" ? undefined : assignee)
       .then(
         (data) =>
           setRows((prev) => [...prev.filter((r) => !(r.hostId === section.hostId && r.id === optimistic.id)), { ...data, host: section.host, hostId: section.hostId }]),
@@ -177,7 +187,20 @@ export default function Todos() {
         }
         ListHeaderComponent={
           <>
-            <LargeTitle title="Todos" />
+            <LargeTitle
+              title="Todos"
+              action={
+                <Pressable
+                  onPress={() => router.push("/new-todo")}
+                  accessibilityRole="button"
+                  accessibilityLabel="New todo in any project"
+                  hitSlop={10}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
+                >
+                  <Ionicons name="add-circle-outline" size={28} color={t.tint} />
+                </Pressable>
+              }
+            />
             {(stale.length > 0 || failed.length > 0) && (
               <Text style={[t.font.caption, styles.note, { color: t.tertiaryLabel }]}>
                 {stale.length ? `${stale.join(", ")}: project todos need a newer opencode server on that machine. ` : ""}
@@ -189,7 +212,7 @@ export default function Todos() {
         ListEmptyComponent={
           loaded && rows.length === 0 ? (
             <Text style={[t.font.body, styles.empty, { color: t.tertiaryLabel }]}>
-              {"No todos yet.\n\nTriage a Pocket voice note or ask the agent to use its todo tool, and items land here."}
+              {"No todos yet.\n\nTap the + above to add one to any project, triage a Pocket voice note, or ask the agent to use its todo tool."}
             </Text>
           ) : undefined
         }
@@ -216,6 +239,7 @@ export default function Todos() {
                 onPress={() => {
                   setAdding(section.key)
                   setDraft("")
+                  setAssignDraft("")
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={`Add todo to ${section.name}`}
@@ -293,7 +317,14 @@ export default function Todos() {
                   </View>
                 )}
               </View>
-              <Text style={[t.font.caption, { color: t.tertiaryLabel }]}>{item.source === "user" ? "you" : item.source}</Text>
+              <View style={{ alignItems: "flex-end", gap: 3 }}>
+                {item.assignee && (
+                  <Text style={[t.font.caption, styles.chip, { color: t.tint, backgroundColor: t.fill.tertiary }]} numberOfLines={1}>
+                    @{item.assignee}
+                  </Text>
+                )}
+                <Text style={[t.font.caption, { color: t.tertiaryLabel }]}>{item.source === "user" ? "you" : item.source}</Text>
+              </View>
             </Pressable>
           )
         }}
@@ -311,6 +342,20 @@ export default function Todos() {
               if (section) addTodo(section)
             }}
             autoFocus
+            autoCorrect={false}
+            returnKeyType="done"
+          />
+          <TextInput
+            style={[t.font.subhead, styles.assign, { color: t.label, backgroundColor: t.fill.secondary }]}
+            placeholder="@assign"
+            placeholderTextColor={t.tertiaryLabel}
+            value={assignDraft}
+            onChangeText={setAssignDraft}
+            onSubmitEditing={() => {
+              const section = sections.find((s) => s.key === adding)
+              if (section) addTodo(section)
+            }}
+            autoCapitalize="none"
             autoCorrect={false}
             returnKeyType="done"
           />
@@ -338,4 +383,5 @@ const styles = StyleSheet.create({
   check: { paddingTop: 1 },
   chip: { paddingHorizontal: 6, paddingVertical: 1, borderRadius: 5, overflow: "hidden" },
   composer: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 20, paddingVertical: 10, borderTopWidth: StyleSheet.hairlineWidth },
+  assign: { width: 96, paddingHorizontal: 10, paddingVertical: 8, borderRadius: 9, textAlign: "center" },
 })

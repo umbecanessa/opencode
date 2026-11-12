@@ -976,6 +976,7 @@ export type TodoInfo = {
   status: TodoStatus
   done_at?: number
   source: TodoSource
+  assignee?: string
   time_created: number
   time_updated: number
 }
@@ -4779,6 +4780,7 @@ export type ExperimentalArtifactsViewOutput = globalThis.Uint8Array
 export type ExperimentalTodoListInput = {
   readonly directory?: string | undefined
   readonly status?: ("open" | "done") | undefined
+  readonly assignee?: string | undefined
 }
 
 export type ExperimentalTodoListOutput = { data: Array<TodoInfo> }["data"]
@@ -4789,6 +4791,7 @@ export type ExperimentalTodoAddInput = {
   readonly description?: string | undefined
   readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
   readonly source?: ("voice" | "agent" | "user") | undefined
+  readonly assignee?: string | undefined
   readonly id?: string | undefined
 }
 
@@ -4800,6 +4803,7 @@ export type ExperimentalTodoUpdateInput = {
   readonly description?: string | undefined
   readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
   readonly status?: ("open" | "done") | undefined
+  readonly assignee?: string | undefined
 }
 
 export type ExperimentalTodoUpdateOutput = { data: TodoInfo }["data"]

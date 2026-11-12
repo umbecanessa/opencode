@@ -21,6 +21,7 @@ export const TodoEndpoints = [
     query: Schema.Struct({
       directory: Schema.String.pipe(Schema.optional),
       status: Todo.Status.pipe(Schema.optional),
+      assignee: Schema.String.pipe(Schema.optional),
     }),
     success: Schema.Struct({ data: Schema.Array(Todo.Info) }),
     error: errors,
@@ -28,7 +29,7 @@ export const TodoEndpoints = [
     annotations(
       "list",
       "List project todos",
-      "Durable per-project todos (plain open/done items with descriptions and references to transcripts or documents). Lists one project when `directory` is given, otherwise every project; each row carries its own directory so clients can group.",
+      "Durable per-project todos (plain open/done items with descriptions and references to transcripts or documents). Lists one project when `directory` is given, otherwise every project; each row carries its own directory so clients can group. `assignee` keeps only rows addressed to that agent name or session id.",
     ),
   ),
   HttpApiEndpoint.post("todo.add", "/api/experimental/todo", {

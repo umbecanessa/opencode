@@ -17,6 +17,7 @@ export const ProjectTodoTable = sqliteTable(
     status: text().$type<"open" | "done">().notNull(),
     done_at: integer(),
     source: text().$type<"voice" | "agent" | "user">().notNull(),
+    assignee: text(),
     ...Timestamps,
   },
   (table) => [index("project_todo_directory_idx").on(table.directory), index("project_todo_status_idx").on(table.status)],

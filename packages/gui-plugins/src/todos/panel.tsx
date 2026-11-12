@@ -45,6 +45,9 @@ export default function TodosPanel(props: { session: MountedSession }) {
   const [editing, setEditing] = createSignal("")
   const [editDraft, setEditDraft] = createSignal("")
   const [doneOpen, setDoneOpen] = createSignal<string[]>([])
+  const [assignee, setAssignee] = createSignal("")
+  // Empty means the routed project; a group's "+" retargets the composer to that project.
+  const [target, setTarget] = createSignal("")
 
   const client = () => props.session.server.client.experimental.todo
 
@@ -117,7 +120,11 @@ export default function TodosPanel(props: { session: MountedSession }) {
     if (text === "") return
 
     client()
-      .add({ directory: props.session.directory, text }, { signal: controller.signal })
+      .add({
+        directory: target() === "" ? props.session.directory : target(),
+        text,
+        ...(assignee().trim() === "" ? {} : { assignee: assignee().trim() }),
+      }, { signal: controller.signal })
       .then(
         (data) => {
           if (controller.signal.aborted) return
@@ -126,6 +133,7 @@ export default function TodosPanel(props: { session: MountedSession }) {
         fail,
       )
     setDraft("")
+    setAssignee("")
   }
 
   const toggle = (item: TodoInfo) =>
@@ -190,7 +198,7 @@ export default function TodosPanel(props: { session: MountedSession }) {
             spellcheck={false}
             autocomplete="off"
             aria-label={ctx.t("add.aria")}
-            placeholder={ctx.t("add.placeholder")}
+            placeholder={target() === "" ? ctx.t("add.placeholder") : ctx.t("add.target").replaceAll("{project}", getFilename(target()))}
             value={draft()}
             class="min-w-0 flex-1 bg-transparent text-12-regular text-v2-text-text-base outline-none"
             onInput={(event) => setDraft(event.currentTarget.value)}
@@ -198,8 +206,31 @@ export default function TodosPanel(props: { session: MountedSession }) {
               event.stopPropagation()
 
               if (event.key === "Enter") add()
+
+              if (event.key === "Escape" && target() !== "") setTarget("")
             }}
           />
+          <input
+            type="text"
+            spellcheck={false}
+            autocomplete="off"
+            aria-label={ctx.t("assignee.placeholder")}
+            title={ctx.t("assignee.hint")}
+            placeholder={ctx.t("assignee.placeholder")}
+            value={assignee()}
+            class="w-16 shrink-0 bg-transparent text-end text-12-regular text-v2-text-text-muted outline-none"
+            onInput={(event) => setAssignee(event.currentTarget.value)}
+            onKeyDown={(event) => {
+              event.stopPropagation()
+
+              if (event.key === "Enter") add()
+            }}
+          />
+          <Show when={target() !== ""}>
+            <Button size="small" variant="ghost-muted" onClick={() => setTarget("")} aria-label={ctx.t("target.clear")}>
+              ×
+            </Button>
+          </Show>
         </div>
         <Button size="small" variant="ghost-muted" icon="refresh" aria-label={ctx.t("refresh")} onClick={() => void load()} />
       </div>
@@ -228,13 +259,26 @@ export default function TodosPanel(props: { session: MountedSession }) {
         <For each={groups()}>
           {(group) => (
             <div class="pb-1">
-              <div class="flex items-baseline gap-1.5 px-3 pb-0.5 pt-2">
+              <div class="group/head flex items-baseline gap-1.5 px-3 pb-0.5 pt-2">
                 <span class="truncate text-[10px] font-medium uppercase tracking-wide text-v2-text-text-muted" title={group.directory}>
                   {group.name}
                 </span>
                 <Show when={group.here}>
                   <span class="shrink-0 text-[10px] text-v2-text-text-muted">· {ctx.t("here")}</span>
                 </Show>
+                <Show when={target() === group.directory}>
+                  <span class="shrink-0 text-[10px] text-v2-text-text-base">← {ctx.t("add.aria")}</span>
+                </Show>
+                <span class="ms-auto shrink-0 opacity-0 transition-opacity group-hover/head:opacity-100 focus-within:opacity-100">
+                  <Button
+                    size="small"
+                    variant="ghost-muted"
+                    icon="plus"
+                    aria-label={`${ctx.t("add.aria")} ${group.name}`}
+                    title={ctx.t("add.target").replaceAll("{project}", group.name)}
+                    onClick={() => setTarget(group.directory)}
+                  />
+                </span>
               </div>
               <For each={group.open}>{(item) => <Row item={item} label={ctx.t} onToggle={toggle} onEdit={saveEdit} onRemove={remove} openRef={openRef} editing={editing} editDraft={editDraft} setEditDraft={setEditDraft} startEdit={setEditing} t={ctx.t} />}</For>
               <Show when={group.done.length > 0}>
@@ -358,7 +402,17 @@ function Row(props: {
             </For>
           </div>
         </Show>
-        <span class="text-[10px] uppercase tracking-wide text-v2-text-text-muted/70">{props.t(`source.${props.item.source}`)}</span>
+        <div class="flex items-center gap-1.5">
+          <span class="text-[10px] uppercase tracking-wide text-v2-text-text-muted/70">{props.t(`source.${props.item.source}`)}</span>
+          <Show when={props.item.assignee}>
+            <span
+              class="rounded border-[0.5px] border-v2-border-border-muted px-1 text-[10px] text-v2-text-text-muted"
+              title={props.t("assignee.hint")}
+            >
+              @{props.item.assignee}
+            </span>
+          </Show>
+        </div>
       </div>
       <span class="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <Button size="small" variant="ghost-muted" icon="outline-trash" aria-label={props.t("remove")} onClick={() => props.onRemove(props.item)} />

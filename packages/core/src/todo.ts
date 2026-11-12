@@ -17,10 +17,11 @@ export class NotFoundError extends Schema.TaggedError<NotFoundError>()("Todo.Not
 }) {}
 
 export interface Interface {
-  /** Todos for one project when `directory` is given, otherwise every project's — each row carries its directory. */
+  /** Todos for one project when `directory` is given, otherwise every project's — each row carries its directory. `assignee` keeps only rows addressed to that agent or session. */
   readonly list: (input?: {
     readonly directory?: string
     readonly status?: Status | "all"
+    readonly assignee?: string
   }) => Effect.Effect<ReadonlyArray<Info>>
   /** `id` makes additions idempotent: an existing id returns the stored row untouched. */
   readonly add: (input: {
@@ -29,6 +30,7 @@ export interface Interface {
     readonly description?: string
     readonly refs?: readonly TodoSchema.Ref[]
     readonly source?: TodoSchema.Source
+    readonly assignee?: string
     readonly id?: string
   }) => Effect.Effect<Info>
   readonly update: (input: {
@@ -37,6 +39,7 @@ export interface Interface {
     readonly description?: string
     readonly refs?: readonly TodoSchema.Ref[]
     readonly status?: Status
+    readonly assignee?: string
   }) => Effect.Effect<Info, NotFoundError>
   readonly remove: (input: { readonly id: string }) => Effect.Effect<void, NotFoundError>
 }
@@ -55,6 +58,7 @@ const row = (todo: typeof ProjectTodoTable.$inferSelect): Info => ({
   status: todo.status,
   ...(todo.done_at === null ? {} : { done_at: todo.done_at }),
   source: todo.source,
+  ...(todo.assignee === null || todo.assignee === "" ? {} : { assignee: todo.assignee }),
   time_created: todo.time_created,
   time_updated: todo.time_updated,
 })
@@ -69,19 +73,20 @@ const layer = Layer.effect(
       return found
     })
 
-    const list = Effect.fn("Todo.list")(function* (input?: { directory?: string; status?: Status | "all" }) {
-      const where =
-        input?.directory === undefined
-          ? input?.status !== undefined && input?.status !== "all"
-            ? eq(ProjectTodoTable.status, input.status)
-            : undefined
-          : input?.status !== undefined && input?.status !== "all"
-            ? and(eq(ProjectTodoTable.directory, input.directory), eq(ProjectTodoTable.status, input.status))
-            : eq(ProjectTodoTable.directory, input.directory)
+    const list = Effect.fn("Todo.list")(function* (input?: {
+      directory?: string
+      status?: Status | "all"
+      assignee?: string
+    }) {
+      const where = [
+        ...(input?.directory === undefined ? [] : [eq(ProjectTodoTable.directory, input.directory)]),
+        ...(input?.status === undefined || input?.status === "all" ? [] : [eq(ProjectTodoTable.status, input.status)]),
+        ...(input?.assignee === undefined ? [] : [eq(ProjectTodoTable.assignee, input.assignee)]),
+      ]
       const rows = yield* db
         .select()
         .from(ProjectTodoTable)
-        .where(where)
+        .where(where.length === 0 ? undefined : and(...where))
         // Open first, then most recent first; the right panel shows the actionable head without sorting.
         .orderBy(sql`${ProjectTodoTable.status} = 'done'`, desc(ProjectTodoTable.time_created))
         .all()
@@ -95,6 +100,7 @@ const layer = Layer.effect(
       description?: string
       refs?: readonly TodoSchema.Ref[]
       source?: TodoSchema.Source
+      assignee?: string
       id?: string
     }) {
       const id = input.id ?? `todo_${randomUUID()}`
@@ -112,6 +118,7 @@ const layer = Layer.effect(
           status: "open",
           done_at: null,
           source: input.source ?? "user",
+          assignee: input.assignee?.trim() === "" ? null : (input.assignee ?? null),
         })
         .returning()
         .get()
@@ -125,6 +132,7 @@ const layer = Layer.effect(
       description?: string
       refs?: readonly TodoSchema.Ref[]
       status?: Status
+      assignee?: string
     }) {
       const existing = yield* byID(input.id)
       if (existing === undefined)
@@ -136,6 +144,8 @@ const layer = Layer.effect(
         ...(input.description === undefined ? {} : { description: input.description }),
         ...(input.refs === undefined ? {} : { refs: input.refs }),
         ...(input.status === undefined ? {} : { status: input.status }),
+        // An empty assignee clears the assignment, opening the todo to the whole project.
+        ...(input.assignee === undefined ? {} : { assignee: input.assignee.trim() === "" ? null : input.assignee }),
         // done_at records the completion instant; time_updated rides the column's own onUpdate.
         ...(done ? { done_at: Date.now() } : reopened ? { done_at: null } : {}),
       }

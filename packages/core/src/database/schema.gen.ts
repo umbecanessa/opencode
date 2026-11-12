@@ -345,6 +345,7 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
           \`status\` text NOT NULL,
           \`done_at\` integer,
           \`source\` text NOT NULL,
+          \`assignee\` text,
           \`time_created\` integer NOT NULL,
           \`time_updated\` integer NOT NULL
         );

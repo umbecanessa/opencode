@@ -1804,7 +1804,9 @@ const EndpointExperimentalArtifactsDelete =
 
 const EndpointExperimentalTodoList = (raw: RawClient["server.experimental"]) => (input?: ExperimentalTodoListInput) =>
   preserveEffect<ExperimentalTodoListOutput>()(
-    raw["todo.list"]({ query: { directory: input?.["directory"], status: input?.["status"] } }).pipe(
+    raw["todo.list"]({
+      query: { directory: input?.["directory"], status: input?.["status"], assignee: input?.["assignee"] },
+    }).pipe(
       Effect.mapError(mapClientError),
       Effect.map((value) => value.data),
     ),
@@ -1819,6 +1821,7 @@ const EndpointExperimentalTodoAdd = (raw: RawClient["server.experimental"]) => (
         description: input["description"],
         refs: input["refs"],
         source: input["source"],
+        assignee: input["assignee"],
         id: input["id"],
       },
     }).pipe(
@@ -1837,6 +1840,7 @@ const EndpointExperimentalTodoUpdate =
           description: input["description"],
           refs: input["refs"],
           status: input["status"],
+          assignee: input["assignee"],
         },
       }).pipe(
         Effect.mapError(mapClientError),

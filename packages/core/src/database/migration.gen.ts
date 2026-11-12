@@ -63,6 +63,7 @@ import m60 from "./migration/20261030054400_job.js"
 import m61 from "./migration/20261031064708_execution_attribution.js"
 import m62 from "./migration/20261102154522_project_memory.js"
 import m63 from "./migration/20261112171742_project_todo.js"
+import m64 from "./migration/20261112201039_todo_assignee.js"
 
 export const migrations = [
   m00,
@@ -129,4 +130,5 @@ export const migrations = [
   m61,
   m62,
   m63,
+  m64,
 ] satisfies DatabaseMigration.Migration[]
