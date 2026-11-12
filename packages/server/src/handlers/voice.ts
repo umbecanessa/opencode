@@ -11,6 +11,9 @@ import { ConflictError, InvalidRequestError, ServiceUnavailableError } from "@op
 import type { VoiceIngestInput } from "@opencode/protocol/groups/voice"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Global } from "@opencode/util/global"
+import { createHash } from "node:crypto"
+import { readdir, rm } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
 import { Api } from "../api"
@@ -19,6 +22,9 @@ import { missingSession } from "./session-error"
 
 /** Fixed-ID holding session for ingested voice notes; Session.create adopts the existing row on reuse. */
 const VoiceInboxSessionID = Session.ID.make("ses_voice_inbox")
+
+/** Shipped mp3s older than this are pruned opportunistically during transcribe jobs. */
+const RETENTION_DAYS = 30
 
 const Enrichment = Schema.Struct({
   summary: Schema.optional(Schema.String),
@@ -87,7 +93,7 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
             const data = yield* session
               .synthetic({
                 sessionID,
-                id: payload.itemId,
+                id: voiceItemID(sessionID, payload),
                 text: ingestText(payload),
                 description: ingestDescription(payload),
                 metadata: ingestMetadata(payload),
@@ -150,16 +156,30 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                   path: payload.audioPath,
                   ...(payload.language === undefined ? {} : { language: payload.language }),
                 })
+                // Whisper hallucinates confident text over near-silence; a segment that claims
+                // speech past the end of the file (observed: 27.1s on a 9.1s clip) is that tell.
+                const silent = isSilenceHallucination(transcribed, payload.duration)
+                if (silent)
+                  yield* Effect.logWarning("voice clip produced no real speech; card gated", {
+                    audioPath: payload.audioPath,
+                    duration: payload.duration,
+                  })
                 // Enrichment is best-effort: a missing or misbehaving chat model must not lose the transcript.
-                const enrichment = Option.getOrUndefined(
-                  yield* generate
-                    .text({ prompt: enrichPrompt(transcribed.text) })
-                    .pipe(Effect.map(decodeEnrichment), Effect.catch(() => Effect.succeedNone)),
-                )
+                const enrichment = silent
+                  ? undefined
+                  : yield* generate
+                      .text({ prompt: enrichPrompt(transcribed.text) })
+                      .pipe(
+                        Effect.flatMap(parseEnrichment),
+                        Effect.tapError((error) =>
+                          Effect.logWarning("voice enrichment failed", { reason: error.message, audioPath: payload.audioPath }),
+                        ),
+                        Effect.catch(() => Effect.succeed(undefined)),
+                      )
                 const note = {
                   transcript: transcribed.text,
                   title: payload.title,
-                  summary: enrichment?.summary,
+                  summary: silent ? "No speech detected — the clip was probably silent." : enrichment?.summary,
                   todos: enrichment?.todos,
                   segments: transcribed.segments,
                   suggestedProject: enrichment?.project,
@@ -171,13 +191,16 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                 }
                 yield* session.synthetic({
                   sessionID,
-                  id: payload.itemId,
+                  id: voiceItemID(sessionID, payload),
                   text: ingestText(note),
                   description: ingestDescription(note),
                   metadata: ingestMetadata(note),
                   delivery: payload.delivery ?? "queue",
                   resume: false,
                 })
+                // Opportunistic retention: prune date-folders older than 30 days under this
+                // recording's own voice/pocket root, so shipped mp3s expire without a daemon.
+                yield* purgeExpiredRecordings(payload.audioPath)
                 return enrichment?.summary ?? transcribed.text.slice(0, 200)
               }),
             })
@@ -189,6 +212,49 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
       )
   }),
 )
+
+/**
+ * Stable synthetic input ID. Without an explicit itemId, one is derived from
+ * (session, recording): re-pulling and re-shipping the same recording then hits
+ * Session's idempotent admission path (first admission wins, retries are ignored)
+ * instead of minting a duplicate card, while the same recording admitted to a
+ * different session still gets a distinct ID.
+ */
+function voiceItemID(sessionID: Session.ID, payload: { readonly itemId?: SessionMessage.ID; readonly recordingId?: string }) {
+  if (payload.itemId !== undefined) return payload.itemId
+  if (payload.recordingId === undefined) return undefined
+  return SessionMessage.ID.make(`msg_${createHash("sha256").update(`${sessionID}/${payload.recordingId}`).digest("hex").slice(0, 24)}`)
+}
+
+/** Whisper produces confident garbage over near-silence; a segment claiming speech past the file's end (observed: 27.1s on a 9.1s clip) is the tell. Empty text is its quiet cousin. */
+function isSilenceHallucination(audio: Transcribe.Audio, duration?: number) {
+  if (audio.text.trim() === "") return true
+  if (duration === undefined) return false
+  return (audio.segments ?? []).some((segment) => segment.end > duration + 2)
+}
+
+/** Models wrap JSON in fences or prose; only the object itself is interesting. */
+function parseEnrichment(raw: string): Effect.Effect<Schema.Schema.Type<typeof Enrichment>, Error> {
+  const parsed = decodeEnrichment(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1))
+  if (Option.isSome(parsed)) return Effect.succeed(parsed.value)
+  return Effect.fail(new Error(`expected an enrichment JSON object, got: ${raw.slice(0, 160)}`))
+}
+
+/** fs.write lands recordings at <root>/voice/pocket/<YYYY-MM-DD>/file.mp3; prune date folders past retention so shipped mp3s expire without a daemon. */
+const purgeExpiredRecordings = Effect.fn("voice.purgeExpiredRecordings")(function* (audioPath: string) {
+  const dateDir = dirname(audioPath)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(basename(dateDir))) return
+  const pocketRoot = dirname(dateDir)
+  const entries = yield* Effect
+    .tryPromise(() => readdir(pocketRoot, { withFileTypes: true }))
+    .pipe(Effect.catch(() => Effect.succeed([] as readonly { name: string; isDirectory(): boolean }[])))
+  const cutoff = new Date(Date.now() - RETENTION_DAYS * 86_400_000).toISOString().slice(0, 10)
+  yield* Effect.forEach(
+    entries.filter((entry) => entry.isDirectory() && /^\d{4}-\d{2}-\d{2}$/.test(entry.name) && entry.name < cutoff),
+    (entry) => Effect.tryPromise(() => rm(join(pocketRoot, entry.name), { recursive: true, force: true })).pipe(Effect.ignore),
+    { discard: true },
+  )
+})
 
 function enrichPrompt(transcript: string) {
   return [
