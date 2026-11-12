@@ -132,6 +132,38 @@ Use the user-facing MCP interface instead.
 Report the server as configured but awaiting sign-in until its connection
 status confirms it is connected.
 
+## Image generation
+
+The built-in `experimental_image_generate` tool creates or edits images and
+runs as a background job. By default it uses a dedicated image model, chosen
+automatically or set with `experimental.image_generate.model` as
+`providerID/modelID[#variant]`.
+
+A chat model can also generate images through its provider's hosted
+`image_generation` tool instead. This is opt-in per model: set
+`compatibility.hostedImageTools: ["image_generation"]` on the model when its
+endpoint runs the tool server-side, typically through a Responses-compatible
+`/responses` route. Selecting such a model never falls back to a different
+provider or model; a hosted call runs on that model's own endpoint or fails
+with a clear error.
+
+```jsonc
+{
+  "provider": {
+    "mygateway": {
+      "models": {
+        "luna": {
+          "compatibility": { "hostedImageTools": ["image_generation"] },
+        },
+      },
+    },
+  },
+}
+```
+
+See the [image generation docs](https://opencode.ai/v2/docs/config#image-generation)
+for the full behavior.
+
 OAuth credentials are stored outside the OpenCode configuration. Do not ask for or
 store an API key when the server supports OAuth. Use header-based credentials
 only when OAuth is unavailable or the user explicitly requires them, and use an

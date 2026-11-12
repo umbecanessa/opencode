@@ -196,7 +196,7 @@ function overlayProvider(
     if (item.canonical !== undefined) provider.canonical = item.canonical
     if (item.name) provider.name = item.name
     if (item.package !== undefined) provider.package = item.package
-    if (item.compatibility !== undefined) provider.compatibility = { ...provider.compatibility, ...item.compatibility }
+    if (item.compatibility !== undefined) provider.compatibility = Object.assign({ ...provider.compatibility }, item.compatibility)
     if (item.settings !== undefined) provider.settings = Provider.mergeOverlay(provider.settings, item.settings)
     if (item.headers !== undefined) provider.headers = Provider.mergeHeaders(provider.headers, item.headers)
     if (item.body !== undefined) provider.body = Provider.mergeOverlay(provider.body, item.body)
@@ -225,7 +225,7 @@ function overlay(
     if (config.name) model.name = config.name
     if (config.modelID !== undefined) model.modelID = config.modelID
     if (config.releaseDate !== undefined) model.time = { released: Date.parse(config.releaseDate) }
-    if (config.compatibility !== undefined) model.compatibility = { ...model.compatibility, ...config.compatibility }
+    if (config.compatibility !== undefined) model.compatibility = Object.assign({ ...model.compatibility }, config.compatibility)
     if (config.package !== undefined) model.package = config.package
     if (config.settings !== undefined) model.settings = Provider.mergeOverlay(model.settings, config.settings)
     if (config.headers !== undefined) model.headers = Provider.mergeHeaders(model.headers, config.headers)

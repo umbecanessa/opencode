@@ -65,6 +65,7 @@ const generateLayer = Layer.succeed(
   Generate.Service.of({
     text: () => Effect.succeed(""),
     image: () => Effect.die("unused"),
+    hostedImage: () => Effect.die("unused"),
     decisions: () => Effect.die("unused"),
   }),
 )

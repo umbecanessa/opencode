@@ -436,6 +436,18 @@ export const resolveModel = (
   dependencies?: Dependencies,
 ) => withVariant(model, variant).pipe(Effect.flatMap((model) => fromCatalogModel(model, credential, dependencies)))
 
+/**
+ * The model an image-generating chat call should resolve. Hosted `image_generation` runs on the provider's
+ * Responses endpoint, so a package with a built-in `/responses` sibling uses it; other packages already speak
+ * their protocol's hosted-tool vocabulary or fail explicitly at request time. No fallback beyond this: an
+ * endpoint that cannot run the hosted tool never silently becomes another endpoint.
+ */
+export const withHostedImagesPackage = (model: Info) => {
+  if (model.package === undefined) return model
+  const responses = `${model.package}/responses`
+  return Provider.builtinPackages.has(responses) ? { ...model, package: responses } : model
+}
+
 export const hasPackage = (model: Info) => Boolean(model.package)
 
 /** Resolves catalog selections into runtime models for the current Location. */

@@ -715,6 +715,27 @@ picks another image model automatically.
 }
 ```
 
+A chat model can also generate images through its provider's hosted `image_generation` tool instead of a dedicated
+image model. This is opt-in per model: set `compatibility.hostedImageTools` to `["image_generation"]` when the model's
+endpoint runs the tool server-side, typically through a Responses-compatible `/responses` route.
+
+```jsonc
+{
+  "provider": {
+    "mygateway": {
+      "models": {
+        "luna": {
+          "compatibility": { "hostedImageTools": ["image_generation"] },
+        },
+      },
+    },
+  },
+}
+```
+
+Selecting such a model, as the configured default or per call, never falls back to a different provider or model: a
+hosted call either runs on that model's own endpoint or fails with a clear error.
+
 ### Location idle timeout
 
 `location_idle_timeout` controls how long a project location can go without session activity before OpenCode unloads

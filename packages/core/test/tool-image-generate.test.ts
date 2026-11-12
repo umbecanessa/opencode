@@ -67,6 +67,14 @@ const it = testEffect(
               Effect.suspend(() => (fixture.failure ? Effect.fail(fixture.failure) : Effect.succeed(fixture.result))),
             ),
           ),
+        // Hosted calls carry no `n`; tests tell the routes apart by that field.
+        hostedImage: (input) =>
+          Effect.sync(() => fixture.requests.push(input)).pipe(
+            Effect.andThen(Effect.suspend(() => fixture.gate)),
+            Effect.andThen(
+              Effect.suspend(() => (fixture.failure ? Effect.fail(fixture.failure) : Effect.succeed(fixture.result))),
+            ),
+          ),
         decisions: () => Effect.die("unused"),
       }),
     ),
@@ -83,6 +91,22 @@ const imageModel = (providerID: string, id: string, update: (model: Model.Mutabl
       }),
     )
   })
+
+const chatModel = (providerID: string, id: string, update: (model: Model.MutableInfo) => void = () => {}) =>
+  Effect.gen(function* () {
+    const catalog = yield* Provider.Service
+    yield* catalog.transform((editor) =>
+      editor.models.update(Provider.ID.make(providerID), Model.ID.make(id), (model) => {
+        model.type = "chat"
+        update(model)
+      }),
+    )
+  })
+
+const hosted = (model: Model.MutableInfo) => {
+  model.compatibility = { ...model.compatibility, hostedImageTools: ["image_generation"] }
+  model.capabilities.input = ["text", "image"]
+}
 
 const setup = (providerID = "test") =>
   Effect.gen(function* () {
@@ -437,6 +461,60 @@ describe("experimental_image_generate", () => {
       expect(text(fallback)).toContain('test/painter#bogus has no variant "bogus"; used ')
       yield* notice(fallback)
       expect(fixture.requests.at(-1)?.model.variant).toBeUndefined()
+    }),
+  )
+
+  it.live("runs an explicitly selected chat model through hosted image generation", () =>
+    Effect.gen(function* () {
+      yield* chatModel("test", "luna", hosted)
+      const { run, notice, directory } = yield* setup()
+      expect(yield* until(true)).toBe(true)
+      yield* Effect.promise(() => fs.writeFile(path.join(directory, "in.png"), Buffer.from(PNG, "base64")))
+
+      const result = yield* run({ prompt: "x", model: "test/luna" })
+      expect(result.output).toMatchObject({ model: "test/luna" })
+      yield* notice(result)
+      // The hosted request carries no `n`: the dedicated image route was not taken.
+      expect(fixture.requests.at(-1)?.n).toBeUndefined()
+      expect(fixture.requests.at(-1)?.images).toBeUndefined()
+
+      // Edits route hosted too, with the input images passed through.
+      const edit = yield* run({ prompt: "x", model: "test/luna", images: ["in.png"], path: "out.png" })
+      yield* notice(edit)
+      expect(fixture.requests.at(-1)?.n).toBeUndefined()
+      expect(fixture.requests.at(-1)?.images).toEqual([{ data: PNG, mime: "image/png", name: "in.png" }])
+      expect((yield* Effect.promise(() => fs.readFile(path.join(directory, "out.png")))).toString("base64")).toBe(PNG)
+
+      expect(failure(yield* run({ prompt: "x", model: "test/luna#bogus" }))).toBe(
+        'Model "test/luna" has no variants. Omit the variant.',
+      )
+    }),
+  )
+
+  it.live("falls back to the session model's hosted route when no image model exists", () =>
+    Effect.gen(function* () {
+      // setup()'s session model is test/chat; giving it the hosted flag makes it the fallback.
+      yield* chatModel("test", "chat", hosted)
+      const { run, notice } = yield* setup()
+      expect(yield* until(true)).toBe(true)
+      const result = yield* run({ prompt: "x" })
+      expect(result.output).toMatchObject({ model: "test/chat" })
+      expect(text(result)).toContain("because no image model is available")
+      yield* notice(result)
+      expect(fixture.requests.at(-1)?.n).toBeUndefined()
+    }),
+  )
+
+  it.live("fails a hosted chat model that lacks the capability without trying image providers", () =>
+    Effect.gen(function* () {
+      yield* imageModel("test", "painter")
+      yield* chatModel("test", "plain", (model) => {
+        model.capabilities.input = ["text", "image"]
+      })
+      const { run } = yield* setup()
+      expect(yield* until(true)).toBe(true)
+      expect(failure(yield* run({ prompt: "x", model: "test/plain" }))).toContain("is not an available image model")
+      expect(fixture.requests).toEqual([])
     }),
   )
 

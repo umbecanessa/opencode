@@ -163,7 +163,8 @@ for providers, selection, rate limits, and disabling the tool.
 
 `experimental_image_generate` creates a new image from a prompt, or edits
 existing ones. It is experimental and appears while a connected provider has an
-image model. To choose its default model, see
+image model, or a chat model configured for hosted image generation. To choose
+its default model, see
 [`experimental.image_generate`](/config#image-generation).
 
 ```text
@@ -173,6 +174,11 @@ Generate a flat app icon of a paper plane on a blue background and save it to as
 Give it a `prompt`, and optionally `images` to edit or use as references, a
 specific `model`, or a `path` to save to. It runs in the background and
 notifies the session with the saved path when the image is ready.
+
+A chat model whose provider runs `image_generation` server-side takes the same
+call through its own endpoint when it is configured with
+`compatibility.hostedImageTools`, see
+[config](/config#image-generation); it never reroutes to a different model.
 
 Permission: `experimental_image_generate` with the selected model as its resource.
 

@@ -1,6 +1,7 @@
 export * as Generate from "./generate.js"
 
-import { ai, AIError, DecisionClient, ImageClient, LLMClient, Media } from "@opencode/ai/effect"
+import { ai, AIError, DecisionClient, ImageClient, LLMClient, Media, Message } from "@opencode/ai/effect"
+import { OpenAI } from "@opencode/ai/providers"
 import type { DecisionRequest, DecisionResult, ImageRequest, ImageResult } from "@opencode/schema/generate"
 import { Money } from "@opencode/schema/money"
 import { SessionID } from "@opencode/schema/session-id"
@@ -16,6 +17,13 @@ import { ModelRetry } from "./model-retry.js"
 export interface TextInput {
   readonly prompt: string
   readonly model?: Model.Ref
+}
+
+/** A hosted image call on a chat model; the same fields `image` takes, minus dedicated-image options. */
+export interface HostedImageRequest {
+  readonly model: Model.Ref
+  readonly prompt: string
+  readonly images?: ReadonlyArray<{ readonly data: string; readonly mime: string; readonly name?: string }>
 }
 
 export class UnavailableError extends Schema.TaggedError<UnavailableError>()("Generate.UnavailableError", {
@@ -73,6 +81,8 @@ export type Error =
 export interface Interface {
   readonly text: (input: TextInput) => Effect.Effect<string, Error>
   readonly image: (input: ImageRequest) => Effect.Effect<ImageResult, Error>
+  /** A chat model's provider-executed `image_generation`; only for models configured with `compatibility.hostedImageTools`. */
+  readonly hostedImage: (input: HostedImageRequest) => Effect.Effect<ImageResult, Error>
   readonly decisions: (input: DecisionRequest) => Effect.Effect<DecisionResult, Error>
 }
 
@@ -185,6 +195,67 @@ export const layer = Layer.effect(
       } satisfies ImageResult
     })
 
+    const hostedImage = Effect.fn("Generate.hostedImage")(function* (input: HostedImageRequest) {
+      const info = yield* models.get(input.model.providerID, input.model.id)
+      if (!info || !info.enabled) return yield* missing(input.model, "image")
+      if (!Model.supportsHostedImages(info))
+        return yield* new UnsupportedModelError({
+          providerID: input.model.providerID,
+          modelID: input.model.id,
+          capability: "image",
+          message: `${input.model.providerID}/${input.model.id} is not configured for hosted image generation. Set compatibility.hostedImageTools: ["image_generation"] on the model when its endpoint runs image_generation server-side.`,
+        })
+      // The chat model's own resolution, moved to its Responses entrypoint; never a different provider or model.
+      const resolved = yield* resolver
+        .resolveModel(ModelResolver.withHostedImagesPackage(info), input.model.variant)
+        .pipe(Effect.mapError((error) => resolutionError(input.model, "image", error)))
+      const images = input.images?.map((file) => ({
+        type: "media" as const,
+        media: Media.base64(file.data, file.mime),
+        ...(file.name === undefined ? {} : { filename: file.name }),
+      }))
+      const tool = OpenAI.imageGeneration({ action: images === undefined || images.length === 0 ? "generate" : "edit" })
+      const response = yield* llm
+        .generate(
+          ai.request({
+            model: resolved.model,
+            ...(images === undefined || images.length === 0
+              ? { prompt: input.prompt }
+              : { messages: [Message.user([...images, { type: "text" as const, text: input.prompt }])] }),
+            tools: [tool],
+            toolChoice: tool,
+            // Gateways require session attribution even for a stateless call; no Session is stored.
+            http: { headers: { "x-opencode-session": SessionID.create() } },
+          }),
+        )
+        .pipe(
+          ModelRetry.retryOneShot,
+          Effect.mapError((error) => providerError(resolved.ref, error)),
+        )
+      const outputs = response.events.flatMap((event) =>
+        event.type === "tool-result" && event.providerExecuted === true && event.result.type === "content"
+          ? event.result.value.flatMap((part) => {
+              if (part.type !== "file") return []
+              const image = parseImageDataUrl(part.uri)
+              return image === undefined ? [] : [{ type: "image" as const, ...image }]
+            })
+          : [],
+      )
+      if (outputs.length === 0)
+        return yield* new ProviderRequestError({
+          providerID: resolved.ref.providerID,
+          reason: "provider",
+          message: `${resolved.ref.providerID}/${resolved.ref.id} ran image_generation but returned no image.`,
+        })
+      const usage = response.usage
+      return {
+        images: outputs.slice(0, 1),
+        ...(usage?.inputTokens === undefined && usage?.outputTokens === undefined
+          ? {}
+          : { tokens: { input: usage.inputTokens, output: usage.outputTokens } }),
+      } satisfies ImageResult
+    })
+
     const decisions = Effect.fn("Generate.decisions")(function* (input: DecisionRequest) {
       const model = yield* resolver
         .resolveDecision(input.model)
@@ -225,6 +296,7 @@ export const layer = Layer.effect(
     return Service.of({
       text: (input) => credentials(runText(input)),
       image: (input) => credentials(image(input)),
+      hostedImage: (input) => credentials(hostedImage(input)),
       decisions: (input) => credentials(decisions(input)),
     })
   }),
@@ -233,6 +305,12 @@ export const layer = Layer.effect(
 // Provider metadata may hold undefined fields, which the JSON response schema rejects.
 function plainJson(value: Record<string, unknown>): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value))
+}
+
+function parseImageDataUrl(value: string): { data: string; mime: string } | undefined {
+  const match = /^data:([^;,]+)[^,]*;base64,([A-Za-z0-9+/=\s]+)$/.exec(value)
+  if (!match) return undefined
+  return { data: match[2].replace(/\s/g, ""), mime: match[1] }
 }
 
 function resolutionError(ref: Model.Ref, type: string, error: ModelResolver.Error) {
