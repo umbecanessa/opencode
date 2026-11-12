@@ -718,6 +718,7 @@ export type ModelCompatibility = {
   supportsThinkingBlockBinding?: boolean
   supportsEffortUpdates?: boolean
   mediaInput?: ModelMediaInput
+  hostedImageTools?: Array<string>
 }
 
 export type ProviderCompatibility = {
@@ -730,6 +731,7 @@ export type ProviderCompatibility = {
   streamUsage?: boolean
   cacheFormat?: ModelCacheFormat
   mediaInput?: ModelMediaInput
+  hostedImageTools?: Array<string>
 }
 
 export type ModelCost = {

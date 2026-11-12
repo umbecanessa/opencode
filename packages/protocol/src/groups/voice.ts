@@ -191,7 +191,7 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         identifier: "experimental.voice.accept",
         summary: "Accept a pending voice note into a session",
         description:
-          "Experimental: may change without compatibility guarantees. Moves a pending Voice Inbox note into the target session as durable synthetic input and consumes the pending inbox item. Concurrent retries are safe: the admitted note keeps a stable per-session identity, so only the first accept wins. Notes already consumed (delivered, accepted, or remembered) fail with 400.",
+          "Experimental: may change without compatibility guarantees. Moves a pending Voice Inbox note into the target session as durable synthetic input and consumes the pending inbox item. The note steers by default (delivered before the model's next step) and wakes an idle target, so the model is aware of it promptly. Concurrent retries are safe: the admitted note keeps a stable per-session identity, so only the first accept wins. Notes already consumed (delivered, accepted, or remembered) fail with 400.",
       }),
     ),
   )

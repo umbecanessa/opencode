@@ -4,6 +4,7 @@ import { Job } from "@opencode/core/job"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-services"
 import { Memory } from "@opencode/core/memory/index"
+import { Project } from "@opencode/core/project"
 import { Session } from "@opencode/core/session"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Transcribe } from "@opencode/core/transcribe"
@@ -15,7 +16,7 @@ import { Global } from "@opencode/util/global"
 import { createHash } from "node:crypto"
 import { readdir, rm } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Schedule, Schema } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
 import { Api } from "../api"
 import { awaitPlugins, locationErrors } from "../location"
@@ -144,8 +145,16 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
             const config = yield* Config.Service
             const generate = yield* Generate.Service
             const transcribe = yield* Transcribe.Service
-            if (Config.latest(yield* config.entries(), "experimental")?.voice === false)
+            const project = yield* Project.Service
+            const voiceConfig = Config.latest(yield* config.entries(), "experimental")?.voice
+            if (voiceConfig === false)
               return yield* new ServiceUnavailableError({ message: "Voice transcription is disabled by config", service: "voice" })
+            // Same resolution as the Transcribe service itself (core/transcribe.ts): the configured
+            // endpoint or the local whisper default. Used only to probe reachability after a failure.
+            const transcribeUrl =
+              typeof voiceConfig === "object" && voiceConfig.transcribe?.url
+                ? voiceConfig.transcribe.url
+                : "http://127.0.0.1:8080/v1"
             const sessionID = payload.sessionID ?? VoiceInboxSessionID
             if (payload.sessionID === undefined) {
               // Adoption is idempotent: the first transcribe creates the Voice Inbox, later ones return the row.
@@ -171,10 +180,29 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
               },
               run: Effect.gen(function* () {
                 // Transcribe reads the absolute path fs.write returned; recordings are minutes of MP3, so one read is fine.
-                const transcribed = yield* transcribe.file({
+                const fileInput = {
                   path: payload.audioPath,
                   ...(payload.language === undefined ? {} : { language: payload.language }),
-                })
+                }
+                const transcribed = yield* transcribe.file(fileInput).pipe(
+                  // A host reboot takes a local whisper down and nothing respawns it, so a job that
+                  // fired during the outage would lose the card on a plain ECONNREFUSED. After a
+                  // failed attempt: an endpoint that answers means a transcriber-side failure and
+                  // fails as before; silence means the listener is down, so wait for a restart or
+                  // lazy launch to bring it back and give the clip one retry.
+                  Effect.catchTag("Transcribe.UnavailableError", (error) =>
+                    Effect.gen(function* () {
+                      if (yield* probeTranscriber(transcribeUrl)) return yield* Effect.fail(error)
+                      yield* Effect.logWarning("transcriber endpoint unreachable; waiting for it to return", {
+                        url: transcribeUrl,
+                        audioPath: payload.audioPath,
+                      })
+                      if (!(yield* waitForTranscriber(transcribeUrl))) return yield* Effect.fail(error)
+                      yield* Effect.logInfo("transcriber endpoint is back; retrying the clip", { audioPath: payload.audioPath })
+                      return yield* transcribe.file(fileInput)
+                    }),
+                  ),
+                )
                 // Whisper hallucinates confident text over near-silence; a segment that claims
                 // speech past the end of the file (observed: 27.1s on a 9.1s clip) is that tell.
                 const silent = isSilenceHallucination(transcribed, payload.duration)
@@ -183,11 +211,21 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                     audioPath: payload.audioPath,
                     duration: payload.duration,
                   })
+                // Real projects only: the model chooses from projects that actually exist on this
+                // host (or nothing), so the card's chip names something the user can route to.
+                const projectNames = silent
+                  ? []
+                  : yield* project
+                      .list()
+                      .pipe(
+                        Effect.map((infos) => [...new Set(infos.map((info) => (info.name ?? info.id) as string))].slice(0, 80)),
+                        Effect.catch(() => Effect.succeed([] as string[])),
+                      )
                 // Enrichment is best-effort: a missing or misbehaving chat model must not lose the transcript.
                 const enrichment = silent
                   ? undefined
                   : yield* generate
-                      .text({ prompt: enrichPrompt(transcribed.text) })
+                      .text({ prompt: enrichPrompt(transcribed.text, projectNames) })
                       .pipe(
                         Effect.flatMap(parseEnrichment),
                         Effect.tapError((error) =>
@@ -239,6 +277,9 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
               .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
             // Re-accept into the same session is idempotent: the derived ID matches the
             // natural (session, recording) derivation, so Session ignores the retry.
+            // Steer delivery + wake: the note must reach the model before its next step
+            // (an idle target absorbs it immediately); queue semantics left the note stuck in
+            // the session's Updates while the model already answered without it.
             const moved = yield* session
               .synthetic({
                 sessionID: request.payload.sessionID,
@@ -246,8 +287,7 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                 text: item.payload.text,
                 ...(item.payload.description === undefined ? {} : { description: item.payload.description }),
                 ...(item.payload.metadata === undefined ? {} : { metadata: item.payload.metadata }),
-                delivery: request.payload.delivery ?? "queue",
-                resume: false,
+                delivery: request.payload.delivery ?? "steer",
               })
               .pipe(
                 Effect.catchTag("Session.NotFoundError", missingSession),
@@ -343,6 +383,32 @@ function isSilenceHallucination(audio: Transcribe.Audio, duration?: number) {
   return (audio.segments ?? []).some((segment) => segment.end > floor + 2)
 }
 
+// Recovery waits are human-scale: a wrapper restart or the desktop's lazy launch can take
+// minutes. The wait runs on this clip's own job fiber, so it costs no other job any latency.
+const TRANSCRIBER_WAIT = 10 * 60_000
+
+// One cheap GET against the transcriber base: any HTTP answer — 404, 401, anything — means a
+// process listens there; only connection-level failure answers false.
+function probeTranscriber(url: string) {
+  return Effect.promise(async () => {
+    try {
+      await fetch(url, { method: "GET", signal: AbortSignal.timeout(2_000) })
+      return true
+    } catch {
+      return false
+    }
+  })
+}
+
+function waitForTranscriber(url: string) {
+  return probeTranscriber(url).pipe(
+    Effect.repeat({ until: (up: boolean) => up, schedule: Schedule.fixed("5 seconds") }),
+    Effect.as(true),
+    Effect.timeout(TRANSCRIBER_WAIT),
+    Effect.catch(() => Effect.succeed(false)),
+  )
+}
+
 /** Models wrap JSON in fences or prose; only the object itself is interesting. */
 function parseEnrichment(raw: string): Effect.Effect<Schema.Schema.Type<typeof Enrichment>, Error> {
   const parsed = decodeEnrichment(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1))
@@ -366,13 +432,15 @@ const purgeExpiredRecordings = Effect.fn("voice.purgeExpiredRecordings")(functio
   )
 })
 
-function enrichPrompt(transcript: string) {
+function enrichPrompt(transcript: string, projects: ReadonlyArray<string>) {
   return [
     "You enrich voice-note transcripts for a personal knowledge inbox.",
     "Reply with only a JSON object, no prose, with optional keys:",
     '"summary": one or two sentences of what was said;',
     '"todos": array of imperative action items explicitly mentioned (omit if none);',
-    '"project": short lowercase-hyphenated project name this note most belongs to (omit if unclear).',
+    projects.length
+      ? `"project": exactly one of these existing project names, choosing the one the note most clearly belongs to: ${projects.join(", ")} — omit the key if none fits; never invent a new name.`
+      : '"project": omit (no projects exist on this host yet).',
     "Transcript:",
     transcript.slice(0, 8000),
   ].join("\n")

@@ -2,9 +2,14 @@ import fs from "node:fs/promises"
 import path from "node:path"
 import { expect } from "bun:test"
 import { Generate } from "@opencode/core/generate"
+import { llmClient } from "@opencode/core/effect/app-node-platform"
+import { SessionRunnerModel } from "@opencode/core/session/runner/model"
 import { Voice } from "@opencode/core/voice"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Effect, Layer, Schedule } from "effect"
+import { LanguageModel, LLMClient } from "../../ai/src/effect"
+import { OpenAIChat } from "../../ai/src/protocols/openai-chat"
+import { TestLLM } from "../../ai/src/testing"
 import { tmpdir } from "../../core/test/fixture/tmpdir"
 import { it } from "../../core/test/lib/effect"
 import { ServerFetch } from "../src/fetch"
@@ -314,6 +319,82 @@ it.live(
 )
 
 it.live(
+  "waits for the transcriber to come back and still delivers the note",
+  () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-revive-")))
+      const global = path.join(tmp.path, "global")
+      yield* Effect.promise(() => fs.mkdir(global))
+      // Grab a free port, then vacate it: the job starts against a dead endpoint (the desktop
+      // reboot case) and the mock is revived on that same port mid-wait (wrapper restart).
+      const grabber = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() })
+      const whisperPort = grabber.port
+      grabber.stop()
+      let revived: ReturnType<typeof Bun.serve> | undefined
+      yield* Effect.addFinalizer(() => Effect.sync(() => revived?.stop()))
+      const handler = yield* ServerFetch.make(
+        {
+          database: { path: ":memory:" },
+          config: {
+            directory: global,
+            content: JSON.stringify({ experimental: { voice: { transcribe: { url: `http://127.0.0.1:${whisperPort}/v1` } } } }),
+          },
+          fs: { filewatcher: false },
+          models: { fetch: false },
+        },
+        { overrides: [Generate.node.replace(generate)] },
+      )
+      const send = (pathname: string, init?: RequestInit) =>
+        Effect.promise(() => handler(new Request(`http://opencode.local${pathname}`, init)))
+
+      const upload = yield* send("/api/experimental/fs/write?path=" + encodeURIComponent(path.join(global, "voice", "late.mp3")), {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00]),
+      })
+      expect(upload.status).toBe(200)
+      const audioPath = ((yield* Effect.promise(() => upload.json())) as { data: { path: string } }).data.path
+
+      const transcribeRes = yield* send("/api/experimental/voice/transcribe", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audioPath, recordingId: "20261104revive", itemId: "msg_voice_revive", duration: 3 }),
+      })
+      expect(transcribeRes.status).toBe(200)
+
+      // The job's first attempt just failed on the dead port and is now polling it; bring the
+      // transcriber back so a later probe succeeds and the retry delivers.
+      yield* Effect.sleep("500 millis")
+      revived = Bun.serve({
+        hostname: "127.0.0.1",
+        port: whisperPort,
+        fetch(request) {
+          if (!new URL(request.url).pathname.endsWith("/audio/transcriptions")) return new Response("not found", { status: 404 })
+          return Response.json({
+            text: "the clip survived the reboot",
+            language: "en",
+            segments: [{ id: 0, start: 0, end: 2.5, text: "the clip survived the reboot" }],
+          })
+        },
+      })
+
+      const item = yield* Effect.gen(function* () {
+        const inbox = yield* send("/api/session/ses_voice_inbox/inbox")
+        expect(inbox.status).toBe(200)
+        const entries = ((yield* Effect.promise(() => inbox.json())) as {
+          data: Array<{ id: string; payload: { text: string; metadata: Record<string, unknown> } }>
+        }).data
+        const found = entries.find((entry) => entry.id === "msg_voice_revive")
+        if (found === undefined) return yield* Effect.fail("pending")
+        return found
+      }).pipe(Effect.retry(Schedule.spaced("250 millis")), Effect.timeout("30 seconds"))
+      expect(item.payload.text).toContain("the clip survived the reboot")
+      expect(item.payload.metadata.recordingId).toBe("20261104revive")
+    }),
+  { timeout: 60_000 },
+)
+
+it.live(
   "gates a silent clip when whisper hallucinates low-confidence text",
   () =>
     Effect.gen(function* () {
@@ -428,6 +509,14 @@ it.live("routes pending voice notes to sessions or project memory", () =>
       await fs.mkdir(global)
       await fs.mkdir(project)
     })
+    // Accept steers and wakes the target session, so the accept starts a real runner drain.
+    // Stub the model layer (like session-instances.test.ts) so the drain answers with an
+    // immediate stop instead of reaching the network the harness guards.
+    const llm = yield* TestLLM.Test.pipe(Effect.provide(TestLLM.testLayer({ fallback: TestLLM.stop() })))
+    const runnerModel = SessionRunnerModel.resolved(
+      LanguageModel.make({ id: "voice-test-model", provider: "test", route: OpenAIChat.route }),
+      { capabilities: { tools: true, input: ["text"], output: ["text"] }, cost: [], limit: { context: 200_000, output: 8_192 } },
+    )
     const handler = yield* ServerFetch.make(
       {
         database: { path: ":memory:" },
@@ -435,7 +524,14 @@ it.live("routes pending voice notes to sessions or project memory", () =>
         fs: { filewatcher: false },
         models: { fetch: false },
       },
-      { overrides: [Voice.node.replace(voice)] },
+      {
+        overrides: [
+          Voice.node.replace(voice),
+          Generate.node.replace(generate),
+          llmClient.replace(Layer.succeed(LLMClient.Service, llm)),
+          SessionRunnerModel.node.replace(Layer.succeed(SessionRunnerModel.Service, { resolve: () => Effect.succeed(runnerModel) })),
+        ],
+      },
     )
     const post = (pathname: string, body: unknown) =>
       Effect.promise(() =>
@@ -469,9 +565,13 @@ it.live("routes pending voice notes to sessions or project memory", () =>
     expect(movedData.data.sessionID).toBe(target)
     expect(movedData.data.payload.metadata.recordingId).toBe("20261104move")
     expect((yield* pendingIDs).size).toBe(0)
-    const targetInboxRes = yield* get(`/api/session/${target}/inbox`)
-    const targetInbox = (yield* Effect.promise(() => targetInboxRes.json())) as { data: { type: string }[] }
-    expect(targetInbox.data.filter((entry) => entry.type === "synthetic").length).toBe(1)
+    // The accept steers and wakes the target: the note is delivered into the session promptly
+    // (gone from its undelivered inbox), not parked until the run happens to end.
+    yield* Effect.gen(function* () {
+      const targetInboxRes = yield* get(`/api/session/${target}/inbox`)
+      const targetInbox = (yield* Effect.promise(() => targetInboxRes.json())) as { data: { type: string }[] }
+      if (targetInbox.data.filter((entry) => entry.type === "synthetic").length !== 0) return yield* Effect.fail("undelivered")
+    }).pipe(Effect.retry(Schedule.spaced("100 millis")), Effect.timeout("30 seconds"))
 
     // A consumed note cannot be accepted again.
     expect((yield* post("/api/experimental/voice/accept", { itemId: [...afterIngest][0], sessionID: target })).status).toBe(400)
