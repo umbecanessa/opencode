@@ -94,6 +94,19 @@ export const VoiceTranscribeInput = Schema.Struct({
   delivery: SessionInbox.Delivery.pipe(Schema.optional),
 }).annotate({ identifier: "VoiceTranscribeInput" })
 
+export interface VoiceAcceptInput extends Schema.Schema.Type<typeof VoiceAcceptInput> {}
+export const VoiceAcceptInput = Schema.Struct({
+  itemId: SessionMessage.ID,
+  sessionID: Session.ID,
+  delivery: SessionInbox.Delivery.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceAcceptInput" })
+
+export interface VoiceRememberInput extends Schema.Schema.Type<typeof VoiceRememberInput> {}
+export const VoiceRememberInput = Schema.Struct({
+  itemId: SessionMessage.ID,
+  directory: Schema.String.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceRememberInput" })
+
 export const VoiceGroup = HttpApiGroup.make("server.voice")
   .add(
     HttpApiEndpoint.get("voice.models", "/api/experimental/voice/models", {
@@ -165,6 +178,34 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         summary: "Transcribe uploaded voice recording",
         description:
           "Experimental: may change without compatibility guarantees. Starts a server-side job that transcribes audio previously uploaded to `audioPath` with the configured local whisper endpoint, enriches it with a summary and todos, and admits it as pending synthetic session input without waking execution. Returns immediately with the job id and the target session.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("voice.accept", "/api/experimental/voice/accept", {
+      payload: VoiceAcceptInput,
+      success: Schema.Struct({ data: SessionInbox.Synthetic }),
+      error: [InvalidRequestError, ConflictError, SessionNotFoundError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.accept",
+        summary: "Accept a pending voice note into a session",
+        description:
+          "Experimental: may change without compatibility guarantees. Moves a pending Voice Inbox note into the target session as durable synthetic input and consumes the pending inbox item. Concurrent retries are safe: the admitted note keeps a stable per-session identity, so only the first accept wins. Notes already consumed (delivered, accepted, or remembered) fail with 400.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("voice.remember", "/api/experimental/voice/remember", {
+      payload: VoiceRememberInput,
+      success: Schema.Struct({ data: Schema.Struct({ remembered: Schema.Boolean }) }),
+      error: [InvalidRequestError, SessionNotFoundError, ServiceUnavailableError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.remember",
+        summary: "Remember a pending voice note for a project",
+        description:
+          "Experimental: may change without compatibility guarantees. Writes a pending Voice Inbox note into the memory graph of the project at `directory` (server home project when omitted) and consumes the pending inbox item, without delivering the note to any session.",
       }),
     ),
   )

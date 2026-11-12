@@ -311,3 +311,78 @@ it.live(
     }),
   { timeout: 45_000 },
 )
+
+it.live("routes pending voice notes to sessions or project memory", () =>
+  Effect.gen(function* () {
+    const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-triage-")))
+    const global = path.join(tmp.path, "global")
+    const project = path.join(tmp.path, "project")
+    yield* Effect.promise(async () => {
+      await fs.mkdir(global)
+      await fs.mkdir(project)
+    })
+    const handler = yield* ServerFetch.make(
+      {
+        database: { path: ":memory:" },
+        config: { directory: global },
+        fs: { filewatcher: false },
+        models: { fetch: false },
+      },
+      { overrides: [Voice.node.replace(voice)] },
+    )
+    const post = (pathname: string, body: unknown) =>
+      Effect.promise(() =>
+        handler(
+          new Request(`http://opencode.local${pathname}`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        ),
+      )
+    const get = (pathname: string) => Effect.promise(() => handler(new Request(`http://opencode.local${pathname}`)))
+    const pendingIDs = Effect.map(
+      Effect.flatMap(get("/api/session/ses_voice_inbox/inbox"), (res) =>
+        Effect.promise(() => res.json() as Promise<{ data: { id: string }[] }>),
+      ),
+      (body) => new Set(body.data.map((entry) => entry.id)),
+    )
+
+    const createRes = yield* post("/api/session", { location: { directory: project } })
+    expect(createRes.ok).toBe(true)
+    const target = ((yield* Effect.promise(() => createRes.json())) as { data: { id: string } }).data.id
+
+    // Accept moves the note: it lands in the target session's inbox and leaves the Voice Inbox.
+    yield* post("/api/experimental/voice/ingest", { transcript: "triage me", recordingId: "20261104move", title: "Triage" })
+    const afterIngest = yield* pendingIDs
+    expect(afterIngest.size).toBe(1)
+    const accepted = yield* post("/api/experimental/voice/accept", { itemId: [...afterIngest][0], sessionID: target })
+    expect(accepted.status).toBe(200)
+    const movedData = (yield* Effect.promise(() => accepted.json())) as { data: { sessionID: string; payload: { metadata: Record<string, unknown> } } }
+    expect(movedData.data.sessionID).toBe(target)
+    expect(movedData.data.payload.metadata.recordingId).toBe("20261104move")
+    expect((yield* pendingIDs).size).toBe(0)
+    const targetInboxRes = yield* get(`/api/session/${target}/inbox`)
+    const targetInbox = (yield* Effect.promise(() => targetInboxRes.json())) as { data: { type: string }[] }
+    expect(targetInbox.data.filter((entry) => entry.type === "synthetic").length).toBe(1)
+
+    // A consumed note cannot be accepted again.
+    expect((yield* post("/api/experimental/voice/accept", { itemId: [...afterIngest][0], sessionID: target })).status).toBe(400)
+
+    // An unknown target session fails on a still-pending note.
+    yield* post("/api/experimental/voice/ingest", { transcript: "orphan accept", recordingId: "20261104orphan" })
+    const orphan = [...(yield* pendingIDs)][0]
+    expect((yield* post("/api/experimental/voice/accept", { itemId: orphan, sessionID: "ses_missing" })).status).toBe(404)
+    expect((yield* post("/api/experimental/voice/accept", { itemId: orphan, sessionID: target })).status).toBe(200)
+    expect((yield* pendingIDs).size).toBe(0)
+
+    // Remember consumes the note without delivering it anywhere.
+    yield* post("/api/experimental/voice/ingest", { transcript: "remember me", recordingId: "20261104mem" })
+    const remembered = yield* pendingIDs
+    expect(remembered.size).toBe(1)
+    const rememberRes = yield* post("/api/experimental/voice/remember", { itemId: [...remembered][0], directory: project })
+    expect(rememberRes.status).toBe(200)
+    expect((yield* Effect.promise(() => rememberRes.json()))).toEqual({ data: { remembered: true } })
+    expect((yield* pendingIDs).size).toBe(0)
+  }),
+)

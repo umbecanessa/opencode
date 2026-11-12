@@ -3,6 +3,7 @@ import { Generate } from "@opencode/core/generate"
 import { Job } from "@opencode/core/job"
 import { Location } from "@opencode/core/location"
 import { LocationServiceMap } from "@opencode/core/location-services"
+import { Memory } from "@opencode/core/memory/index"
 import { Session } from "@opencode/core/session"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Transcribe } from "@opencode/core/transcribe"
@@ -26,6 +27,9 @@ const VoiceInboxSessionID = Session.ID.make("ses_voice_inbox")
 /** Shipped mp3s older than this are pruned opportunistically during transcribe jobs. */
 const RETENTION_DAYS = 30
 
+const rememberUnavailable = () =>
+  new ServiceUnavailableError({ message: "Memory is unavailable for that project", service: "memory" })
+
 const Enrichment = Schema.Struct({
   summary: Schema.optional(Schema.String),
   todos: Schema.optional(Schema.Array(Schema.String)),
@@ -40,6 +44,21 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
     const session = yield* Session.Service
     const jobs = yield* Job.Service
     const services = locations.get(Location.Ref.make({ directory: AbsolutePath.make(global.config) }))
+    // A pending card the user can still triage; already-delivered ones are intentionally out of scope.
+    const pendingVoiceNote = Effect.fn("voice.pendingVoiceNote")(function* (itemId: SessionMessage.ID) {
+      const inbox = yield* session.inbox(VoiceInboxSessionID).pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+      const item = inbox.find((entry) => entry.id === itemId && entry.type === "synthetic")
+      if (item === undefined || item.type !== "synthetic")
+        return yield* new InvalidRequestError({ message: `No pending voice note with id ${itemId}` })
+      return item
+    })
+    // Consume after a successful copy or memory write; a row already promoted or delivered has
+    // nothing pending left, which is the same end state this call is trying to reach.
+    const consumePendingNote = Effect.fn("voice.consumePendingNote")(function* (itemId: SessionMessage.ID) {
+      yield* session
+        .cancelInbox({ sessionID: VoiceInboxSessionID, inboxID: itemId })
+        .pipe(Effect.catch(() => Effect.void))
+    })
     return handlers
       .handle(
         "voice.models",
@@ -210,8 +229,94 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
           locationErrors,
         ),
       )
+      .handle(
+        "voice.accept",
+        Effect.fn("server.voice.accept")(
+          function* (request) {
+            const item = yield* pendingVoiceNote(request.payload.itemId)
+            yield* session
+              .get(request.payload.sessionID)
+              .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
+            // Re-accept into the same session is idempotent: the derived ID matches the
+            // natural (session, recording) derivation, so Session ignores the retry.
+            const moved = yield* session
+              .synthetic({
+                sessionID: request.payload.sessionID,
+                id: derivedID(request.payload.sessionID, noteKey(item)),
+                text: item.payload.text,
+                ...(item.payload.description === undefined ? {} : { description: item.payload.description }),
+                ...(item.payload.metadata === undefined ? {} : { metadata: item.payload.metadata }),
+                delivery: request.payload.delivery ?? "queue",
+                resume: false,
+              })
+              .pipe(
+                Effect.catchTag("Session.NotFoundError", missingSession),
+                Effect.catchTag("Session.SyntheticConflictError", (error) =>
+                  Effect.fail(
+                    new ConflictError({
+                      message: `Synthetic input ID conflicts with an existing durable record: ${error.inputID}`,
+                      resource: error.inputID,
+                    }),
+                  ),
+                ),
+                locationErrors,
+              )
+            yield* consumePendingNote(request.payload.itemId)
+            return { data: moved }
+          },
+          locationErrors,
+        ),
+      )
+      .handle(
+        "voice.remember",
+        Effect.fn("server.voice.remember")(
+          function* (request) {
+            const item = yield* pendingVoiceNote(request.payload.itemId)
+            const metadata = (item.payload.metadata ?? {}) as Record<string, unknown>
+            const title = typeof metadata.title === "string" && metadata.title !== "" ? metadata.title : `Voice note ${noteKey(item)}`
+            const summary = typeof metadata.summary === "string" ? metadata.summary : undefined
+            const audioPath = typeof metadata.audioPath === "string" ? metadata.audioPath : undefined
+            const text = [
+              summary && `Summary: ${summary}`,
+              `Transcript:\n${item.payload.text}`,
+              audioPath && `Audio: ${audioPath}`,
+            ]
+              .filter((section): section is string => Boolean(section))
+              .join("\n\n")
+            // Memory is location-scoped: the note belongs to the graph of the project that
+            // holds the recording, which is the directory the phone shipped files into.
+            const ref = Location.Ref.make({ directory: AbsolutePath.make(request.payload.directory ?? global.config) })
+            yield* Effect
+              .gen(function* () {
+                const memory = yield* Memory.Service
+                yield* memory.remember({ kind: "note", title, text, source: "capture", sessionID: String(VoiceInboxSessionID) })
+              })
+              .pipe(
+                Effect.provide(locations.get(ref)),
+                // Memory is a plugin service: an unconfigured or failing graph must surface as a
+                // clean dependency error, never as a handler defect or an undeclared error type.
+                Effect.catch(() => Effect.fail(rememberUnavailable())),
+                Effect.catchDefect(() => Effect.fail(rememberUnavailable())),
+              )
+            yield* consumePendingNote(request.payload.itemId)
+            return { data: { remembered: true } }
+          },
+          locationErrors,
+        ),
+      )
   }),
 )
+
+/** Stable per-session ID for a note key; the same formula across ingest, transcribe, and accept so retried routes collide into idempotent admission. */
+function derivedID(sessionID: Session.ID, key: string) {
+  return SessionMessage.ID.make(`msg_${createHash("sha256").update(`${sessionID}/${key}`).digest("hex").slice(0, 24)}`)
+}
+
+/** The identity a voice card carries across routes: its recording when known, else its pending item id. */
+function noteKey(item: { readonly id: SessionMessage.ID; readonly payload?: { readonly metadata?: Record<string, unknown> } }) {
+  const recordingId = item.payload?.metadata?.recordingId
+  return typeof recordingId === "string" && recordingId !== "" ? recordingId : item.id
+}
 
 /**
  * Stable synthetic input ID. Without an explicit itemId, one is derived from
@@ -223,7 +328,7 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
 function voiceItemID(sessionID: Session.ID, payload: { readonly itemId?: SessionMessage.ID; readonly recordingId?: string }) {
   if (payload.itemId !== undefined) return payload.itemId
   if (payload.recordingId === undefined) return undefined
-  return SessionMessage.ID.make(`msg_${createHash("sha256").update(`${sessionID}/${payload.recordingId}`).digest("hex").slice(0, 24)}`)
+  return derivedID(sessionID, payload.recordingId)
 }
 
 /** Whisper produces confident garbage over near-silence; a segment claiming speech past the file's end (observed: 27.1s on a 9.1s clip) is the tell. Empty text is its quiet cousin. */

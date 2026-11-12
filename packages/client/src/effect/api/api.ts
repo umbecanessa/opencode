@@ -1616,11 +1616,32 @@ export type ExperimentalVoiceTranscribeOperation<E = never> = (
   input: ExperimentalVoiceTranscribeInput,
 ) => Effect.Effect<ExperimentalVoiceTranscribeOutput, E>
 
+export type ExperimentalVoiceAcceptInput = {
+  readonly itemId: SessionMessage.ID
+  readonly sessionID: Session.ID
+  readonly delivery?: SessionInbox.Delivery | undefined
+}
+export type ExperimentalVoiceAcceptOutput = SessionInbox.Synthetic
+export type ExperimentalVoiceAcceptOperation<E = never> = (
+  input: ExperimentalVoiceAcceptInput,
+) => Effect.Effect<ExperimentalVoiceAcceptOutput, E>
+
+export type ExperimentalVoiceRememberInput = {
+  readonly itemId: SessionMessage.ID
+  readonly directory?: string | undefined
+}
+export type ExperimentalVoiceRememberOutput = { readonly remembered: boolean }
+export type ExperimentalVoiceRememberOperation<E = never> = (
+  input: ExperimentalVoiceRememberInput,
+) => Effect.Effect<ExperimentalVoiceRememberOutput, E>
+
 export interface ExperimentalVoiceApi<E = never> {
   readonly models: ExperimentalVoiceModelsOperation<E>
   readonly session: ExperimentalVoiceSessionOperation<E>
   readonly ingest: ExperimentalVoiceIngestOperation<E>
   readonly transcribe: ExperimentalVoiceTranscribeOperation<E>
+  readonly accept: ExperimentalVoiceAcceptOperation<E>
+  readonly remember: ExperimentalVoiceRememberOperation<E>
 }
 
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
@@ -3020,6 +3041,24 @@ export type VoiceTranscribeOutput = ExperimentalVoiceTranscribeOutput
 /** @deprecated Use `ExperimentalVoiceTranscribeOperation`. Removed in the next minor. */
 export type VoiceTranscribeOperation<E = never> = ExperimentalVoiceTranscribeOperation<E>
 
+/** @deprecated Use `ExperimentalVoiceAcceptInput`. Removed in the next minor. */
+export type VoiceAcceptInput = ExperimentalVoiceAcceptInput
+
+/** @deprecated Use `ExperimentalVoiceAcceptOutput`. Removed in the next minor. */
+export type VoiceAcceptOutput = ExperimentalVoiceAcceptOutput
+
+/** @deprecated Use `ExperimentalVoiceAcceptOperation`. Removed in the next minor. */
+export type VoiceAcceptOperation<E = never> = ExperimentalVoiceAcceptOperation<E>
+
+/** @deprecated Use `ExperimentalVoiceRememberInput`. Removed in the next minor. */
+export type VoiceRememberInput = ExperimentalVoiceRememberInput
+
+/** @deprecated Use `ExperimentalVoiceRememberOutput`. Removed in the next minor. */
+export type VoiceRememberOutput = ExperimentalVoiceRememberOutput
+
+/** @deprecated Use `ExperimentalVoiceRememberOperation`. Removed in the next minor. */
+export type VoiceRememberOperation<E = never> = ExperimentalVoiceRememberOperation<E>
+
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput
 
@@ -3193,6 +3232,12 @@ export interface AppApi<E = never> {
 
     /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
     readonly transcribe: ExperimentalVoiceTranscribeOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
+    readonly accept: ExperimentalVoiceAcceptOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */
+    readonly remember: ExperimentalVoiceRememberOperation<E>
   }
 
   /** @deprecated Use `client.experimental.migration`. Removed in the next minor. */

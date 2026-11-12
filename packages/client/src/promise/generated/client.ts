@@ -126,6 +126,10 @@ import type {
   ExperimentalVoiceIngestOutput,
   ExperimentalVoiceTranscribeInput,
   ExperimentalVoiceTranscribeOutput,
+  ExperimentalVoiceAcceptInput,
+  ExperimentalVoiceAcceptOutput,
+  ExperimentalVoiceRememberInput,
+  ExperimentalVoiceRememberOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1321,6 +1325,30 @@ export function make(options: ClientOptions) {
               },
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 409, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        accept: (input: ExperimentalVoiceAcceptInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceAcceptOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/voice/accept`,
+              body: { itemId: input["itemId"], sessionID: input["sessionID"], delivery: input["delivery"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 409],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        remember: (input: ExperimentalVoiceRememberInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceRememberOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/voice/remember`,
+              body: { itemId: input["itemId"], directory: input["directory"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
               empty: false,
             },
             requestOptions,
@@ -2808,6 +2836,10 @@ export function make(options: ClientOptions) {
       ingest: client.experimental.voice.ingest,
       /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
       transcribe: client.experimental.voice.transcribe,
+      /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
+      accept: client.experimental.voice.accept,
+      /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */
+      remember: client.experimental.voice.remember,
     },
     integration: {
       ...client.integration,

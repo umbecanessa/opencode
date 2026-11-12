@@ -4029,6 +4029,18 @@ export type ExperimentalVoiceTranscribeInput = {
 
 export type ExperimentalVoiceTranscribeOutput = VoiceTranscribeResponse["data"]
 
+export type ExperimentalVoiceAcceptInput = {
+  readonly itemId: string
+  readonly sessionID: string
+  readonly delivery?: ("steer" | "queue") | undefined
+}
+
+export type ExperimentalVoiceAcceptOutput = { data: SessionInboxSynthetic }["data"]
+
+export type ExperimentalVoiceRememberInput = { readonly itemId: string; readonly directory?: string | undefined }
+
+export type ExperimentalVoiceRememberOutput = { data: { remembered: boolean } }["data"]
+
 export type ProviderListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
 export type ProviderListOutput = { location: LocationPublicRef; data: Array<ProviderInfo> }
@@ -4999,6 +5011,18 @@ export type VoiceTranscribeInput = ExperimentalVoiceTranscribeInput
 
 /** @deprecated Use `ExperimentalVoiceTranscribeOutput`. Removed in the next minor. */
 export type VoiceTranscribeOutput = ExperimentalVoiceTranscribeOutput
+
+/** @deprecated Use `ExperimentalVoiceAcceptInput`. Removed in the next minor. */
+export type VoiceAcceptInput = ExperimentalVoiceAcceptInput
+
+/** @deprecated Use `ExperimentalVoiceAcceptOutput`. Removed in the next minor. */
+export type VoiceAcceptOutput = ExperimentalVoiceAcceptOutput
+
+/** @deprecated Use `ExperimentalVoiceRememberInput`. Removed in the next minor. */
+export type VoiceRememberInput = ExperimentalVoiceRememberInput
+
+/** @deprecated Use `ExperimentalVoiceRememberOutput`. Removed in the next minor. */
+export type VoiceRememberOutput = ExperimentalVoiceRememberOutput
 
 /** @deprecated Use `ExperimentalIntegrationWellknownAddInput`. Removed in the next minor. */
 export type IntegrationWellknownAddInput = ExperimentalIntegrationWellknownAddInput

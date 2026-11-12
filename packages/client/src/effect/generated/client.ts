@@ -132,6 +132,10 @@ import type {
   ExperimentalVoiceIngestOutput,
   ExperimentalVoiceTranscribeInput,
   ExperimentalVoiceTranscribeOutput,
+  ExperimentalVoiceAcceptInput,
+  ExperimentalVoiceAcceptOutput,
+  ExperimentalVoiceRememberInput,
+  ExperimentalVoiceRememberOutput,
   ProviderListInput,
   ProviderListOutput,
   ProviderGetInput,
@@ -1053,11 +1057,31 @@ const EndpointExperimentalVoiceTranscribe =
       ),
     )
 
+const EndpointExperimentalVoiceAccept = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceAcceptInput) =>
+  preserveEffect<ExperimentalVoiceAcceptOutput>()(
+    raw["voice.accept"]({
+      payload: { itemId: input["itemId"], sessionID: input["sessionID"], delivery: input["delivery"] },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalVoiceRemember = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceRememberInput) =>
+  preserveEffect<ExperimentalVoiceRememberOutput>()(
+    raw["voice.remember"]({ payload: { itemId: input["itemId"], directory: input["directory"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const adaptGroupExperimentalVoice = (raw: RawClient["server.voice"]) => ({
   models: EndpointExperimentalVoiceModels(raw),
   session: EndpointExperimentalVoiceSession(raw),
   ingest: EndpointExperimentalVoiceIngest(raw),
   transcribe: EndpointExperimentalVoiceTranscribe(raw),
+  accept: EndpointExperimentalVoiceAccept(raw),
+  remember: EndpointExperimentalVoiceRemember(raw),
 })
 
 const EndpointProviderList = (raw: RawClient["server.provider"]) => (input?: ProviderListInput) =>
@@ -2114,6 +2138,10 @@ const adaptClient = (raw: RawClient) => {
       ingest: client.experimental.voice.ingest,
       /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
       transcribe: client.experimental.voice.transcribe,
+      /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
+      accept: client.experimental.voice.accept,
+      /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */
+      remember: client.experimental.voice.remember,
     },
     integration: {
       ...client.integration,
