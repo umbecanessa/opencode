@@ -20,11 +20,13 @@ export default function Pocket() {
   // pocket is a fresh object each provider render; depending on it would re-fire the pull
   // on every state change, so the ref makes this a once-per-deep-link side effect.
   useEffect(() => {
-    if (params.action !== "pull" || autoFired.current) return
+    if (autoFired.current) return
+    if (params.action !== "pull" && params.action !== "record") return
     if (!pocket.device && !pocket.hasKey) return
     autoFired.current = true
-    if (pocket.device) pocket.pull()
-    else pocket.scan()
+    if (!pocket.device) pocket.scan()
+    else if (params.action === "record") (pocket.recording ? pocket.stopRecording : pocket.startRecording)()
+    else pocket.pull()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.action, pocket.device, pocket.hasKey])
 
@@ -138,6 +140,45 @@ export default function Pocket() {
       )}
 
       {pocket.device && (
+        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
+          <View style={styles.row}>
+            <View
+              style={[styles.icon, { backgroundColor: t.fill.tertiary }]}
+            >
+              <Ionicons name={pocket.recording ? "recording" : "mic-outline"} size={18} color={pocket.recording ? t.status.failed : t.tint} />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>
+                {pocket.recording ? "Recording…" : "Record remotely"}
+              </Text>
+              <Text style={[t.font.footnote, { color: t.tertiaryLabel }]} numberOfLines={2}>
+                {pocket.recording
+                  ? `On the device${pocket.recordingName ? ` · ${pocket.recordingName}` : ""} — closing this screen does not stop it.`
+                  : "Starts the recorder without touching it. Stopping ships the recording straight to the host."}
+              </Text>
+            </View>
+            {pocket.recBusy && <ActivityIndicator size="small" color={t.tint} />}
+          </View>
+          <Pressable
+            disabled={pocket.recBusy || pocket.busy}
+            onPress={pocket.recording ? pocket.stopRecording : pocket.startRecording}
+            style={({ pressed }) => [
+              styles.button,
+              {
+                backgroundColor: pocket.recBusy || pocket.busy ? t.fill.primary : pocket.recording ? t.status.failed : t.tint,
+                opacity: pressed ? 0.8 : 1,
+                transform: [{ scale: pressed ? 0.98 : 1 }],
+              },
+            ]}
+          >
+            <Text style={[t.font.headline, { color: pocket.recBusy || pocket.busy ? t.secondaryLabel : "#FFFFFF", fontWeight: "600" }]}>
+              {pocket.recBusy ? (pocket.recording ? "Stopping…" : "Starting…") : pocket.recording ? "Stop & ship" : "Start recording"}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
+      {pocket.device && (
         <View style={[styles.card, { backgroundColor: t.surface }]}>
           <View style={styles.row}>
             <View style={[styles.icon, { backgroundColor: t.fill.tertiary }]}>
@@ -177,8 +218,8 @@ export default function Pocket() {
             )}
           </Pressable>
           <Text style={[t.font.footnote, { color: t.tertiaryLabel, textAlign: "center" }]}>
-            Tip: a Back Tap shortcut to opencode-mobile://pocket?action=pull ships new recordings the moment you stop
-            one.
+            Tip: a Back Tap shortcut to opencode-mobile://pocket?action=record starts and ships a recording, and
+            ?action=pull just ships.
           </Text>
         </View>
       )}

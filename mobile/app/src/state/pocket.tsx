@@ -3,7 +3,7 @@ import * as SecureStore from "expo-secure-store"
 import { createContext, useContext, useEffect, useState } from "react"
 import { Client } from "../api/client"
 import { PocketDevice } from "../pocket/device"
-import { PairRefusedError, pairPocket, pullPocket, type PocketRecording, type PullProgress } from "../pocket/sync"
+import { PairRefusedError, pairPocket, pullPocket, setRemoteRecording, type PocketRecording, type PullProgress } from "../pocket/sync"
 import { useHosts } from "./hosts"
 
 const KEY_STORE = "pocket_session_key"
@@ -23,12 +23,17 @@ type PocketState = {
   busy: boolean
   pairing: boolean
   needsKey: boolean
+  recording: boolean
+  recBusy: boolean
+  recordingName?: string
   progress?: PullProgress
   error?: string
   recent: Ship[]
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
   pair: (device: Device, key?: string) => Promise<void>
+  startRecording: () => Promise<void>
+  stopRecording: () => Promise<void>
   pull: () => Promise<void>
 }
 
@@ -51,6 +56,9 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [devices, setDevices] = useState<Device[]>([])
   const [scanning, setScanning] = useState(false)
   const [pairing, setPairing] = useState(false)
+  const [recording, setRecording] = useState(false)
+  const [recBusy, setRecBusy] = useState(false)
+  const [recordingName, setRecordingName] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [needsKey, setNeedsKey] = useState(false)
   const [progress, setProgress] = useState<PullProgress>()
@@ -116,6 +124,48 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     }
   }
 
+  // Recording lives on the device once started, so the flag only reflects what this
+  // app knows; the recorder's own button moves ahead of it either way.
+  const startRecording = async () => {
+    const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
+    if (!key || !device) {
+      setError("Pair the recorder first.")
+      return
+    }
+    setRecBusy(true)
+    setError(undefined)
+    try {
+      const { name } = await setRemoteRecording({ device, key, on: true })
+      setRecording(true)
+      setRecordingName(name)
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setRecBusy(false)
+    }
+  }
+
+  // Stopping ships the fresh recording right away: pull sees it in the device listing.
+  const stopRecording = async () => {
+    const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
+    if (!key || !device) {
+      setError("Pair the recorder first.")
+      return
+    }
+    setRecBusy(true)
+    setError(undefined)
+    try {
+      await setRemoteRecording({ device, key, on: false })
+      setRecording(false)
+      setRecordingName(undefined)
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setRecBusy(false)
+    }
+    await pull()
+  }
+
   const pull = async () => {
     const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
     if (!key || !device) return
@@ -159,7 +209,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, progress, error, recent, scan, pick, pair, pull }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, scan, pick, pair, startRecording, stopRecording, pull }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {

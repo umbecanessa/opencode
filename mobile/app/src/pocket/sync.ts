@@ -96,6 +96,50 @@ export async function pullPocket(input: {
 // which the UI turns into "reset it or type its existing key" instead of a generic failure.
 export class PairRefusedError extends Error {}
 
+// Flip recording on the recorder from the phone. The verbs are the vendor app's own
+// (APP&STA start, APP&STO stop — strings in its libapp.so), matching the confirmed
+// device events MCU&STA&<name> (recording started, naming its file) and MCU&STO.
+// Once started, the recording runs on the device alone; disconnecting does not stop it.
+export async function setRemoteRecording(input: {
+  device: { id: string; name: string }
+  key: string
+  on: boolean
+}): Promise<{ name?: string }> {
+  const device = await PocketDevice.connect(input.device.id, input.device.name)
+  const lines = new LineInbox()
+  const offLine = device.onLine((line) => lines.push(line))
+  try {
+    await device.command(`APP&SK&${input.key}`)
+    const auth = await lines.next((l) => l.startsWith("MCU&SK&"), 10_000, "auth")
+    if (!auth.startsWith("MCU&SK&OK")) throw new Error(`${input.device.name}: the recorder rejected the session key`)
+
+    if (!input.on) {
+      await device.command("APP&STO")
+      // The device answers its own event, not the command; the event may also have
+      // already happened (the recorder's button stopped it first).
+      await lines.next((l) => l.startsWith("MCU&STO"), 8_000, "MCU&STO").catch(() => undefined)
+      return {}
+    }
+
+    // Already recording? Report it without a listing round-trip; the name is unknown
+    // until the device emits its MCU&STA& event for a start we cause ourselves.
+    await device.command("APP&STE")
+    const state = await lines.next((l) => l.startsWith("MCU&STE&"), 6_000, "state").catch(() => undefined)
+    if (state && !state.endsWith("&0")) return {}
+
+    await device.command("APP&STA")
+    const started = await lines
+      .next((l) => l.startsWith("MCU&STA&") || l.startsWith("MCU&UNKNOWN"), 10_000, "start")
+      .catch(() => undefined)
+    if (!started || started.startsWith("MCU&UNKNOWN"))
+      throw new Error(`${input.device.name}: this firmware does not accept remote recording`)
+    return { name: started.split("&")[2] }
+  } finally {
+    offLine()
+    await device.close()
+  }
+}
+
 // Pairing (PROTOCOL.md): after a hardware reset the device takes the FIRST
 // APP&SK& it is given (MCU&SK&OK + MCU&WIFIO) and drops that connection about
 // a second later; every connection after that authenticates with the new key.
