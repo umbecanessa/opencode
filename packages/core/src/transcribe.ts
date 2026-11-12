@@ -21,6 +21,8 @@ export interface Audio {
   readonly text: string
   readonly segments?: readonly Segment[]
   readonly language?: string
+  /** Decoded audio length as the transcriber itself reports it. */
+  readonly durationSeconds?: number
 }
 
 export class UnavailableError extends Schema.TaggedError<UnavailableError>()("Transcribe.UnavailableError", {
@@ -87,6 +89,7 @@ export const layer = Layer.effect(
               ),
             }),
         ...(response.language === undefined ? {} : { language: response.language }),
+        ...(response.durationSeconds === undefined ? {} : { durationSeconds: response.durationSeconds }),
       } satisfies Audio
     })
 

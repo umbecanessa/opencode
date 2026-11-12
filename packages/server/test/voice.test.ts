@@ -322,16 +322,28 @@ it.live(
       yield* Effect.promise(() => fs.mkdir(global))
       // Whisper over silence: confident-looking text, no timestamp overflow, but mean logprob far
       // below real speech (-0.4). Only the logprob dimension can distinguish it, which is the point.
+      // The second request replays the classic overflow hallucination (27.1s on a 9.1s clip) whose
+      // logprob stays healthy — only the duration floor catches it.
+      let calls = 0
       const whisper = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,
         fetch(request) {
           if (!new URL(request.url).pathname.endsWith("/audio/transcriptions"))
             return new Response("not found", { status: 404 })
+          calls += 1
+          if (calls === 1)
+            return Response.json({
+              text: "You",
+              duration: 6.1,
+              language: "en",
+              segments: [{ id: 0, start: 0, end: 1.2, text: "You", avg_logprob: -5.2 }],
+            })
           return Response.json({
-            text: "You",
+            text: "Thank you.",
+            duration: 9.1,
             language: "en",
-            segments: [{ id: 0, start: 0, end: 1.2, text: "You", avg_logprob: -5.2 }],
+            segments: [{ id: 0, start: 0, end: 27.1, text: "Thank you.", avg_logprob: -0.4 }],
           })
         },
       })
@@ -376,6 +388,33 @@ it.live(
         return found
       }).pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.timeout("30 seconds"))
       expect(item.payload.metadata.summary).toBe("No speech detected — the clip was probably silent.")
+
+      // The overflow hallucination: healthy logprob, segment end far past both durations.
+      const overflowUpload = yield* send("/api/experimental/fs/write?path=" + encodeURIComponent(path.join(global, "voice", "overflow.mp3")), {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x01]),
+      })
+      expect(overflowUpload.status).toBe(200)
+      const overflowPath = ((yield* Effect.promise(() => overflowUpload.json())) as { data: { path: string } }).data.path
+      expect(
+        (yield* send("/api/experimental/voice/transcribe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ audioPath: overflowPath, recordingId: "20261112overflow", duration: 9 }),
+        })).status,
+      ).toBe(200)
+
+      const overflowItem = yield* Effect.gen(function* () {
+        const inbox = yield* send("/api/session/ses_voice_inbox/inbox")
+        const entries = ((yield* Effect.promise(() => inbox.json())) as {
+          data: Array<{ payload: { metadata: Record<string, unknown> } }>
+        }).data
+        const found = entries.find((entry) => entry.payload.metadata.recordingId === "20261112overflow")
+        if (found === undefined) return yield* Effect.fail("pending")
+        return found
+      }).pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.timeout("30 seconds"))
+      expect(overflowItem.payload.metadata.summary).toBe("No speech detected — the clip was probably silent.")
     }),
   { timeout: 45_000 },
 )

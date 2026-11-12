@@ -335,8 +335,12 @@ function voiceItemID(sessionID: Session.ID, payload: { readonly itemId?: Session
 function isSilenceHallucination(audio: Transcribe.Audio, duration?: number) {
   if (audio.text.trim() === "") return true
   if ((audio.segments ?? []).some((segment) => (segment.avgLogprob ?? 0) < -1.5)) return true
-  if (duration === undefined) return false
-  return (audio.segments ?? []).some((segment) => segment.end > duration + 2)
+  // Device-reported durations are approximate (observed 24s short on a 34min file, gating a real
+  // meeting via its own valid tail); whisper's decoded duration is the better floor. The max errs
+  // toward not gating, which is right when a human triages the card either way.
+  const floor = Math.max(duration ?? 0, audio.durationSeconds ?? 0)
+  if (floor === 0) return false
+  return (audio.segments ?? []).some((segment) => segment.end > floor + 2)
 }
 
 /** Models wrap JSON in fences or prose; only the object itself is interesting. */
