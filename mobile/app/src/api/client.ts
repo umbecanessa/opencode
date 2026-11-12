@@ -190,16 +190,19 @@ export class Client {
   // voice entries are user-visible, delivered ones are already gone from this listing.
   voicePending = () =>
     this.request<{
-      data: { id: string; type: string; time?: { created?: string }; payload?: { metadata?: Record<string, unknown> } }[]
+      data: { id: string; type: string; time?: { created?: number | string }; payload?: { text?: string; metadata?: Record<string, unknown> } }[]
     }>(`/api/session/ses_voice_inbox/inbox`).then((r): VoicePendingCard[] =>
       r.data
         .filter((entry) => entry.type === "synthetic" && entry.payload?.metadata?.source === "voice")
         .map((entry) => ({
           id: entry.id,
-          created: entry.time?.created ? Date.parse(entry.time.created) : undefined,
+          created: epochMillis(entry.time?.created),
+          recordedAt: epochMillis(entry.payload?.metadata?.recordedAt),
+          duration: typeof entry.payload?.metadata?.duration === "number" ? entry.payload.metadata.duration : undefined,
           title: typeof entry.payload?.metadata?.title === "string" ? entry.payload.metadata.title : undefined,
           summary: typeof entry.payload?.metadata?.summary === "string" ? entry.payload.metadata.summary : undefined,
           project: typeof entry.payload?.metadata?.suggestedProject === "string" ? entry.payload.metadata.suggestedProject : undefined,
+          text: typeof entry.payload?.text === "string" ? entry.payload.text : undefined,
         })),
     )
 
@@ -319,3 +322,13 @@ export const decodeSession = (host: string) => (raw: Record<string, unknown>) =>
     tokens: (raw.tokens as Session["tokens"]) ?? { input: 0, output: 0, reasoning: 0 },
     host,
   }) satisfies Session
+
+// Server time fields arrive as epoch milliseconds; Date.parse(number) coerces to a
+// numeric string and silently yields NaN, which is why cards rendered no timestamp.
+const epochMillis = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  if (typeof value !== "string" || value.trim() === "") return undefined
+  if (Number.isFinite(+value)) return +value
+  const parsed = Date.parse(value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}

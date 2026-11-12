@@ -11,6 +11,19 @@ function actionInUrl(url: string) {
   return url.match(/[?&]action=(record|pull)/)?.[1]
 }
 
+// Pending cards carry the full note template; the transcript slice is what is worth reading.
+// Whale-length transcripts are capped so one Text element cannot stall the list.
+function transcriptOf(text: string) {
+  const start = text.indexOf("Transcript:\n")
+  if (start < 0) return text.slice(0, 4000)
+  const end = text.indexOf("\n\nSegments:", start)
+  return text.slice(start + "Transcript:\n".length, end < 0 ? undefined : end).slice(0, 4000)
+}
+
+function formatDuration(seconds: number) {
+  return seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)}s`
+}
+
 export default function Pocket() {
   const t = useTheme()
   const pocket = usePocket()
@@ -21,6 +34,7 @@ export default function Pocket() {
   const [helpOpen, setHelpOpen] = useState(false)
   const [keyInput, setKeyInput] = useState("")
   const [pickerFor, setPickerFor] = useState<string>()
+  const [expanded, setExpanded] = useState<string>()
   const [choices, setChoices] = useState<{ id: string; title?: string }[]>([])
 
   useEffect(() => {
@@ -254,6 +268,8 @@ export default function Pocket() {
           {pocket.pending.map((card, i) => {
             const busy = pocket.pendingBusy === card.id
             const picking = pickerFor === card.id
+            const open = expanded === card.id
+            const stamp = card.recordedAt ?? card.created
             return (
               <View
                 key={card.id}
@@ -264,13 +280,27 @@ export default function Pocket() {
                   borderTopColor: t.separator,
                 }}
               >
-                <Text style={[t.font.footnote, { color: t.label }]} numberOfLines={2}>
-                  {card.summary ?? card.title ?? "Voice note"}
-                </Text>
-                <Text style={[t.font.footnote, { color: t.tertiaryLabel }]} numberOfLines={1}>
-                  {card.created ? new Date(card.created).toLocaleString() : "Pending"}
-                  {card.project ? ` · ${card.project}` : ""}
-                </Text>
+                {/* The whole header is the expand affordance: summary in full, then the transcript. */}
+                <Pressable onPress={() => setExpanded(open ? undefined : card.id)} style={{ gap: 2 }}>
+                  <View style={{ flexDirection: "row", alignItems: "flex-start", gap: 6 }}>
+                    <Text style={[t.font.footnote, { color: t.label, flex: 1 }]} numberOfLines={open ? undefined : 2}>
+                      {card.summary ?? card.title ?? "Voice note"}
+                    </Text>
+                    {!!card.text && (
+                      <Ionicons name={open ? "chevron-up" : "chevron-down"} size={13} color={t.tertiaryLabel} style={{ marginTop: 2 }} />
+                    )}
+                  </View>
+                  <Text style={[t.font.footnote, { color: t.tertiaryLabel }]} numberOfLines={1}>
+                    {stamp ? new Date(stamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "Pending"}
+                    {card.duration ? ` · ${formatDuration(card.duration)}` : ""}
+                    {card.project ? ` · suggests ${card.project}` : ""}
+                  </Text>
+                </Pressable>
+                {open && !!card.text && (
+                  <Text style={[t.font.footnote, { color: t.secondaryLabel, lineHeight: 18 }]} numberOfLines={40}>
+                    {transcriptOf(card.text)}
+                  </Text>
+                )}
                 {picking ? (
                   <View style={{ gap: 2 }}>
                     {choices.map((s) => (
