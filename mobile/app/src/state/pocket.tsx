@@ -34,6 +34,7 @@ type PocketState = {
   recent: Ship[]
   pending: VoicePendingCard[]
   pendingBusy?: string
+  notesLoaded: boolean
   processing: { key: string; label: string; mins: number }[]
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
@@ -78,6 +79,9 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [recent, setRecent] = useState<Ship[]>([])
   const [pending, setPending] = useState<VoicePendingCard[]>([])
   const [pendingBusy, setPendingBusy] = useState<string>()
+  // False until the first inbox fetch settles, so the screen can show a loading row instead of
+  // an empty "Pending notes" void while the host answers over the tunnel.
+  const [notesLoaded, setNotesLoaded] = useState(false)
   const [processing, setProcessing] = useState<{ key: string; label: string; mins: number }[]>([])
   // Recordings whose card has been seen or consumed; keeps shipped history rows from
   // reappearing as "processing" forever (or after triage).
@@ -263,8 +267,10 @@ const PROCESSING_WINDOW = 30 * 60_000
           .filter((s) => stamp - s.at < PROCESSING_WINDOW && !resolved.current.has(`${s.date}_${s.name}`))
           .map((s) => ({ key: `${s.date}_${s.name}`, label: `${s.date} ${s.name}`, mins: Math.max(1, Math.round((stamp - s.at) / 60_000)) })),
       )
+      setNotesLoaded(true)
     } catch {
       // An unreachable host is not a screen error: the pending section simply stays as-is.
+      setNotesLoaded(true)
     }
   }
 
@@ -366,7 +372,7 @@ const PROCESSING_WINDOW = 30 * 60_000
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, processing, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, notesLoaded, processing, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {

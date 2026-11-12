@@ -279,11 +279,17 @@ export default function Pocket() {
         </View>
       )}
 
-      {pocket.pending.length > 0 && (
+      {(pocket.pending.length > 0 || !pocket.notesLoaded) && (
         <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
           <Text style={[t.font.headline, { color: t.label, fontWeight: "600", marginBottom: 6 }]}>
             Pending notes
           </Text>
+          {pocket.pending.length === 0 && !pocket.notesLoaded && (
+            <View style={[styles.row, { justifyContent: "center" }]}>
+              <ActivityIndicator size="small" color={t.tint} />
+              <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>Loading your notes…</Text>
+            </View>
+          )}
           {pocket.pending.map((card, i) => {
             const busy = pocket.pendingBusy === card.id
             const picking = pickerFor === card.id
