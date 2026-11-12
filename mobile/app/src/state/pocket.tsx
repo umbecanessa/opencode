@@ -203,7 +203,8 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     setProgress({ phase: "connecting", done: 0, total: 0 })
     try {
       // The skip-list is the shipped history: anything already handed to this host is not re-pulled.
-      const skip = new Set(recent.filter((s) => s.host === host.id).map((s) => `${s.date}:${s.name}`))
+      // Key format must match pullPocket's filter (`date/name`) — a mismatch silently re-ships everything.
+      const skip = new Set(recent.filter((s) => s.host === host.id).map((s) => `${s.date}/${s.name}`))
       const directory = await resolveDirectory(client)
       const result = await withTimeout(
         pullPocket({ client, directory, device, key, skip, onProgress: setProgress }),
