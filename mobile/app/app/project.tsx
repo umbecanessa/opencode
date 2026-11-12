@@ -1,5 +1,6 @@
-import { useLocalSearchParams, useRouter } from "expo-router"
-import { useCallback, useEffect, useMemo, useState } from "react"
+import Ionicons from "@expo/vector-icons/Ionicons"
+import { useLocalSearchParams, useNavigation, useRouter } from "expo-router"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react"
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native"
 import SegmentedControl from "../src/components/Segmented"
 import { flattenFamilies, TreeRow } from "../src/components/SessionTree"
@@ -26,6 +27,30 @@ export default function Project() {
   const c = client(hostID)
   const [open, setOpen] = useState<Set<string>>(new Set())
   const tree = useMemo(() => flattenFamilies(nestSessions(sessions), open, live), [sessions, open, live])
+
+  // The project's own + opens new-todo with this project already picked (params), so adding a
+  // todo here never asks about the project again.
+  const navigation = useNavigation()
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <Pressable
+          onPress={() =>
+            router.push({
+              pathname: "/new-todo",
+              params: { host: hostID, projectID: id, projectName: name || undefined, projectDir: dir || undefined },
+            })
+          }
+          accessibilityRole="button"
+          accessibilityLabel="Add todo for this project"
+          hitSlop={10}
+          style={({ pressed }) => ({ paddingHorizontal: 14, opacity: pressed ? 0.5 : 1 })}
+        >
+          <Ionicons name="add-circle-outline" size={24} color={t.tint} />
+        </Pressable>
+      ),
+    })
+  }, [navigation, router, hostID, id, name, dir, t.tint])
 
   useEffect(() => {
     if (!c) return

@@ -8,3 +8,9 @@ export const relTime = (ms: number) => {
   if (s < 30 * 86_400) return `${Math.floor(s / (7 * 86_400))}w`
   return `${Math.floor(s / (30 * 86_400))}mo`
 }
+
+// Same ages phrased as "3d ago" — but never the nonsensical "now ago".
+export const agoText = (ms: number) => {
+  const r = relTime(ms)
+  return r === "now" ? "now" : `${r} ago`
+}
