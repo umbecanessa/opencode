@@ -140,11 +140,9 @@ export default function Pocket() {
       )}
 
       {pocket.device && (
-        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
+        <View style={[styles.card, { backgroundColor: t.surface }]}>
           <View style={styles.row}>
-            <View
-              style={[styles.icon, { backgroundColor: t.fill.tertiary }]}
-            >
+            <View style={[styles.icon, { backgroundColor: t.fill.tertiary }]}>
               <Ionicons name={pocket.recording ? "recording" : "mic-outline"} size={18} color={pocket.recording ? t.status.failed : t.tint} />
             </View>
             <View style={{ flex: 1, gap: 2 }}>
@@ -179,7 +177,7 @@ export default function Pocket() {
       )}
 
       {pocket.device && (
-        <View style={[styles.card, { backgroundColor: t.surface }]}>
+        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
           <View style={styles.row}>
             <View style={[styles.icon, { backgroundColor: t.fill.tertiary }]}>
               <Ionicons name="ear-outline" size={20} color={t.tint} />
@@ -209,17 +207,23 @@ export default function Pocket() {
           <Pressable
             disabled={pocket.busy}
             onPress={pocket.pull}
-            style={({ pressed }) => [styles.button, { opacity: pocket.busy ? 0.6 : pressed ? 0.8 : 1 }]}
+            style={({ pressed }) => [
+              styles.button,
+              {
+                backgroundColor: pocket.busy ? t.fill.primary : t.tint,
+                opacity: pressed ? 0.8 : 1,
+                transform: [{ scale: pressed ? 0.98 : 1 }],
+              },
+            ]}
           >
             {pocket.busy ? (
-              <ActivityIndicator color={t.tint} />
+              <ActivityIndicator color="#FFFFFF" />
             ) : (
-              <Text style={[t.font.headline, { color: t.tint, fontWeight: "600" }]}>Pull recordings</Text>
+              <Text style={[t.font.headline, { color: "#FFFFFF", fontWeight: "600" }]}>Pull recordings</Text>
             )}
           </Pressable>
           <Text style={[t.font.footnote, { color: t.tertiaryLabel, textAlign: "center" }]}>
-            Tip: a Back Tap shortcut to opencode-mobile://pocket?action=record starts and ships a recording, and
-            ?action=pull just ships.
+            Back Tap shortcut: opencode-mobile://pocket?action=record
           </Text>
         </View>
       )}
