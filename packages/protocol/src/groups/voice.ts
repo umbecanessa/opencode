@@ -191,7 +191,7 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         identifier: "experimental.voice.accept",
         summary: "Accept a pending voice note into a session",
         description:
-          "Experimental: may change without compatibility guarantees. Moves a pending Voice Inbox note into the target session as durable synthetic input and consumes the pending inbox item. The note steers by default (delivered before the model's next step) and wakes an idle target, so the model is aware of it promptly. Concurrent retries are safe: the admitted note keeps a stable per-session identity, so only the first accept wins. Notes already consumed (delivered, accepted, or remembered) fail with 400.",
+          "Experimental: may change without compatibility guarantees. Moves a pending Voice Inbox note into the target session as durable synthetic input and consumes the pending inbox item. The note steers by default (delivered before the model's next step) and wakes an idle target, so the model is aware of it promptly. Like remember, it also archives the transcript as a markdown file under the target project's notes/transcripts/ folder with a memory record referencing it (best-effort), so the note survives session condensation. Concurrent retries are safe: the admitted note keeps a stable per-session identity, so only the first accept wins. Notes already consumed (delivered, accepted, or remembered) fail with 400.",
       }),
     ),
   )
@@ -205,7 +205,7 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         identifier: "experimental.voice.remember",
         summary: "Remember a pending voice note for a project",
         description:
-          "Experimental: may change without compatibility guarantees. Writes a pending Voice Inbox note into the memory graph of the project at `directory` (server home project when omitted) and consumes the pending inbox item, without delivering the note to any session.",
+          "Experimental: may change without compatibility guarantees. Writes a pending Voice Inbox note into the memory graph of the project at `directory` (server home project when omitted) and consumes the pending inbox item, without delivering the note to any session. The transcript itself is archived as a markdown file under the project's notes/transcripts/ folder, and the memory record references that file path so future sessions can read it even after their own context is condensed.",
       }),
     ),
   )

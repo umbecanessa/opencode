@@ -14,7 +14,7 @@ import type { VoiceIngestInput } from "@opencode/protocol/groups/voice"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Global } from "@opencode/util/global"
 import { createHash } from "node:crypto"
-import { readdir, rm } from "node:fs/promises"
+import { readdir, rm, mkdir, writeFile } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { Effect, Option, Schedule, Schema } from "effect"
 import { HttpApiBuilder } from "effect/http-api"
@@ -59,6 +59,43 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
       yield* session
         .cancelInbox({ sessionID: VoiceInboxSessionID, inboxID: itemId })
         .pipe(Effect.catch(() => Effect.void))
+    })
+    // Both triage buttons archive the transcript as markdown inside the project repo
+    // (notes/transcripts/<recording>.md) and record a project-memory note pointing at that file.
+    // Sessions compact; the file and its memory pointer are what survives for a later agent.
+    // Memory failures surface to the caller; the file write is best-effort by design (a read-only
+    // checkout must not lose a triage the user already decided on — the note falls back inline).
+    const archiveActedNote = Effect.fn("voice.archiveActedNote")(function* (
+      directory: string,
+      key: string,
+      metadata: Record<string, unknown>,
+      text: string,
+    ) {
+      const file = join(directory, "notes", "transcripts", `${key.replace(/[^A-Za-z0-9._-]+/g, "-")}.md`)
+      const archived = yield* Effect
+        .tryPromise(() =>
+          mkdir(dirname(file), { recursive: true }).then(() => writeFile(file, transcriptMarkdown(metadata, text))),
+        )
+        .pipe(
+          Effect.as(file as string | undefined),
+          Effect.tapError((error) => Effect.logWarning("voice transcript archive write failed", { file, reason: (error as Error).message })),
+          Effect.catch(() => Effect.succeed(undefined)),
+        )
+      const title = typeof metadata.title === "string" && metadata.title !== "" ? metadata.title : `Voice note ${key}`
+      const memoryText = [
+        typeof metadata.summary === "string" && metadata.summary !== "" ? `Summary: ${metadata.summary}` : undefined,
+        archived !== undefined ? `Transcript file: ${archived}` : `Transcript:\n${text}`,
+        typeof metadata.audioPath === "string" ? `Audio: ${metadata.audioPath}` : undefined,
+        typeof metadata.suggestedProject === "string" ? `Project: ${metadata.suggestedProject}` : undefined,
+      ]
+        .filter((section): section is string => Boolean(section))
+        .join("\n\n")
+      yield* Effect
+        .gen(function* () {
+          const memory = yield* Memory.Service
+          yield* memory.remember({ kind: "note", title, text: memoryText, source: "capture", sessionID: String(VoiceInboxSessionID) })
+        })
+        .pipe(Effect.provide(locations.get(Location.Ref.make({ directory: AbsolutePath.make(directory) }))))
     })
     return handlers
       .handle(
@@ -272,7 +309,7 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
         Effect.fn("server.voice.accept")(
           function* (request) {
             const item = yield* pendingVoiceNote(request.payload.itemId)
-            yield* session
+            const target = yield* session
               .get(request.payload.sessionID)
               .pipe(Effect.catchTag("Session.NotFoundError", missingSession))
             // Re-accept into the same session is idempotent: the derived ID matches the
@@ -302,6 +339,17 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                 locationErrors,
               )
             yield* consumePendingNote(request.payload.itemId)
+            // Archive + memory pointer into the target project, best-effort: a note the model has
+            // already received must stay accepted even if the checkout is read-only or memory is down.
+            yield* archiveActedNote(
+              String(target.location.directory),
+              noteKey(item),
+              (item.payload.metadata ?? {}) as Record<string, unknown>,
+              item.payload.text,
+            ).pipe(
+              Effect.tapError((error) => Effect.logWarning("voice accept archiving failed", { reason: (error as Error).message })),
+              Effect.catch(() => Effect.void),
+            )
             return { data: moved }
           },
           locationErrors,
@@ -313,31 +361,19 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
           function* (request) {
             const item = yield* pendingVoiceNote(request.payload.itemId)
             const metadata = (item.payload.metadata ?? {}) as Record<string, unknown>
-            const title = typeof metadata.title === "string" && metadata.title !== "" ? metadata.title : `Voice note ${noteKey(item)}`
-            const summary = typeof metadata.summary === "string" ? metadata.summary : undefined
-            const audioPath = typeof metadata.audioPath === "string" ? metadata.audioPath : undefined
-            const text = [
-              summary && `Summary: ${summary}`,
-              `Transcript:\n${item.payload.text}`,
-              audioPath && `Audio: ${audioPath}`,
-            ]
-              .filter((section): section is string => Boolean(section))
-              .join("\n\n")
-            // Memory is location-scoped: the note belongs to the graph of the project that
-            // holds the recording, which is the directory the phone shipped files into.
-            const ref = Location.Ref.make({ directory: AbsolutePath.make(request.payload.directory ?? global.config) })
-            yield* Effect
-              .gen(function* () {
-                const memory = yield* Memory.Service
-                yield* memory.remember({ kind: "note", title, text, source: "capture", sessionID: String(VoiceInboxSessionID) })
-              })
-              .pipe(
-                Effect.provide(locations.get(ref)),
-                // Memory is a plugin service: an unconfigured or failing graph must surface as a
-                // clean dependency error, never as a handler defect or an undeclared error type.
-                Effect.catch(() => Effect.fail(rememberUnavailable())),
-                Effect.catchDefect(() => Effect.fail(rememberUnavailable())),
-              )
+            // Memory and the transcript archive are location-scoped: both belong to the project
+            // that holds the recording, which is the directory the phone shipped files into.
+            // Memory is a plugin service: an unconfigured or failing graph must surface as a
+            // clean dependency error, never as a handler defect or an undeclared error type.
+            yield* archiveActedNote(
+              request.payload.directory ?? global.config,
+              noteKey(item),
+              metadata,
+              item.payload.text,
+            ).pipe(
+              Effect.catch(() => Effect.fail(rememberUnavailable())),
+              Effect.catchDefect(() => Effect.fail(rememberUnavailable())),
+            )
             yield* consumePendingNote(request.payload.itemId)
             return { data: { remembered: true } }
           },
@@ -431,6 +467,32 @@ const purgeExpiredRecordings = Effect.fn("voice.purgeExpiredRecordings")(functio
     { discard: true },
   )
 })
+
+/** Markdown body for the in-repo transcript archive; sections appear only when the note has them. */
+function transcriptMarkdown(metadata: Record<string, unknown>, text: string) {
+  const line = (label: string, value: unknown) =>
+    (typeof value === "string" && value !== "") || typeof value === "number" ? `- ${label}: ${value}` : undefined
+  const todos = Array.isArray(metadata.todos) ? (metadata.todos as readonly unknown[]).filter((t): t is string => typeof t === "string" && t !== "") : []
+  return [
+    `# ${typeof metadata.title === "string" && metadata.title !== "" ? metadata.title : "Voice note"}`,
+    "",
+    [
+      line("Recording", metadata.recordingId),
+      line("Device", metadata.device),
+      typeof metadata.recordedAt === "number" ? `- Recorded: ${new Date(metadata.recordedAt).toISOString()}` : undefined,
+      typeof metadata.duration === "number" ? `- Duration: ${metadata.duration}s` : undefined,
+      line("Suggested project", metadata.suggestedProject),
+      line("Audio", metadata.audioPath),
+    ]
+      .filter((entry): entry is string => entry !== undefined)
+      .join("\n"),
+    typeof metadata.summary === "string" && metadata.summary !== "" ? `\n## Summary\n\n${metadata.summary}` : undefined,
+    todos.length > 0 ? `\n## Action items\n\n${todos.map((todo) => `- ${todo}`).join("\n")}` : undefined,
+    `\n## Transcript\n\n${text.replace(/^Transcript:\n/, "")}`,
+  ]
+    .filter((section): section is string => Boolean(section))
+    .join("\n")
+}
 
 function enrichPrompt(transcript: string, projects: ReadonlyArray<string>) {
   return [

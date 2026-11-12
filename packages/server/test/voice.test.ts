@@ -572,6 +572,14 @@ it.live("routes pending voice notes to sessions or project memory", () =>
       const targetInbox = (yield* Effect.promise(() => targetInboxRes.json())) as { data: { type: string }[] }
       if (targetInbox.data.filter((entry) => entry.type === "synthetic").length !== 0) return yield* Effect.fail("undelivered")
     }).pipe(Effect.retry(Schedule.spaced("100 millis")), Effect.timeout("30 seconds"))
+    // Accept also archives: the transcript is a markdown file in the target project's repo,
+    // which is what survives a later compaction of this session.
+    const acceptedArchive = yield* Effect.promise(() =>
+      fs.readFile(path.join(project, "notes", "transcripts", "20261104move.md"), "utf8"),
+    )
+    expect(acceptedArchive).toContain("# Triage")
+    expect(acceptedArchive).toContain("Recording: 20261104move")
+    expect(acceptedArchive).toContain("triage me")
 
     // A consumed note cannot be accepted again.
     expect((yield* post("/api/experimental/voice/accept", { itemId: [...afterIngest][0], sessionID: target })).status).toBe(400)
@@ -591,5 +599,11 @@ it.live("routes pending voice notes to sessions or project memory", () =>
     expect(rememberRes.status).toBe(200)
     expect((yield* Effect.promise(() => rememberRes.json()))).toEqual({ data: { remembered: true } })
     expect((yield* pendingIDs).size).toBe(0)
+    // Remember likewise leaves the transcript file in the project and memory points at it.
+    const rememberedArchive = yield* Effect.promise(() =>
+      fs.readFile(path.join(project, "notes", "transcripts", "20261104mem.md"), "utf8"),
+    )
+    expect(rememberedArchive).toContain("remember me")
+    expect(rememberedArchive).toContain("## Transcript")
   }),
 )
