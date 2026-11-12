@@ -79,3 +79,7 @@ export type SessionEvent = {
 }
 
 export type PendingPermission = { request: PermissionRequest; decision: string }
+
+// A pending voice-note card from the shared Voice Inbox (GET /api/session/ses_voice_inbox/inbox,
+// synthetic voice entries only); the server delivers and consumes them on accept/remember.
+export type VoicePendingCard = { id: string; created?: number; title?: string; summary?: string; project?: string }

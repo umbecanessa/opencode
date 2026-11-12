@@ -11,6 +11,7 @@ import type {
   SessionEvent,
   SessionForm,
   FormValue,
+  VoicePendingCard,
 } from "./types"
 
 export type Location = { directory: string }
@@ -183,6 +184,32 @@ export class Client {
     this.request<{ data: { jobID: string; sessionID: string } }>("/api/experimental/voice/transcribe", {
       method: "POST",
       body: JSON.stringify(body),
+    })
+
+  // Pending voice-note cards from the shared Voice Inbox session; only the synthetic
+  // voice entries are user-visible, delivered ones are already gone from this listing.
+  voicePending = () =>
+    this.request<{
+      data: { id: string; type: string; time?: { created?: string }; payload?: { metadata?: Record<string, unknown> } }[]
+    }>(`/api/session/ses_voice_inbox/inbox`).then((r): VoicePendingCard[] =>
+      r.data
+        .filter((entry) => entry.type === "synthetic" && entry.payload?.metadata?.source === "voice")
+        .map((entry) => ({
+          id: entry.id,
+          created: entry.time?.created ? Date.parse(entry.time.created) : undefined,
+          title: typeof entry.payload?.metadata?.title === "string" ? entry.payload.metadata.title : undefined,
+          summary: typeof entry.payload?.metadata?.summary === "string" ? entry.payload.metadata.summary : undefined,
+          project: typeof entry.payload?.metadata?.suggestedProject === "string" ? entry.payload.metadata.suggestedProject : undefined,
+        })),
+    )
+
+  voiceAccept = (itemId: string, sessionID: string) =>
+    this.request<unknown>("/api/experimental/voice/accept", { method: "POST", body: JSON.stringify({ itemId, sessionID }) })
+
+  voiceRemember = (itemId: string, directory?: string) =>
+    this.request<unknown>("/api/experimental/voice/remember", {
+      method: "POST",
+      body: JSON.stringify(directory ? { itemId, directory } : { itemId }),
     })
 
   fsRead = async (l: Location, path: string, limit = 2_000_000): Promise<FileContent> => {

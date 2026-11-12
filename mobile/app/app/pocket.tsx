@@ -20,6 +20,8 @@ export default function Pocket() {
   const [target, setTarget] = useState<string>()
   const [helpOpen, setHelpOpen] = useState(false)
   const [keyInput, setKeyInput] = useState("")
+  const [pickerFor, setPickerFor] = useState<string>()
+  const [choices, setChoices] = useState<{ id: string; title?: string }[]>([])
 
   useEffect(() => {
     // Cold start or fresh navigation: params carry the action.
@@ -31,6 +33,14 @@ export default function Pocket() {
     // Resume onto an already-mounted route: expo-router may see no param change at all.
     const sub = ExpoLinking.addEventListener("url", ({ url }) => pocket.runDeepAction(actionInUrl(url)))
     return () => sub.remove()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Transcribe jobs land a beat after uploads, so the pending list refreshes while
+  // the screen is open; the provider already loaded it on mount.
+  useEffect(() => {
+    const timer = setInterval(() => pocket.loadPending(), 15_000)
+    return () => clearInterval(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -236,6 +246,83 @@ export default function Pocket() {
         <Text style={[t.font.footnote, styles.note, { color: t.status.failed }]}>{pocket.error}</Text>
       )}
 
+      {pocket.pending.length > 0 && (
+        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
+          <Text style={[t.font.headline, { color: t.label, fontWeight: "600", marginBottom: 6 }]}>
+            Pending notes
+          </Text>
+          {pocket.pending.map((card, i) => {
+            const busy = pocket.pendingBusy === card.id
+            const picking = pickerFor === card.id
+            return (
+              <View
+                key={card.id}
+                style={{
+                  gap: 8,
+                  paddingVertical: 10,
+                  borderTopWidth: i > 0 ? StyleSheet.hairlineWidth : 0,
+                  borderTopColor: t.separator,
+                }}
+              >
+                <Text style={[t.font.footnote, { color: t.label }]} numberOfLines={2}>
+                  {card.summary ?? card.title ?? "Voice note"}
+                </Text>
+                <Text style={[t.font.footnote, { color: t.tertiaryLabel }]} numberOfLines={1}>
+                  {card.created ? new Date(card.created).toLocaleString() : "Pending"}
+                  {card.project ? ` · ${card.project}` : ""}
+                </Text>
+                {picking ? (
+                  <View style={{ gap: 2 }}>
+                    {choices.map((s) => (
+                      <Pressable
+                        key={s.id}
+                        disabled={busy}
+                        onPress={() => pocket.acceptPending(card.id, s.id).then(() => setPickerFor(undefined))}
+                        style={({ pressed }) => [styles.row, styles.device, styles.pickerRow, { opacity: pressed ? 0.6 : 1 }]}
+                      >
+                        <Ionicons name="chatbubble-outline" size={16} color={t.tint} />
+                        <Text style={[t.font.footnote, { color: t.label, flex: 1 }]} numberOfLines={1}>
+                          {s.title ?? s.id}
+                        </Text>
+                      </Pressable>
+                    ))}
+                    <Pressable onPress={() => setPickerFor(undefined)} style={{ alignSelf: "flex-start", paddingVertical: 4 }}>
+                      <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>Cancel</Text>
+                    </Pressable>
+                  </View>
+                ) : (
+                  <View style={{ flexDirection: "row", gap: 8 }}>
+                    <Pressable
+                      disabled={busy}
+                      onPress={() => {
+                        setPickerFor(card.id)
+                        pocket.listSessions().then(setChoices).catch(() => setChoices([]))
+                      }}
+                      style={({ pressed }) => [styles.pill, { borderColor: t.separator, opacity: pressed ? 0.6 : busy ? 0.4 : 1 }]}
+                    >
+                      {busy ? (
+                        <ActivityIndicator size="small" color={t.tint} />
+                      ) : (
+                        <Ionicons name="arrow-forward-circle-outline" size={15} color={t.tint} />
+                      )}
+                      <Text style={[t.font.footnote, { color: t.tint }]}>Add to session</Text>
+                    </Pressable>
+                    <Pressable
+                      disabled={busy}
+                      onPress={() => pocket.rememberPending(card.id)}
+                      style={({ pressed }) => [styles.pill, { borderColor: t.separator, opacity: pressed ? 0.6 : busy ? 0.4 : 1 }]}
+                    >
+                      <Ionicons name="bookmark-outline" size={15} color={t.tint} />
+                      <Text style={[t.font.footnote, { color: t.tint }]}>Remember</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            )
+          })}
+        </View>
+      )}
+
       {pocket.recent.length > 0 && (
         <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
           <Text style={[t.font.headline, { color: t.label, fontWeight: "600", marginBottom: 6 }]}>
@@ -276,4 +363,6 @@ const styles = StyleSheet.create({
   },
   button: { alignItems: "center", paddingVertical: 12, borderRadius: 10, backgroundColor: "transparent" },
   note: { textAlign: "center", marginHorizontal: 32, marginTop: 14 },
+  pill: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderStyle: "solid" },
+  pickerRow: { paddingVertical: 6, paddingHorizontal: 8 },
 })
