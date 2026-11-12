@@ -29,7 +29,18 @@ export default function NewProject() {
     if (!c) return
     let cancelled = false
     c.projects()
-      .then((list) => !cancelled && setProjects(list.map((p) => ({ name: p.name || p.canonical?.split(/[\\/]/).pop() || p.id, dir: p.canonical ?? "" })).filter((p) => p.dir)))
+      // A machine can hold dozens of projects; show the 12 most recently touched as chips,
+      // anything older stays reachable through the typed path field.
+      .then((list) =>
+        !cancelled &&
+        setProjects(
+          [...list]
+            .sort((a, b) => Math.max(b.time?.active ?? 0, b.time?.updated ?? 0) - Math.max(a.time?.active ?? 0, a.time?.updated ?? 0))
+            .map((p) => ({ name: p.name || p.canonical?.split(/[\\/]/).pop() || p.id, dir: p.canonical ?? "" }))
+            .filter((p) => p.dir)
+            .slice(0, 12),
+        ),
+      )
       .catch(() => {})
     return () => {
       cancelled = true

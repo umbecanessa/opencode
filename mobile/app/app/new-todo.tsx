@@ -25,12 +25,15 @@ export default function NewTodo() {
     if (!c) return
     let cancelled = false
     c.projects()
+      // Recent projects first, capped: the full set on a busy machine would be an unreadable chip wall.
       .then((list) =>
         !cancelled &&
         setProjects(
-          list
+          [...list]
+            .sort((a, b) => Math.max(b.time?.active ?? 0, b.time?.updated ?? 0) - Math.max(a.time?.active ?? 0, a.time?.updated ?? 0))
             .map((p) => ({ name: p.name || p.canonical?.split(/[\\/]/).pop() || p.id, dir: p.canonical ?? "" }))
-            .filter((p) => p.dir),
+            .filter((p) => p.dir)
+            .slice(0, 12),
         ),
       )
       .catch(() => {})

@@ -103,7 +103,11 @@ export class Client {
     if (!res.ok) throw new Error(`Could not switch model (${res.status})`)
   }
 
-  projects = () => this.request<{ id: string; name?: string; canonical?: string }[]>("/api/project")
+  // time.active/updated power recent-first ordering; the wire contract already carries them.
+  projects = () =>
+    this.request<{ id: string; name?: string; canonical?: string; time?: { created: number; updated: number; active: number } }[]>(
+      "/api/project",
+    )
 
   createSession = (directory: string) => this.request<{ data: { id: string; title?: string } }>("/api/session", { method: "POST", body: JSON.stringify({ location: { directory } }) }).then((r) => r.data)
 
