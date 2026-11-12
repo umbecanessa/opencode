@@ -81,7 +81,11 @@ const fromRequest = Effect.fn("OpenAICompatibleResponses.fromRequest")(function*
   const hosted =
     forced !== undefined &&
     ProviderShared.flattenTools(request.tools).some((tool) => tool.name === forced && nativeImageTool(tool) !== undefined)
-  return hosted ? { ...body, tool_choice: { type: "image_generation" as const } } : body
+  if (!hosted) return body
+  // A forced image_generation call is pure image work; drop the chat reasoning that a chat model inherits from its
+  // settings (reasoning.effort reads as an unsupported image "complexity" on the gateway). Everything else is kept.
+  const { reasoning: _reasoning, ...rest } = body
+  return { ...rest, tool_choice: { type: "image_generation" as const } }
 })
 
 const hostedImageResult = Effect.fnUntraced(function* (item: ResponsesHostedTools.Item) {

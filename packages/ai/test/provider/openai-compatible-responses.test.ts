@@ -175,6 +175,48 @@ describe("Open Responses-compatible route", () => {
     }),
   )
 
+  it.effect("drops inherited reasoning effort from forced hosted image calls", () =>
+    Effect.gen(function* () {
+      const model = configure({
+        apiKey: "test-key",
+        baseURL: "https://responses.example.test/v1",
+      }).model("example-model")
+      const tool = OpenAI.imageGeneration({ action: "edit" })
+      // Model settings (and variant settings merged by the resolver) arrive as request provider options.
+      const prepared = yield* compileRequest(
+        ai.request({
+          model,
+          prompt: "Recolour the sphere.",
+          tools: [tool],
+          toolChoice: tool,
+          providerOptions: { reasoningEffort: "medium" },
+        }),
+      )
+
+      // A pure image run must not carry chat reasoning: gateways read reasoning.effort as an unsupported image complexity.
+      expect(prepared.body.reasoning).toBeUndefined()
+      expect(prepared.body.tool_choice).toEqual({ type: "image_generation" })
+    }),
+  )
+
+  it.effect("keeps reasoning on ordinary calls to a hosted-image-capable model", () =>
+    Effect.gen(function* () {
+      const model = configure({
+        apiKey: "test-key",
+        baseURL: "https://responses.example.test/v1",
+      }).model("example-model")
+      const prepared = yield* compileRequest(
+        ai.request({
+          model,
+          prompt: "Explain the diff.",
+          providerOptions: { reasoningEffort: "medium" },
+        }),
+      )
+
+      expect(prepared.body.reasoning).toEqual({ effort: "medium" })
+    }),
+  )
+
   it.effect("keeps other tool choices as function choices", () =>
     Effect.gen(function* () {
       const model = configure({
