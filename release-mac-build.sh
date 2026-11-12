@@ -38,7 +38,7 @@ export APPLE_KEYCHAIN="$KC" APPLE_KEYCHAIN_PROFILE=notarytool-storage
 xcrun notarytool history --keychain-profile notarytool-storage --keychain "$KC" </dev/null >/dev/null 2>&1 || { echo "NO notarytool-storage profile in $KC"; kill $CAFF 2>/dev/null; exit 1; }
 step "bun install"
 bun install || exit 1
-export OPENCODE_VERSION=26.12.14
+export OPENCODE_VERSION=26.12.15
 step "cli build"
 (cd packages/cli && bun run build) || { echo "cli FAILED"; kill $CAFF 2>/dev/null; exit 1; }
 step "desktop build"
