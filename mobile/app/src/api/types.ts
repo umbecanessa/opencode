@@ -83,3 +83,18 @@ export type PendingPermission = { request: PermissionRequest; decision: string }
 // A pending voice-note card from the shared Voice Inbox (GET /api/session/ses_voice_inbox/inbox,
 // synthetic voice entries only); the server delivers and consumes them on accept/remember.
 export type VoicePendingCard = { id: string; recordingId?: string; created?: number; recordedAt?: number; duration?: number; title?: string; summary?: string; project?: string; text?: string }
+
+// Durable per-project todo from GET /api/experimental/todo; rows span all projects on the host,
+// each carrying its own directory. Written by voice triage, the agent's todo tool, and this app.
+export type TodoInfo = {
+  id: string
+  directory: string
+  text: string
+  description?: string
+  refs?: { label: string; uri: string }[]
+  status: "open" | "done"
+  done_at?: number
+  source: "voice" | "agent" | "user"
+  time_created: number
+  time_updated: number
+}

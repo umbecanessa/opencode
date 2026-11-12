@@ -12,6 +12,7 @@ import type {
   SessionForm,
   FormValue,
   VoicePendingCard,
+  TodoInfo,
 } from "./types"
 
 export type Location = { directory: string }
@@ -209,6 +210,30 @@ export class Client {
 
   voiceAccept = (itemId: string, sessionID: string) =>
     this.request<unknown>("/api/experimental/voice/accept", { method: "POST", body: JSON.stringify({ itemId, sessionID }) })
+
+  // Durable project todos (server 26.12.15+). A 404 on the list means the host predates the
+  // feature; screens surface that as "needs a newer server" rather than an empty list.
+  todos = () => this.request<{ data: TodoInfo[] }>("/api/experimental/todo").then((r) => r.data)
+
+  todoAdd = (directory: string, text: string) =>
+    this.request<{ data: TodoInfo }>("/api/experimental/todo", {
+      method: "POST",
+      body: JSON.stringify({ directory, text }),
+    }).then((r) => r.data)
+
+  todoSet = (id: string, patch: { text?: string; status?: "open" | "done" }) =>
+    this.request<{ data: TodoInfo }>(`/api/experimental/todo/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }).then((r) => r.data)
+
+  // Like voiceDismiss, a missing row is already-deleted: done either way.
+  todoRemove = async (id: string) => {
+    const res = await this.send(`/api/experimental/todo/${encodeURIComponent(id)}`, { method: "DELETE", timeout: 10_000 })
+    if (res.status === 200 || res.status === 204 || res.status === 404) return
+    if (res.status === 401) throw new Error(`${this.host.name}: pairing expired — re-pair this host`)
+    throw new Error(`${this.host.name}: todo delete ${res.status}`)
+  }
 
   voiceRemember = (itemId: string, directory?: string) =>
     this.request<unknown>("/api/experimental/voice/remember", {
