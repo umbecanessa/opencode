@@ -1,34 +1,61 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
+import * as ExpoLinking from "expo-linking"
 import { useLocalSearchParams } from "expo-router"
 import { useEffect, useRef, useState } from "react"
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
+import { ActivityIndicator, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../src/components/LargeTitle"
+import { consumePendingIntentAction } from "../modules/pocket"
 import { usePocket } from "../src/state/pocket"
 import { useTheme } from "../src/theme"
+
+function actionInUrl(url: string) {
+  return url.match(/[?&]action=(record|pull)/)?.[1]
+}
 
 export default function Pocket() {
   const t = useTheme()
   const pocket = usePocket()
-  // opencode-mobile://pocket?action=pull is what the Back Tap shortcut opens;
-  // the device is restored from storage a beat after first mount, hence the ref.
+  // Deep links arrive three ways: a fresh route mount (?action=), a URL event while
+  // the app resumes onto this already-mounted route (the Back Tap case), and a
+  // pending App Intent flag written by the native Toggle Pocket Recording action.
+  // All funnel through runAction, which fires once per invocation.
   const params = useLocalSearchParams<{ action?: string }>()
-  const autoFired = useRef(false)
+  const firedAt = useRef(0)
   const [target, setTarget] = useState<string>()
   const [helpOpen, setHelpOpen] = useState(false)
   const [keyInput, setKeyInput] = useState("")
 
-  // pocket is a fresh object each provider render; depending on it would re-fire the pull
-  // on every state change, so the ref makes this a once-per-deep-link side effect.
-  useEffect(() => {
-    if (autoFired.current) return
-    if (params.action !== "pull" && params.action !== "record") return
+  const runAction = (action: string | null | undefined) => {
+    if (action !== "record" && action !== "pull") return
+    if (Date.now() - firedAt.current < 3_000) return
     if (!pocket.device && !pocket.hasKey) return
-    autoFired.current = true
+    firedAt.current = Date.now()
     if (!pocket.device) pocket.scan()
-    else if (params.action === "record") (pocket.recording ? pocket.stopRecording : pocket.startRecording)()
+    else if (action === "record") (pocket.recording ? pocket.stopRecording : pocket.startRecording)()
     else pocket.pull()
+  }
+
+  useEffect(() => {
+    // Cold start or fresh navigation: params carry the action.
+    runAction(params.action)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.action, pocket.device, pocket.hasKey])
+  }, [params.action])
+
+  useEffect(() => {
+    // Resume onto this mounted route: expo-router may see no param change at all.
+    const sub = ExpoLinking.addEventListener("url", ({ url }) => runAction(actionInUrl(url)))
+    return () => sub.remove()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    // The native App Intent stashes its action where the URL handoff cannot race it.
+    const run = () => runAction(consumePendingIntentAction())
+    run()
+    const sub = AppState.addEventListener("change", (s) => s === "active" && run())
+    return () => sub.remove()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // A refused pairing needs the fallback card, whether or not the user opened it.
   const showHelp = helpOpen || pocket.needsKey
