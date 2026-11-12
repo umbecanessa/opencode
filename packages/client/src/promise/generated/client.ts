@@ -281,6 +281,14 @@ import type {
   ExperimentalArtifactsDeleteOutput,
   ExperimentalArtifactsViewInput,
   ExperimentalArtifactsViewOutput,
+  ExperimentalTodoListInput,
+  ExperimentalTodoListOutput,
+  ExperimentalTodoAddInput,
+  ExperimentalTodoAddOutput,
+  ExperimentalTodoUpdateInput,
+  ExperimentalTodoUpdateOutput,
+  ExperimentalTodoRemoveInput,
+  ExperimentalTodoRemoveOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1793,6 +1801,67 @@ export function make(options: ClientOptions) {
             },
             requestOptions,
           ),
+      },
+      todo: {
+        list: (input?: ExperimentalTodoListInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalTodoListOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/todo`,
+              query: { directory: input?.["directory"], status: input?.["status"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        add: (input: ExperimentalTodoAddInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalTodoAddOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/todo`,
+              body: {
+                text: input["text"],
+                directory: input["directory"],
+                description: input["description"],
+                refs: input["refs"],
+                source: input["source"],
+                id: input["id"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        update: (input: ExperimentalTodoUpdateInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalTodoUpdateOutput }>(
+            {
+              method: "PATCH",
+              path: `/api/experimental/todo/${encodeURIComponent(input.id)}`,
+              body: {
+                text: input["text"],
+                description: input["description"],
+                refs: input["refs"],
+                status: input["status"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        remove: (input: ExperimentalTodoRemoveInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalTodoRemoveOutput }>(
+            {
+              method: "DELETE",
+              path: `/api/experimental/todo/${encodeURIComponent(input.id)}`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
       },
       migration: {
         v1: {

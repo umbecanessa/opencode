@@ -2589,6 +2589,79 @@ export type ExperimentalArtifactsDeleteOperation<E = never> = (
   input: ExperimentalArtifactsDeleteInput,
 ) => Effect.Effect<ExperimentalArtifactsDeleteOutput, E>
 
+export type ExperimentalTodoListInput = {
+  readonly directory?: string | undefined
+  readonly status?: ("open" | "done") | undefined
+}
+export type ExperimentalTodoListOutput = ReadonlyArray<{
+  readonly id: string
+  readonly directory: string
+  readonly text: string
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly status: "open" | "done"
+  readonly done_at?: number | undefined
+  readonly source: "voice" | "agent" | "user"
+  readonly time_created: number
+  readonly time_updated: number
+}>
+export type ExperimentalTodoListOperation<E = never> = (
+  input?: ExperimentalTodoListInput,
+) => Effect.Effect<ExperimentalTodoListOutput, E>
+
+export type ExperimentalTodoAddInput = {
+  readonly text: string
+  readonly directory?: string | undefined
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly source?: ("voice" | "agent" | "user") | undefined
+  readonly id?: string | undefined
+}
+export type ExperimentalTodoAddOutput = {
+  readonly id: string
+  readonly directory: string
+  readonly text: string
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly status: "open" | "done"
+  readonly done_at?: number | undefined
+  readonly source: "voice" | "agent" | "user"
+  readonly time_created: number
+  readonly time_updated: number
+}
+export type ExperimentalTodoAddOperation<E = never> = (
+  input: ExperimentalTodoAddInput,
+) => Effect.Effect<ExperimentalTodoAddOutput, E>
+
+export type ExperimentalTodoUpdateInput = {
+  readonly id: string
+  readonly text?: string | undefined
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly status?: ("open" | "done") | undefined
+}
+export type ExperimentalTodoUpdateOutput = {
+  readonly id: string
+  readonly directory: string
+  readonly text: string
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly status: "open" | "done"
+  readonly done_at?: number | undefined
+  readonly source: "voice" | "agent" | "user"
+  readonly time_created: number
+  readonly time_updated: number
+}
+export type ExperimentalTodoUpdateOperation<E = never> = (
+  input: ExperimentalTodoUpdateInput,
+) => Effect.Effect<ExperimentalTodoUpdateOutput, E>
+
+export type ExperimentalTodoRemoveInput = { readonly id: string }
+export type ExperimentalTodoRemoveOutput = { readonly removed: boolean }
+export type ExperimentalTodoRemoveOperation<E = never> = (
+  input: ExperimentalTodoRemoveInput,
+) => Effect.Effect<ExperimentalTodoRemoveOutput, E>
+
 export interface ExperimentalApi<E = never> {
   readonly persistentPty: {
     readonly read: ExperimentalPersistentPtyReadOperation<E>
@@ -2617,6 +2690,12 @@ export interface ExperimentalApi<E = never> {
     readonly get: ExperimentalArtifactsGetOperation<E>
     readonly update: ExperimentalArtifactsUpdateOperation<E>
     readonly delete: ExperimentalArtifactsDeleteOperation<E>
+  }
+  readonly todo: {
+    readonly list: ExperimentalTodoListOperation<E>
+    readonly add: ExperimentalTodoAddOperation<E>
+    readonly update: ExperimentalTodoUpdateOperation<E>
+    readonly remove: ExperimentalTodoRemoveOperation<E>
   }
 }
 

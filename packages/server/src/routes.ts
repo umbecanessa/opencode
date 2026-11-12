@@ -14,6 +14,7 @@ import { PermissionSaved } from "@opencode/core/permission/saved"
 import { PtyTicket } from "@opencode/core/pty/ticket"
 import { PersistentPty } from "@opencode/core/persistent-pty"
 import { Project } from "@opencode/core/project"
+import { Todo } from "@opencode/core/todo"
 import { Worktree } from "@opencode/core/worktree"
 import { Session } from "@opencode/core/session"
 import { SessionExecution } from "@opencode/core/session/execution"
@@ -69,6 +70,7 @@ const applicationServiceNodes = [
   Job.node,
   Project.node,
   Project.sweepNode,
+  Todo.node,
   Worktree.node,
   Session.node,
   SessionExecution.node,
@@ -190,6 +192,7 @@ function makeRoutes<AuthError, AuthServices>(
             PermissionSaved.Service,
             PluginUpdate.Service,
             Project.Service,
+            Todo.Service,
             WellKnown.Service,
           )(context),
         ),

@@ -6,6 +6,7 @@ import { LocationServiceMap } from "@opencode/core/location-services"
 import { Memory } from "@opencode/core/memory/index"
 import { Project } from "@opencode/core/project"
 import { Session } from "@opencode/core/session"
+import { Todo } from "@opencode/core/todo"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Transcribe } from "@opencode/core/transcribe"
 import { Voice } from "@opencode/core/voice"
@@ -71,6 +72,7 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
       metadata: Record<string, unknown>,
       text: string,
     ) {
+      const todo = yield* Todo.Service
       const file = join(directory, "notes", "transcripts", `${key.replace(/[^A-Za-z0-9._-]+/g, "-")}.md`)
       const archived = yield* Effect
         .tryPromise(() =>
@@ -81,6 +83,31 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
           Effect.tapError((error) => Effect.logWarning("voice transcript archive write failed", { file, reason: (error as Error).message })),
           Effect.catch(() => Effect.succeed(undefined)),
         )
+      // The note's todos become durable project todos referencing the archive, so the work
+      // outlives the card and the session. Derived ids make a retried triage add nothing twice.
+      const noteTodos = (Array.isArray(metadata.todos) ? metadata.todos : []).filter(
+        (entry): entry is string => typeof entry === "string" && entry.trim() !== "",
+      )
+      if (noteTodos.length > 0) {
+        const refs = [
+          ...(archived === undefined ? [] : [{ label: "Transcript", uri: archived }]),
+          ...(typeof metadata.recordingId === "string" ? [{ label: "Recording", uri: `voice://${metadata.recordingId}` }] : []),
+        ]
+        const summary = typeof metadata.summary === "string" && metadata.summary !== "" ? metadata.summary : undefined
+        yield* Effect.forEach(
+          noteTodos,
+          (item, index) =>
+            todo.add({
+              directory,
+              text: item.trim(),
+              ...(summary === undefined ? {} : { description: summary }),
+              ...(refs.length === 0 ? {} : { refs }),
+              source: "voice",
+              id: Todo.derivedID(`${directory}|${key}|${index}|${item}`),
+            }),
+          { discard: true },
+        )
+      }
       const title = typeof metadata.title === "string" && metadata.title !== "" ? metadata.title : `Voice note ${key}`
       const memoryText = [
         typeof metadata.summary === "string" && metadata.summary !== "" ? `Summary: ${metadata.summary}` : undefined,

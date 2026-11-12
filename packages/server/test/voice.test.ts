@@ -605,5 +605,31 @@ it.live("routes pending voice notes to sessions or project memory", () =>
     )
     expect(rememberedArchive).toContain("remember me")
     expect(rememberedArchive).toContain("## Transcript")
+
+    // The todos extracted from an acted-on note become durable project todos that point back at
+    // the archive and the recording, so the work outlives the card and the session.
+    yield* post("/api/experimental/voice/ingest", {
+      transcript: "file the report and call the vendor",
+      recordingId: "20261104todos",
+      title: "Actions",
+      summary: "Two follow-ups from the Pocket note",
+      todos: ["file the report", "call the vendor", "  "],
+    })
+    const withTodos = [...(yield* pendingIDs)][0]
+    expect((yield* post("/api/experimental/voice/accept", { itemId: withTodos, sessionID: target })).status).toBe(200)
+    const todoRes = yield* get(`/api/experimental/todo?directory=${project}`)
+    const todoList = (yield* Effect.promise(() => todoRes.json())) as {
+      data: { text: string; directory: string; source: string; description?: string; refs?: { label: string; uri: string }[] }[]
+    }
+    expect(todoList.data.map((entry) => entry.text).sort()).toEqual(["call the vendor", "file the report"])
+    for (const entry of todoList.data) {
+      expect(entry.directory).toBe(project)
+      expect(entry.source).toBe("voice")
+      expect(entry.description).toBe("Two follow-ups from the Pocket note")
+      expect(entry.refs?.map((ref) => ref.uri)).toContain(`voice://20261104todos`)
+      expect(entry.refs?.map((ref) => ref.uri)).toContain(
+        path.join(project, "notes", "transcripts", "20261104todos.md"),
+      )
+    }
   }),
 )

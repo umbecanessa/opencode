@@ -279,6 +279,14 @@ import type {
   ExperimentalArtifactsUpdateOutput,
   ExperimentalArtifactsDeleteInput,
   ExperimentalArtifactsDeleteOutput,
+  ExperimentalTodoListInput,
+  ExperimentalTodoListOutput,
+  ExperimentalTodoAddInput,
+  ExperimentalTodoAddOutput,
+  ExperimentalTodoUpdateInput,
+  ExperimentalTodoUpdateOutput,
+  ExperimentalTodoRemoveInput,
+  ExperimentalTodoRemoveOutput,
   ShellListInput,
   ShellListOutput,
   ShellCreateInput,
@@ -1794,6 +1802,57 @@ const EndpointExperimentalArtifactsDelete =
       }).pipe(Effect.mapError(mapClientError)),
     )
 
+const EndpointExperimentalTodoList = (raw: RawClient["server.experimental"]) => (input?: ExperimentalTodoListInput) =>
+  preserveEffect<ExperimentalTodoListOutput>()(
+    raw["todo.list"]({ query: { directory: input?.["directory"], status: input?.["status"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalTodoAdd = (raw: RawClient["server.experimental"]) => (input: ExperimentalTodoAddInput) =>
+  preserveEffect<ExperimentalTodoAddOutput>()(
+    raw["todo.add"]({
+      payload: {
+        text: input["text"],
+        directory: input["directory"],
+        description: input["description"],
+        refs: input["refs"],
+        source: input["source"],
+        id: input["id"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalTodoUpdate =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalTodoUpdateInput) =>
+    preserveEffect<ExperimentalTodoUpdateOutput>()(
+      raw["todo.update"]({
+        params: { id: input["id"] },
+        payload: {
+          text: input["text"],
+          description: input["description"],
+          refs: input["refs"],
+          status: input["status"],
+        },
+      }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
+const EndpointExperimentalTodoRemove =
+  (raw: RawClient["server.experimental"]) => (input: ExperimentalTodoRemoveInput) =>
+    preserveEffect<ExperimentalTodoRemoveOutput>()(
+      raw["todo.remove"]({ params: { id: input["id"] } }).pipe(
+        Effect.mapError(mapClientError),
+        Effect.map((value) => value.data),
+      ),
+    )
+
 const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
   persistentPty: {
     read: EndpointExperimentalPersistentPtyRead(raw),
@@ -1822,6 +1881,12 @@ const adaptGroupExperimental = (raw: RawClient["server.experimental"]) => ({
     get: EndpointExperimentalArtifactsGet(raw),
     update: EndpointExperimentalArtifactsUpdate(raw),
     delete: EndpointExperimentalArtifactsDelete(raw),
+  },
+  todo: {
+    list: EndpointExperimentalTodoList(raw),
+    add: EndpointExperimentalTodoAdd(raw),
+    update: EndpointExperimentalTodoUpdate(raw),
+    remove: EndpointExperimentalTodoRemove(raw),
   },
 })
 

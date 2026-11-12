@@ -336,6 +336,20 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
         );
       `)
       yield* tx.run(`
+        CREATE TABLE \`project_todo\` (
+          \`id\` text PRIMARY KEY,
+          \`directory\` text NOT NULL,
+          \`text\` text NOT NULL,
+          \`description\` text,
+          \`refs\` text,
+          \`status\` text NOT NULL,
+          \`done_at\` integer,
+          \`source\` text NOT NULL,
+          \`time_created\` integer NOT NULL,
+          \`time_updated\` integer NOT NULL
+        );
+      `)
+      yield* tx.run(`
         CREATE TABLE \`workspace\` (
           \`id\` text PRIMARY KEY,
           \`provider\` text NOT NULL,
@@ -404,6 +418,8 @@ const schema: Omit<DatabaseMigration.Migration, "id"> = {
       yield* tx.run(
         `CREATE INDEX \`session_v2_time_suspended_idx\` ON \`session_v2\` (\`time_suspended\`) WHERE "session_v2"."time_suspended" is not null;`,
       )
+      yield* tx.run(`CREATE INDEX \`project_todo_directory_idx\` ON \`project_todo\` (\`directory\`);`)
+      yield* tx.run(`CREATE INDEX \`project_todo_status_idx\` ON \`project_todo\` (\`status\`);`)
     })
   },
 }

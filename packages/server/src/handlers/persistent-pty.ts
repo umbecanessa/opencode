@@ -22,6 +22,7 @@ import { makeArtifact } from "./artifact"
 import { makeMediaGet } from "./media"
 import { type Outbound, runPtySocket } from "./pty-socket"
 import { makeSchedule } from "./schedule"
+import { makeTodo } from "./todo"
 
 export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experimental", (handlers) =>
   Effect.gen(function* () {
@@ -31,6 +32,7 @@ export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experiment
     const artifact = yield* makeArtifact
     const mediaGet = yield* makeMediaGet
     const schedule = yield* makeSchedule
+    const todo = yield* makeTodo
 
     return handlers
       .handleRaw("media.get", (ctx) => mediaGet(ctx.params.hash, ctx.request))
@@ -47,6 +49,10 @@ export const PersistentPtyHandler = HttpApiBuilder.group(Api, "server.experiment
       .handle("schedule.pause", (ctx) => schedule.pause(ctx.params.scheduleID))
       .handle("schedule.resume", (ctx) => schedule.resume(ctx.params.scheduleID))
       .handle("schedule.delete", (ctx) => schedule.remove(ctx.params.scheduleID))
+      .handle("todo.list", (ctx) => todo.list(ctx.query))
+      .handle("todo.add", (ctx) => todo.add(ctx.payload))
+      .handle("todo.update", (ctx) => todo.update(ctx.params.id, ctx.payload))
+      .handle("todo.remove", (ctx) => todo.remove(ctx.params.id))
       .handle(
         "persistentPty.read",
         Effect.fn(function* (ctx) {

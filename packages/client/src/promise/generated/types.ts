@@ -346,6 +346,12 @@ export type ArtifactID = string
 
 export type ArtifactTime = { created: number; updated: number }
 
+export type TodoRef = { label: string; uri: string }
+
+export type TodoStatus = "open" | "done"
+
+export type TodoSource = "voice" | "agent" | "user"
+
 export type ReferenceGitSource = { type: "git"; repository: string; branch?: string }
 
 export type VcsBranch = { current?: string; default?: string }
@@ -959,6 +965,19 @@ export type ArtifactInfo = {
   entry: string
   url: string
   time: ArtifactTime
+}
+
+export type TodoInfo = {
+  id: string
+  directory: string
+  text: string
+  description?: string
+  refs?: Array<TodoRef>
+  status: TodoStatus
+  done_at?: number
+  source: TodoSource
+  time_created: number
+  time_updated: number
 }
 
 export type VcsInfo = { provider?: string; branch: VcsBranch }
@@ -3234,6 +3253,10 @@ export type ArtifactNotFoundError = {
 export const isArtifactNotFoundError = (value: unknown): value is ArtifactNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ArtifactNotFoundError"
 
+export type TodoNotFoundError = { readonly _tag: "TodoNotFoundError"; readonly id: string; readonly message: string }
+export const isTodoNotFoundError = (value: unknown): value is TodoNotFoundError =>
+  typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "TodoNotFoundError"
+
 export type ShellNotFoundError = { readonly _tag: "ShellNotFoundError"; readonly id: string; readonly message: string }
 export const isShellNotFoundError = (value: unknown): value is ShellNotFoundError =>
   typeof value === "object" && value !== null && "_tag" in value && value["_tag"] === "ShellNotFoundError"
@@ -4752,6 +4775,38 @@ export type ExperimentalArtifactsViewInput = {
 }
 
 export type ExperimentalArtifactsViewOutput = globalThis.Uint8Array
+
+export type ExperimentalTodoListInput = {
+  readonly directory?: string | undefined
+  readonly status?: ("open" | "done") | undefined
+}
+
+export type ExperimentalTodoListOutput = { data: Array<TodoInfo> }["data"]
+
+export type ExperimentalTodoAddInput = {
+  readonly text: string
+  readonly directory?: string | undefined
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly source?: ("voice" | "agent" | "user") | undefined
+  readonly id?: string | undefined
+}
+
+export type ExperimentalTodoAddOutput = { data: TodoInfo }["data"]
+
+export type ExperimentalTodoUpdateInput = {
+  readonly id: string
+  readonly text?: string | undefined
+  readonly description?: string | undefined
+  readonly refs?: ReadonlyArray<{ readonly label: string; readonly uri: string }> | undefined
+  readonly status?: ("open" | "done") | undefined
+}
+
+export type ExperimentalTodoUpdateOutput = { data: TodoInfo }["data"]
+
+export type ExperimentalTodoRemoveInput = { readonly id: string }
+
+export type ExperimentalTodoRemoveOutput = { data: { removed: boolean } }["data"]
 
 export type ShellListInput = { readonly location?: { readonly directory?: string | undefined } | undefined }
 
