@@ -94,10 +94,13 @@ import { ScheduleTools } from "../tool/plugin/schedule.js"
 import { ShellTool } from "../tool/plugin/shell.js"
 import { SkillTool } from "../tool/plugin/skill.js"
 import { SubagentTool } from "../tool/plugin/subagent.js"
+import { TranscribeTool } from "../tool/plugin/transcribe.js"
 import { TodoTool } from "../tool/plugin/todo.js"
 import { ProjectTodoTool } from "../tool/plugin/project-todo.js"
 import { Todo } from "../todo.js"
 import { Tool } from "../tool.js"
+import { Database } from "../database/database.js"
+import { Transcribe } from "../transcribe.js"
 import { ToolOutput } from "../tool-output.js"
 import { WebFetchTool } from "../tool/plugin/webfetch.js"
 import { WebSearchTool } from "../tool/plugin/websearch.js"
@@ -179,6 +182,8 @@ const services = [
   Todo.Service,
   Tool.Service,
   ToolOutput.Service,
+  Transcribe.Service,
+  Database.Service,
   Watcher.Service,
   WellKnown.Service,
   Workspace.Service,
@@ -242,6 +247,8 @@ export const requirements = LayerNode.group([
   Todo.node,
   Tool.node,
   ToolOutput.node,
+  Transcribe.node,
+  Database.node,
   Watcher.node,
   WellKnown.node,
   Workspace.node,
@@ -290,6 +297,7 @@ const pre = [
   SubagentTool.Plugin,
   TodoTool.Plugin,
   ProjectTodoTool.Plugin,
+  TranscribeTool.Plugin,
   WebFetchTool.Plugin,
   WebSearchTool.Plugin,
   WriteTool.Plugin,

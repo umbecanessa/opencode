@@ -45,6 +45,8 @@ export interface Speaker {
 export interface Interface {
   /** Transcribe an audio file at an absolute path (as returned by `fs.write`) with the configured local whisper endpoint. */
   readonly file: (input: { readonly path: string; readonly language?: string }) => Effect.Effect<Audio, Error>
+  /** Transcribe in-memory audio bytes (e.g. a stored `media:` blob) with the configured local whisper endpoint. */
+  readonly bytes: (input: { readonly data: Uint8Array; readonly language?: string }) => Effect.Effect<Audio, Error>
   /** Named voiceprints stored on the transcriber host (the local whisper wrapper's identity store). */
   readonly speakers: () => Effect.Effect<readonly Speaker[], Error>
   /** Build a voiceprint for `name` from an audio file; re-enrolling a name replaces it. */
@@ -80,12 +82,7 @@ export const layer = Layer.effect(
     const executor = yield* RequestExecutor.Service
     const fsutil = yield* FSUtil.Service
 
-    const file = Effect.fn("Transcribe.file")(function* (input: { readonly path: string; readonly language?: string }) {
-      // Reading here instead of in the caller keeps FSUtil a node dependency: HttpApi handlers
-      // cannot ambiently require it without leaking the requirement into the route type.
-      const data = yield* fsutil
-        .readFile(input.path)
-        .pipe(Effect.mapError((error) => new UnavailableError({ message: `Cannot read audio file: ${error.message}` })))
+    const bytes = Effect.fn("Transcribe.bytes")(function* (input: { readonly data: Uint8Array; readonly language?: string }) {
       const voice = Config.latest(yield* config.entries(), "experimental")?.voice
       const transcribe = typeof voice === "object" ? voice.transcribe : undefined
       // Local-first by design: `apiKey: false` skips the OPENAI_API_KEY env probe entirely,
@@ -94,7 +91,7 @@ export const layer = Layer.effect(
       const response = yield* ai.experimental.transcription
         .generate({
           model,
-          audio: new Media.Asset({ source: { type: "bytes", data, mediaType: "audio/mpeg" } }),
+          audio: new Media.Asset({ source: { type: "bytes", data: input.data, mediaType: "audio/mpeg" } }),
           timestamps: "segment",
           ...(input.language === undefined ? {} : { language: input.language }),
         })
@@ -121,6 +118,15 @@ export const layer = Layer.effect(
         ...(response.language === undefined ? {} : { language: response.language }),
         ...(response.durationSeconds === undefined ? {} : { durationSeconds: response.durationSeconds }),
       } satisfies Audio
+    })
+
+    const file = Effect.fn("Transcribe.file")(function* (input: { readonly path: string; readonly language?: string }) {
+      // Reading here instead of in the caller keeps FSUtil a node dependency: HttpApi handlers
+      // cannot ambiently require it without leaking the requirement into the route type.
+      const data = yield* fsutil
+        .readFile(input.path)
+        .pipe(Effect.mapError((error) => new UnavailableError({ message: `Cannot read audio file: ${error.message}` })))
+      return yield* bytes({ data, ...(input.language === undefined ? {} : { language: input.language }) })
     })
 
     // The named-speaker voiceprint store lives on the local whisper wrapper beside the
@@ -185,7 +191,7 @@ export const layer = Layer.effect(
       return { removed: body.removed ?? false, speakers: speakerList(body) }
     })
 
-    return Service.of({ file, speakers, enroll, forget })
+    return Service.of({ file, bytes, speakers, enroll, forget })
   }),
 )
 
