@@ -25,7 +25,8 @@ const Input = Schema.Struct({
   description: Schema.String.pipe(Schema.optional).annotate({ description: "Why this todo exists; context and provenance" }),
   refs: Schema.Array(Ref).pipe(Schema.optional).annotate({ description: "Transcripts or documents this todo refers to" }),
   directory: Schema.String.pipe(Schema.optional).annotate({
-    description: "Project directory to operate on; defaults to this session's project",
+    description:
+      'Project directory to operate on; defaults to this session\'s project. Pass "*" with action list to see every project (add still needs a real directory)',
   }),
   assignee: Schema.String.pipe(Schema.optional).annotate({
     description:
@@ -63,6 +64,8 @@ export const Plugin = {
                   ? undefined
                   : yield* session.get(context.sessionID).pipe(Effect.catch(() => Effect.succeed(undefined)))
               const scope = input.directory ?? info?.location.directory ?? global.config
+              // Directory sentinel for the cross-project board: same semantics, no filter.
+              const board = input.directory === "*" ? {} : { directory: scope }
               // The running agent's own name: what "assigned to me" matches against.
               const me = info?.agent
               let message = ""
@@ -71,8 +74,12 @@ export const Plugin = {
                 if (input.assignee !== undefined) {
                   listed = yield* todo.list({ assignee: input.assignee })
                   message = `Todos addressed to ${input.assignee}.`
+                } else if (input.directory === "*") {
+                  // The cross-project board: everything, everywhere, ownership visible.
+                  listed = yield* todo.list()
+                  message = "Todos across all projects."
                 } else if (info === undefined && context.sessionID === undefined) {
-                  listed = yield* todo.list({ directory: scope })
+                  listed = yield* todo.list({ ...board })
                   message = "Current todos."
                 } else {
                   // Mine by default: this project's items (open to whoever works here) plus
@@ -91,7 +98,8 @@ export const Plugin = {
                   message = `Todos for you${me === undefined ? "" : ` as agent "${me}"`}: this project's items plus those addressed to you or \"all\".`
                 }
               } else if (input.action === "add") {
-                if (input.text === undefined || input.text.trim() === "") message = "add needs text."
+                if (input.directory === "*") message = 'add needs a real project directory; "*" is list-only.'
+                else if (input.text === undefined || input.text.trim() === "") message = "add needs text."
                 else {
                   yield* todo.add({
                     directory: scope,
@@ -128,7 +136,7 @@ export const Plugin = {
                 message = removed ? `Deleted ${input.id}.` : missing(input.id)
               }
               // Every action ends with a list in scope, so the model always sees the state it caused.
-              const todos = listed ?? (yield* todo.list({ directory: scope, status: "open" }))
+              const todos = listed ?? (yield* todo.list({ ...board, status: "open" }))
               return {
                 output: { todos: [...todos], message },
                 content: `${message} ${todos.length} todo(s) listed.`,
