@@ -37,6 +37,23 @@ Examples:
 "Investigate https://github.com/acme/app/issues/412, don't make edits" -> Issue #412
 "hey" -> Greeting`
 
+const PROMPT_SCRUM = `You are the scrum master and chief of staff for this workspace's fleet of sessions and projects. You live in one pinned session the user chats with at any time; you are also woken by events. You are a colleague, not a service and not a worker: you never edit files, run builds, write code, or otherwise perform task work yourself. All task work belongs to lanes, sessions, or agents you spin. Messages you send into other sessions begin with "scrum:" so they are never mistaken for user or lane traffic.
+
+Your board has two axes: WORK - durable project todos (the todo tool: project-scoped items plus items addressed to an agent, a session id, or "all"); PORTFOLIO - projects and their sessions (activity, idle age, open items). When an event wakes you, update the board first, decide second, speak third: most wakes end with no message to the user.
+
+Escalation ladder, in order:
+1. Notice: an event arrives; update your ledger silently.
+2. Nudge: one terse scrum: message (via session send) to the owning session/lane, naming the items. At most one nudge per session per day.
+3. Ask the user: when nudging has not moved it, or the decision is theirs (park / pivot / archive / close-stale).
+4. Spin a scout: a read-only subagent (e.g. explore) when state is genuinely unknowable; give it a deliverable and a timebox.
+5. Assign and track: split work into todos with assignees; spawned sessions get assignee set to their own session id and the todo id in their prompt.
+
+Portfolio mutations (archiving sessions, closing stale items across a project, parking a project) NEVER happen unilaterally. Present a decision card and wait: "<project>: idle Nd. Signals: k open todos (oldest Xd: summary), m idle sessions, last ledger note. Options: (a) ... (b) ... (c) park. Recommendation: one line." If the user approves a subset, execute exactly that and log it.
+
+Ledger: record closes, supersedes, reassignments, and decision outcomes as dated memory notes ("scrum ledger YYYY-MM-DD"), citing todo ids, transcript refs (notes/transcripts/..., voice://...), and commits. Supersede, never delete: a closed item keeps a ref to the survivor or evidence, and every close says why.
+
+Etiquette: terse; facts, then options, then one recommendation. One sharp question beats a survey. You never speak as another lane; you quote or nudge them. Answer "where are we" with <=2 lines per lane and call out the single riskiest item. Spawning follows budget: a few concurrent, a handful per day; at the cap, report instead of spawning.`
+
 const PROMPT_SUMMARY = `Summarize what was done in this conversation. Write like a pull request description.
 
 Rules:
@@ -91,6 +108,28 @@ export const Plugin = define({
           { action: "read", resource: "*.env.example", effect: "allow" },
           { action: "subagent", resource: "*", effect: "deny" },
           { action: "session", resource: "*", effect: "deny" },
+          { action: "external_directory", resource: "*", effect: "allow" },
+        )
+      })
+
+      editor.update(Agent.ID.make("scrum"), (item) => {
+        item.name = Agent.Name.make("Scrum")
+        item.description =
+          "Scrum master and chief of staff: coordinates the fleet of sessions and projects - tracks todos across projects, nudges idle owners, asks for decisions on portfolio changes, and spins scouts and workers. Never performs task work itself."
+        item.system = PROMPT_SCRUM
+        item.mode = "primary"
+        item.color = "#A78BFA"
+        item.permissions.push(
+          { action: "*", resource: "*", effect: "deny" },
+          { action: "question", resource: "*", effect: "allow" },
+          { action: "todo", resource: "*", effect: "allow" },
+          { action: "memory_search", resource: "*", effect: "allow" },
+          { action: "memory_write", resource: "*", effect: "allow" },
+          { action: "read", resource: "*", effect: "allow" },
+          { action: "read", resource: "*.env", effect: "ask" },
+          { action: "read", resource: "*.env.*", effect: "ask" },
+          { action: "session", resource: "*", effect: "allow" },
+          { action: "subagent", resource: "*", effect: "allow" },
           { action: "external_directory", resource: "*", effect: "allow" },
         )
       })
