@@ -94,6 +94,13 @@ export const VoiceTranscribeInput = Schema.Struct({
   delivery: SessionInbox.Delivery.pipe(Schema.optional),
 }).annotate({ identifier: "VoiceTranscribeInput" })
 
+export interface VoiceDictateInput extends Schema.Schema.Type<typeof VoiceDictateInput> {}
+export const VoiceDictateInput = Schema.Struct({
+  /** Base64-encoded audio bytes (short dictation clip; webm/opus or wav). */
+  audio: Schema.String,
+  language: Schema.String.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceDictateInput" })
+
 export interface VoiceAcceptInput extends Schema.Schema.Type<typeof VoiceAcceptInput> {}
 export const VoiceAcceptInput = Schema.Struct({
   itemId: SessionMessage.ID,
@@ -178,6 +185,26 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         summary: "Transcribe uploaded voice recording",
         description:
           "Experimental: may change without compatibility guarantees. Starts a server-side job that transcribes audio previously uploaded to `audioPath` with the configured local whisper endpoint, enriches it with a summary and todos, and admits it as pending synthetic session input without waking execution. Returns immediately with the job id and the target session.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("voice.dictate", "/api/experimental/voice/dictate", {
+      payload: VoiceDictateInput,
+      success: Schema.Struct({
+        data: Schema.Struct({
+          text: Schema.String,
+          language: Schema.String.pipe(Schema.optional),
+          segments: Schema.Array(VoiceIngestSegment).pipe(Schema.optional),
+        }),
+      }).annotate({ identifier: "VoiceDictateResponse" }),
+      error: [InvalidRequestError, ServiceUnavailableError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.dictate",
+        summary: "Transcribe a dictation clip synchronously",
+        description:
+          "Experimental: may change without compatibility guarantees. Transcribes a short base64-encoded microphone clip with the same server-side whisper endpoint the voice recorder pipeline uses, returning the text (and segments) in the response instead of starting a background job. Nothing is stored; use voice.transcribe for long recordings that should become voice notes.",
       }),
     ),
   )

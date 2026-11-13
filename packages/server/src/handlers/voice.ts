@@ -11,7 +11,7 @@ import { AbsolutePath } from "@opencode/core/schema"
 import { Transcribe } from "@opencode/core/transcribe"
 import { Voice } from "@opencode/core/voice"
 import { ConflictError, InvalidRequestError, ServiceUnavailableError } from "@opencode/protocol/errors"
-import type { VoiceIngestInput } from "@opencode/protocol/groups/voice"
+import type { VoiceIngestInput, VoiceIngestSegment } from "@opencode/protocol/groups/voice"
 import { SessionMessage } from "@opencode/schema/session-message"
 import { Global } from "@opencode/util/global"
 import { createHash } from "node:crypto"
@@ -28,6 +28,9 @@ const VoiceInboxSessionID = Session.ID.make("ses_voice_inbox")
 
 /** Shipped mp3s older than this are pruned opportunistically during transcribe jobs. */
 const RETENTION_DAYS = 30
+
+/** Ceiling for a synchronous dictation clip (a few minutes of audio), past which voice.transcribe is the right route. */
+const DICTATE_MAX_BYTES = 8 * 1024 * 1024
 
 const rememberUnavailable = () =>
   new ServiceUnavailableError({ message: "Memory is unavailable for that project", service: "memory" })
@@ -348,6 +351,62 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
               }),
             })
             return { data: { jobID: info.id, sessionID } }
+          },
+          Effect.provide(services),
+          locationErrors,
+        ),
+      )
+      .handle(
+        "voice.dictate",
+        Effect.fn("server.voice.dictate")(
+          function* (request) {
+            const config = yield* Config.Service
+            const voiceConfig = Config.latest(yield* config.entries(), "experimental")?.voice
+            if (voiceConfig === false)
+              return yield* new ServiceUnavailableError({ message: "Voice transcription is disabled by config", service: "voice" })
+            // A dictation clip is seconds of audio; anything past a few minutes belongs on the
+            // job-based voice.transcribe path, not a synchronous request.
+            const data = Buffer.from(request.payload.audio, "base64")
+            if (data.byteLength === 0 || data.byteLength > DICTATE_MAX_BYTES)
+              return yield* new InvalidRequestError({
+                message: `Dictation audio must decode to between 1 and ${DICTATE_MAX_BYTES} bytes`,
+                field: "audio",
+              })
+            const transcribe = yield* Transcribe.Service
+            // Transcribe takes a path (its contract with fs.write'd recordings); ffmpeg sniffs
+            // the bytes, so the spooled name's extension only needs to be audio-shaped.
+            const file = join(global.tmp, `dictate-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.webm`)
+            yield* Effect.tryPromise(() => mkdir(global.tmp, { recursive: true }).then(() => writeFile(file, data))).pipe(
+              Effect.mapError((error) => new ServiceUnavailableError({ message: `Cannot spool dictation clip: ${(error as Error).message}`, service: "whisper" })),
+            )
+            try {
+              const audio = yield* transcribe
+                .file({
+                  path: file,
+                  ...(request.payload.language === undefined ? {} : { language: request.payload.language }),
+                })
+                .pipe(Effect.mapError((error) => new ServiceUnavailableError({ message: error.message, service: "whisper" })))
+              return {
+                data: {
+                  text: audio.text,
+                  ...(audio.language === undefined ? {} : { language: audio.language }),
+                  ...(audio.segments === undefined
+                    ? {}
+                    : {
+                        segments: audio.segments.map(
+                          (segment): VoiceIngestSegment => ({
+                            start: segment.start,
+                            end: segment.end,
+                            text: segment.text,
+                            ...(segment.speaker === undefined ? {} : { speaker: segment.speaker }),
+                          }),
+                        ),
+                      }),
+                },
+              }
+            } finally {
+              yield* Effect.tryPromise(() => rm(file)).pipe(Effect.catch(() => Effect.void))
+            }
           },
           Effect.provide(services),
           locationErrors,

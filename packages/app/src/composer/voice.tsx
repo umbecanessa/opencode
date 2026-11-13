@@ -11,6 +11,7 @@ import { useI18n } from "@opencode/ui/context/i18n"
 import { useCommand } from "@/shell/commands/command"
 import { showToast } from "@/shell/notifications/toast"
 import { useLanguage } from "@/runtime/i18n/language"
+import { useServerSDK } from "@/runtime/server/client"
 
 type RecognitionResult = { isFinal: boolean; 0: { transcript: string } }
 type RecognitionEvent = { resultIndex: number; results: { length: number; [index: number]: RecognitionResult } }
@@ -38,9 +39,11 @@ type Transcriber = ((audio: Float32Array, options: Record<string, unknown>) => P
   dispose?: () => Promise<void>
 }
 
-// Electron has no Chromium speech service, so dictation there runs Whisper locally through
-// transformers.js; browsers keep using the built-in SpeechRecognition. `opencode.voice.engine`
-// in localStorage forces either one ("speech" | "whisper") and `opencode.voice.model` picks the model.
+// Electron has no Chromium speech service, so dictation there needs a transcriber; the clip goes
+// to the server's whisper endpoint first (the same engine the voice-recorder pipeline uses) and
+// only falls back to an in-app transformers.js model when the server has nothing. Browsers keep
+// using the built-in SpeechRecognition. `opencode.voice.engine` in localStorage forces either
+// one ("speech" | "whisper") and `opencode.voice.model` picks the in-app fallback model.
 function preferredEngine(): "speech" | "whisper" {
   const forced = localStorage.getItem("opencode.voice.engine")
   if (forced === "speech" || forced === "whisper") return forced
@@ -282,6 +285,7 @@ function DialogVoiceLanguage() {
 
 export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefined }) {
   const i18n = useI18n()
+  const sdk = useServerSDK()
   const factory = window.SpeechRecognition ?? window.webkitSpeechRecognition
   const engine = preferredEngine()
   const dialog = useDialog()
@@ -309,7 +313,6 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
   let stream: MediaStream | undefined
   let recorder: MediaRecorder | undefined
   let chunks: Blob[] = []
-  let transcriber: Transcriber | undefined
   let disposed = false
   // The interim text the button owns inside the editor; each new interim replaces it in place.
   let owned = ""
@@ -402,20 +405,15 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
     owned = ""
   }
 
-  // --- Local Whisper backend (Electron; any browser without a speech service) ---
+  // --- Local Whisper fallback (Electron; any browser without a speech service or a server transcriber) ---
 
-  const loadTranscriber = async () => {
-    transcriber = await loadWhisper(whisperModel(), (percent) =>
-      setState("note", `${i18n.t("ui.promptInput.voiceModelLoading")} ${Math.round(percent)}%`),
-    )
-    return transcriber
-  }
+  const loadTranscriber = () =>
+    loadWhisper(whisperModel(), (percent) => setState("note", `${i18n.t("ui.promptInput.voiceModelLoading")} ${Math.round(percent)}%`))
 
   const startWhisper = async () => {
     try {
-      setState({ phase: "busy", note: i18n.t("ui.promptInput.voiceModelLoading") })
-      await loadTranscriber()
-      if (disposed) return
+      // The in-app model is deliberately not preloaded: dictation normally transcribes on the
+      // server, and the transformers.js graph only loads when that route turns out unavailable.
       try {
         stream = await navigator.mediaDevices.getUserMedia(micConstraints())
       } catch (error) {
@@ -450,6 +448,37 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
     }
   }
 
+  // base64 in 32 KB slices so String.fromCharCode never gets an argument list
+  // long enough to upset the engine's stack limits.
+  const toBase64 = async (blob: Blob) => {
+    const bytes = new Uint8Array(await blob.arrayBuffer())
+    let binary = ""
+    for (let index = 0; index < bytes.length; index += 0x8000)
+      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
+    return btoa(binary)
+  }
+
+  // Server-side transcription of the recorded clip; undefined = not available, which
+  // tells the caller to run the in-app whisper instead. Any failure lands here: this is
+  // an optimization over the old behavior, never a new way to lose a dictation.
+  const serverDictate = async (blob: Blob) => {
+    try {
+      const source = savedLanguage()
+      const startedAt = performance.now()
+      const result = await sdk.api.experimental.voice.dictate({
+        audio: await toBase64(blob),
+        ...(source === "auto" ? {} : { language: source }),
+      })
+      debug("server transcribed in", Math.round(performance.now() - startedAt), "ms", JSON.stringify(result.text.slice(0, 80)))
+
+      return result.text.trim()
+    } catch (error) {
+      debug("server transcribe unavailable", error instanceof Error ? error.message : String(error))
+
+      return undefined
+    }
+  }
+
   const transcribeRecorded = async () => {
     try {
       const blob = new Blob(chunks, { type: recorder?.mimeType || "audio/webm" })
@@ -471,12 +500,26 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
 
         return
       }
+      // One engine for the whole product: the clip first goes to the server's whisper — the same
+      // endpoint the voice-recorder pipeline uses, diarization included. `undefined` means this
+      // server has no transcriber (old build, disabled, unreachable), and the in-app
+      // transformers.js whisper takes over exactly as it did before.
+      const dictated = await serverDictate(blob)
+      if (dictated !== undefined) {
+        if (dictated) commit(dictated, true)
+        else notify(i18n.t("ui.promptInput.voiceNoSpeech"), "default")
+        return
+      }
+      // The model is loaded here rather than at record start: only the fallback path needs it,
+      // and the graph stays warm in the module cache between attempts.
+      setState("note", i18n.t("ui.promptInput.voiceModelLoading"))
+      const pipeline = await loadTranscriber()
       // transformers.js has no language detection (TODO in the library) and a wrong language
       // token produces fluent-but-wrong text, so "auto" detects the language with a one-token
       // generation from bare <|startoftranscript|> before the real pass runs.
       const englishOnly = whisperModel().endsWith(".en")
       const source = savedLanguage()
-      const language = englishOnly ? "" : source === "auto" ? await detectSpokenLanguage(audio) : source
+      const language = englishOnly ? "" : source === "auto" ? await detectSpokenLanguage(pipeline, audio) : source
       const options = {
         chunk_length_s: 30,
         stride_length_s: 5,
@@ -490,7 +533,7 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
       const startedAt = performance.now()
       try {
         const result = await Promise.race([
-          transcriber!(audio, options),
+          pipeline(audio, options),
           new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("Transcription timed out")), 120_000))),
         ])
         debug("transcribed in", Math.round(performance.now() - startedAt), "ms", JSON.stringify(result.text.slice(0, 80)))
@@ -522,9 +565,9 @@ export function ComposerVoiceButton(props: { editor: () => HTMLElement | undefin
 
   // Whisper's first generated token after a bare <|startoftranscript|> is its own language pick;
   // reading it costs one encoder pass + one step, versus a wrong-language full pass.
-  const detectSpokenLanguage = async (audio: Float32Array) => {
+  const detectSpokenLanguage = async (pipeline: Transcriber, audio: Float32Array) => {
     try {
-      const asr = transcriber as unknown as {
+      const asr = pipeline as unknown as {
         processor: (a: Float32Array) => Promise<{ input_features: unknown }>
         model: {
           generation_config?: { decoder_start_token_id?: number; lang_to_id?: Record<string, number> }

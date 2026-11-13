@@ -126,6 +126,8 @@ import type {
   ExperimentalVoiceIngestOutput,
   ExperimentalVoiceTranscribeInput,
   ExperimentalVoiceTranscribeOutput,
+  ExperimentalVoiceDictateInput,
+  ExperimentalVoiceDictateOutput,
   ExperimentalVoiceAcceptInput,
   ExperimentalVoiceAcceptOutput,
   ExperimentalVoiceRememberInput,
@@ -1333,6 +1335,18 @@ export function make(options: ClientOptions) {
               },
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 409, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        dictate: (input: ExperimentalVoiceDictateInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceDictateOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/voice/dictate`,
+              body: { audio: input["audio"], language: input["language"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
               empty: false,
             },
             requestOptions,
@@ -2907,6 +2921,8 @@ export function make(options: ClientOptions) {
       ingest: client.experimental.voice.ingest,
       /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
       transcribe: client.experimental.voice.transcribe,
+      /** @deprecated Use `client.experimental.voice.dictate`. Removed in the next minor. */
+      dictate: client.experimental.voice.dictate,
       /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
       accept: client.experimental.voice.accept,
       /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */

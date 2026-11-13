@@ -1616,6 +1616,23 @@ export type ExperimentalVoiceTranscribeOperation<E = never> = (
   input: ExperimentalVoiceTranscribeInput,
 ) => Effect.Effect<ExperimentalVoiceTranscribeOutput, E>
 
+export type ExperimentalVoiceDictateInput = { readonly audio: string; readonly language?: string | undefined }
+export type ExperimentalVoiceDictateOutput = {
+  readonly text: string
+  readonly language?: string | undefined
+  readonly segments?:
+    | ReadonlyArray<{
+        readonly start: number
+        readonly end: number
+        readonly speaker?: string | undefined
+        readonly text: string
+      }>
+    | undefined
+}
+export type ExperimentalVoiceDictateOperation<E = never> = (
+  input: ExperimentalVoiceDictateInput,
+) => Effect.Effect<ExperimentalVoiceDictateOutput, E>
+
 export type ExperimentalVoiceAcceptInput = {
   readonly itemId: SessionMessage.ID
   readonly sessionID: Session.ID
@@ -1640,6 +1657,7 @@ export interface ExperimentalVoiceApi<E = never> {
   readonly session: ExperimentalVoiceSessionOperation<E>
   readonly ingest: ExperimentalVoiceIngestOperation<E>
   readonly transcribe: ExperimentalVoiceTranscribeOperation<E>
+  readonly dictate: ExperimentalVoiceDictateOperation<E>
   readonly accept: ExperimentalVoiceAcceptOperation<E>
   readonly remember: ExperimentalVoiceRememberOperation<E>
 }
@@ -3126,6 +3144,15 @@ export type VoiceTranscribeOutput = ExperimentalVoiceTranscribeOutput
 /** @deprecated Use `ExperimentalVoiceTranscribeOperation`. Removed in the next minor. */
 export type VoiceTranscribeOperation<E = never> = ExperimentalVoiceTranscribeOperation<E>
 
+/** @deprecated Use `ExperimentalVoiceDictateInput`. Removed in the next minor. */
+export type VoiceDictateInput = ExperimentalVoiceDictateInput
+
+/** @deprecated Use `ExperimentalVoiceDictateOutput`. Removed in the next minor. */
+export type VoiceDictateOutput = ExperimentalVoiceDictateOutput
+
+/** @deprecated Use `ExperimentalVoiceDictateOperation`. Removed in the next minor. */
+export type VoiceDictateOperation<E = never> = ExperimentalVoiceDictateOperation<E>
+
 /** @deprecated Use `ExperimentalVoiceAcceptInput`. Removed in the next minor. */
 export type VoiceAcceptInput = ExperimentalVoiceAcceptInput
 
@@ -3317,6 +3344,9 @@ export interface AppApi<E = never> {
 
     /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
     readonly transcribe: ExperimentalVoiceTranscribeOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.dictate`. Removed in the next minor. */
+    readonly dictate: ExperimentalVoiceDictateOperation<E>
 
     /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
     readonly accept: ExperimentalVoiceAcceptOperation<E>

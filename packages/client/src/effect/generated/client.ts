@@ -132,6 +132,8 @@ import type {
   ExperimentalVoiceIngestOutput,
   ExperimentalVoiceTranscribeInput,
   ExperimentalVoiceTranscribeOutput,
+  ExperimentalVoiceDictateInput,
+  ExperimentalVoiceDictateOutput,
   ExperimentalVoiceAcceptInput,
   ExperimentalVoiceAcceptOutput,
   ExperimentalVoiceRememberInput,
@@ -1065,6 +1067,14 @@ const EndpointExperimentalVoiceTranscribe =
       ),
     )
 
+const EndpointExperimentalVoiceDictate = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceDictateInput) =>
+  preserveEffect<ExperimentalVoiceDictateOutput>()(
+    raw["voice.dictate"]({ payload: { audio: input["audio"], language: input["language"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const EndpointExperimentalVoiceAccept = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceAcceptInput) =>
   preserveEffect<ExperimentalVoiceAcceptOutput>()(
     raw["voice.accept"]({
@@ -1088,6 +1098,7 @@ const adaptGroupExperimentalVoice = (raw: RawClient["server.voice"]) => ({
   session: EndpointExperimentalVoiceSession(raw),
   ingest: EndpointExperimentalVoiceIngest(raw),
   transcribe: EndpointExperimentalVoiceTranscribe(raw),
+  dictate: EndpointExperimentalVoiceDictate(raw),
   accept: EndpointExperimentalVoiceAccept(raw),
   remember: EndpointExperimentalVoiceRemember(raw),
 })
@@ -2207,6 +2218,8 @@ const adaptClient = (raw: RawClient) => {
       ingest: client.experimental.voice.ingest,
       /** @deprecated Use `client.experimental.voice.transcribe`. Removed in the next minor. */
       transcribe: client.experimental.voice.transcribe,
+      /** @deprecated Use `client.experimental.voice.dictate`. Removed in the next minor. */
+      dictate: client.experimental.voice.dictate,
       /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
       accept: client.experimental.voice.accept,
       /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */

@@ -219,6 +219,8 @@ export type VoiceWebRTCTransport = { type: "webrtc"; sdp: string }
 
 export type VoiceWebSocketTransport = { type: "websocket"; url: string; token: string; expiresAt: number }
 
+export type VoiceIngestSegment = { start: number; end: number; speaker?: string | undefined; text: string }
+
 export type IntegrationID = string
 
 export type IntegrationMethodID = string
@@ -758,6 +760,10 @@ export type GenerateChoiceAnswer = {
 export type VoiceModel = { model: string; provider: string; transports: Array<VoiceTransportType>; available: boolean }
 
 export type VoiceTransport = VoiceWebRTCTransport | VoiceWebSocketTransport
+
+export type VoiceDictateResponse = {
+  data: { text: string; language?: string | undefined; segments?: Array<VoiceIngestSegment> | undefined }
+}
 
 export type IntegrationCommandMethod = {
   id: IntegrationMethodID
@@ -4055,6 +4061,10 @@ export type ExperimentalVoiceTranscribeInput = {
 
 export type ExperimentalVoiceTranscribeOutput = VoiceTranscribeResponse["data"]
 
+export type ExperimentalVoiceDictateInput = { readonly audio: string; readonly language?: string | undefined }
+
+export type ExperimentalVoiceDictateOutput = VoiceDictateResponse["data"]
+
 export type ExperimentalVoiceAcceptInput = {
   readonly itemId: string
   readonly sessionID: string
@@ -5072,6 +5082,12 @@ export type VoiceTranscribeInput = ExperimentalVoiceTranscribeInput
 
 /** @deprecated Use `ExperimentalVoiceTranscribeOutput`. Removed in the next minor. */
 export type VoiceTranscribeOutput = ExperimentalVoiceTranscribeOutput
+
+/** @deprecated Use `ExperimentalVoiceDictateInput`. Removed in the next minor. */
+export type VoiceDictateInput = ExperimentalVoiceDictateInput
+
+/** @deprecated Use `ExperimentalVoiceDictateOutput`. Removed in the next minor. */
+export type VoiceDictateOutput = ExperimentalVoiceDictateOutput
 
 /** @deprecated Use `ExperimentalVoiceAcceptInput`. Removed in the next minor. */
 export type VoiceAcceptInput = ExperimentalVoiceAcceptInput

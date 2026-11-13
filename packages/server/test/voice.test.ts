@@ -394,6 +394,73 @@ it.live(
 )
 
 it.live(
+  "dictates a base64 clip synchronously with the configured transcriber",
+  () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-dictate-")))
+      const global = path.join(tmp.path, "global")
+      yield* Effect.promise(() => fs.mkdir(global))
+      const whisper = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request) {
+          if (!new URL(request.url).pathname.endsWith("/audio/transcriptions"))
+            return new Response("not found", { status: 404 })
+          return Response.json({
+            text: "ship the dictate endpoint",
+            language: "en",
+            segments: [
+              { id: 0, start: 0, end: 1.5, speaker: "0", text: " ship the" },
+              { id: 1, start: 1.5, end: 3, speaker: "1", text: " dictate endpoint" },
+            ],
+          })
+        },
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => whisper.stop()))
+      const handler = yield* ServerFetch.make(
+        {
+          database: { path: ":memory:" },
+          config: {
+            directory: global,
+            content: JSON.stringify({ experimental: { voice: { transcribe: { url: `http://127.0.0.1:${whisper.port}/v1` } } } }),
+          },
+          fs: { filewatcher: false },
+          models: { fetch: false },
+        },
+        { overrides: [Generate.node.replace(generate)] },
+      )
+      const send = (pathname: string, init?: RequestInit) =>
+        Effect.promise(() => handler(new Request(`http://opencode.local${pathname}`, init)))
+
+      const dictated = yield* send("/api/experimental/voice/dictate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audio: Buffer.from("fake webm bytes").toString("base64") }),
+      })
+      expect(dictated.status).toBe(200)
+      const result = (yield* Effect.promise(() => dictated.json())) as {
+        data: { text: string; language?: string; segments?: Array<{ start: number; text: string; speaker?: string }> }
+      }
+      expect(result.data.text).toBe("ship the dictate endpoint")
+      expect(result.data.language).toBe("en")
+      // Segments arrive with diarizer labels intact, so the client can render speakers.
+      expect(result.data.segments?.map((segment) => segment.speaker)).toEqual(["0", "1"])
+
+      // An empty clip is a client mistake, not a transcriber failure.
+      expect(
+        (
+          yield* send("/api/experimental/voice/dictate", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ audio: "" }),
+          })
+        ).status,
+      ).toBe(400)
+    }),
+  { timeout: 45_000 },
+)
+
+it.live(
   "waits for the transcriber to come back and still delivers the note",
   () =>
     Effect.gen(function* () {
