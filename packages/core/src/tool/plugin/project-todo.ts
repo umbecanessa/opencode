@@ -136,14 +136,31 @@ export const Plugin = {
                 message = removed ? `Deleted ${input.id}.` : missing(input.id)
               }
               // Every action ends with a list in scope, so the model always sees the state it caused.
+              // An explicit `content` string replaces the serialized output on the wire, so the rows
+              // must be rendered into it: message + count alone leaves agents blind to the items.
               const todos = listed ?? (yield* todo.list({ ...board, status: "open" }))
               return {
                 output: { todos: [...todos], message },
-                content: `${message} ${todos.length} todo(s) listed.`,
+                content: `${message} ${todos.length} todo(s) listed.${renderTodos(todos)}`,
               }
             }),
         })
       })
       .pipe(Effect.orDie)
   }),
+}
+
+// Compact board rendering for the model-visible content. Open items first is the service's
+// own order; long tails (mostly done rows) are elided with an explicit note rather than
+// silently dropped.
+const renderTodos = (todos: ReadonlyArray<Todo.Info>) => {
+  if (todos.length === 0) return ""
+  const shown = todos.slice(0, 40)
+  const lines = shown.map((item) => {
+    const description = item.description === undefined || item.description === "" ? "" : ` — ${item.description.replace(/\s+/g, " ").slice(0, 120)}`
+    const addressed = item.assignee === undefined ? "" : ` (-> ${item.assignee})`
+    return `\n- ${item.status} ${item.id} "${item.text.replace(/\s+/g, " ")}"${description}${addressed}`
+  })
+  const rest = todos.length - shown.length
+  return lines.join("") + (rest > 0 ? `\n... ${rest} more, mostly older done items; list again with filters to see them` : "")
 }

@@ -86,6 +86,12 @@ describe("ProjectTodoTool", () => {
       // Rows from both projects, including one owned by another session.
       expect(output.todos.map((item) => item.directory).sort()).toEqual(["/board-alpha", "/board-beta", "/board-beta"])
       expect(output.todos.some((item) => item.assignee === "ses_beta")).toBe(true)
+      // The model-visible content carries the actual rows, not just the count.
+      const content = (result as { content: ReadonlyArray<{ type: string; text: string }> }).content[0].text
+      expect(content).toContain("Todos across all projects.")
+      expect(content).toContain("alpha work")
+      expect(content).toContain("beta owned")
+      expect(content).toContain("(-> ses_beta)")
     }),
   )
 
