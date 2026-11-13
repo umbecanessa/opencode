@@ -235,6 +235,23 @@ This tool is disabled for the General subagent by default, but you can enable it
 
 ---
 
+### transcribe
+
+Transcribe audio with the server's local whisper.
+
+```json title="opencode.json" {4}
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "read": "allow"
+  }
+}
+```
+
+Accepts an audio file path (absolute or relative to the project) or a `media:<hash>` reference from a message attachment — for example a voice memo forwarded from another chat app. Long recordings are diarized, so the transcript reads as speaker turns, and enrolled voices (voiceprints) appear by name. File paths go through the same read permission as the [read](#read) tool. Requires a working transcriber configured under `experimental.voice.transcribe`.
+
+---
+
 ### webfetch
 
 Fetch web content.
