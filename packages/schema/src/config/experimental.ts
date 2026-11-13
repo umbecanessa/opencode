@@ -37,6 +37,10 @@ export class Info extends Schema.Class<Info>("ConfigExperimental.Info")({
   schedules: Schema.Boolean.pipe(optional).annotate({
     description: "Enable experimental scheduled tasks that wake a session with a prompt. Defaults to false.",
   }),
+  scrum: Schema.Boolean.pipe(optional).annotate({
+    description:
+      "Enable the scrum coordinator: adopts a hidden-by-default session running the scrum agent and feeds it coalesced wakes (sessions ending with open todos, unclaimed todos, idle projects). Defaults to false.",
+  }),
   artifacts: Schema.Boolean.pipe(optional).annotate({
     description: "Enable experimental artifacts backed by pluggable providers. Defaults to false.",
   }),
