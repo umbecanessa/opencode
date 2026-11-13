@@ -182,6 +182,7 @@ describe("Agent", () => {
         "compaction",
         "explore",
         "general",
+        "scrum",
         "summary",
         "title",
       ])
@@ -235,6 +236,41 @@ describe("Agent", () => {
           expect(Permission.evaluate("subagent", "*", info.permissions).effect).toBe("deny")
         }),
       )
+    }),
+  )
+
+  it.effect("defines the scrum coordinator as a coordinating-only primary agent", () =>
+    Effect.gen(function* () {
+      const agent = yield* Agent.Service
+      yield* AgentPlugin.Plugin.effect(
+        host({
+          agent: agentHost(agent),
+        }),
+      )
+
+      const scrum = yield* agent.get(Agent.ID.make("scrum"))
+      if (!scrum) throw new Error("expected built-in agent: scrum")
+      expect(scrum.mode).toBe("primary")
+      expect(scrum.hidden).toBe(false)
+      expect(scrum.system).toContain("scrum master")
+      const effect = (action: string, resource = "*") => Permission.evaluate(action, resource, scrum.permissions).effect
+      expect(effect("todo")).toBe("allow")
+      expect(effect("memory_write")).toBe("allow")
+      expect(effect("question")).toBe("allow")
+      expect(effect("session")).toBe("allow")
+      expect(effect("subagent")).toBe("allow")
+      expect(effect("read")).toBe("allow")
+      expect(effect("read", ".env")).toBe("ask")
+      expect(effect("edit")).toBe("deny")
+      expect(effect("write")).toBe("deny")
+      expect(effect("shell")).toBe("deny")
+      expect(effect("execute")).toBe("deny")
+      // Target-scoped spawn denies added by user config must keep the session tools
+      // visible: visibility is evaluated against resource "*", which literal agent-id
+      // patterns do not match.
+      const withTargetDeny = [...scrum.permissions, { action: "session", resource: "build", effect: "deny" as const }]
+      expect(Permission.evaluate("session", "*", withTargetDeny).effect).toBe("allow")
+      expect(Permission.evaluate("session", "build", withTargetDeny).effect).toBe("deny")
     }),
   )
 })
