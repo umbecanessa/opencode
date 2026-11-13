@@ -604,6 +604,19 @@ describe("ConfigNormalize", () => {
     ).toEqual({ policies: [{ action: "provider.use", resource: "*", effect: "deny" }] })
   })
 
+  test("carries experimental.scrum through normalization", () => {
+    // The scrum plugin's boot gate reads this key; a whitelist that drops it silently disables the coordinator.
+    for (const value of [true, false])
+      expect(normalized({ experimental: { scrum: value } }).encoded.experimental).toEqual({ scrum: value })
+    for (const value of ["yes", 1]) {
+      const result = normalized({ experimental: { scrum: value } })
+      expect(result.encoded.experimental).toBeUndefined()
+      expect(result.diagnostics.map((item) => [item.kind, item.path])).toEqual([
+        ["invalid", ["experimental", "scrum"]],
+      ])
+    }
+  })
+
   test("converts legacy prefixed integration.use statements from config and MDM files", () => {
     expect(
       normalized({

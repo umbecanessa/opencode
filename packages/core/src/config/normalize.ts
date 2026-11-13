@@ -575,6 +575,15 @@ function normalizeExperimental(
         )
         if (value !== undefined) result.location_idle_timeout = value
       }
+      if (own(experimental, "scrum")) {
+        const value = decodeEncoded(
+          ConfigExperimental.Info.fields.scrum,
+          experimental.scrum,
+          ["experimental", "scrum"],
+          diagnostics,
+        )
+        if (value !== undefined) result.scrum = value
+      }
     }
   }
   if (Object.keys(result).length || (isRecord(input.experimental) && !Object.keys(input.experimental).length))
