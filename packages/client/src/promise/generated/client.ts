@@ -128,6 +128,11 @@ import type {
   ExperimentalVoiceTranscribeOutput,
   ExperimentalVoiceDictateInput,
   ExperimentalVoiceDictateOutput,
+  ExperimentalVoiceSpeakersOutput,
+  ExperimentalVoiceEnrollInput,
+  ExperimentalVoiceEnrollOutput,
+  ExperimentalVoiceForgetInput,
+  ExperimentalVoiceForgetOutput,
   ExperimentalVoiceAcceptInput,
   ExperimentalVoiceAcceptOutput,
   ExperimentalVoiceRememberInput,
@@ -1345,6 +1350,46 @@ export function make(options: ClientOptions) {
               method: "POST",
               path: `/api/experimental/voice/dictate`,
               body: { audio: input["audio"], language: input["language"] },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        speakers: (requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceSpeakersOutput }>(
+            {
+              method: "GET",
+              path: `/api/experimental/voice/speakers`,
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        enroll: (input: ExperimentalVoiceEnrollInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceEnrollOutput }>(
+            {
+              method: "POST",
+              path: `/api/experimental/voice/enroll`,
+              body: {
+                name: input["name"],
+                audio: input["audio"],
+                audioPath: input["audioPath"],
+                ranges: input["ranges"],
+                source: input["source"],
+              },
+              successStatus: 200,
+              declaredStatuses: [400, 401, 404, 503],
+              empty: false,
+            },
+            requestOptions,
+          ).then((value) => value.data),
+        forget: (input: ExperimentalVoiceForgetInput, requestOptions?: RequestOptions) =>
+          request<{ readonly data: ExperimentalVoiceForgetOutput }>(
+            {
+              method: "DELETE",
+              path: `/api/experimental/voice/speakers/${encodeURIComponent(input.name)}`,
               successStatus: 200,
               declaredStatuses: [400, 401, 404, 503],
               empty: false,
@@ -2923,6 +2968,12 @@ export function make(options: ClientOptions) {
       transcribe: client.experimental.voice.transcribe,
       /** @deprecated Use `client.experimental.voice.dictate`. Removed in the next minor. */
       dictate: client.experimental.voice.dictate,
+      /** @deprecated Use `client.experimental.voice.speakers`. Removed in the next minor. */
+      speakers: client.experimental.voice.speakers,
+      /** @deprecated Use `client.experimental.voice.enroll`. Removed in the next minor. */
+      enroll: client.experimental.voice.enroll,
+      /** @deprecated Use `client.experimental.voice.forget`. Removed in the next minor. */
+      forget: client.experimental.voice.forget,
       /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
       accept: client.experimental.voice.accept,
       /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */

@@ -221,6 +221,8 @@ export type VoiceWebSocketTransport = { type: "websocket"; url: string; token: s
 
 export type VoiceIngestSegment = { start: number; end: number; speaker?: string | undefined; text: string }
 
+export type VoiceSpeaker = { name: string; created?: number | undefined; source?: string | undefined }
+
 export type IntegrationID = string
 
 export type IntegrationMethodID = string
@@ -764,6 +766,12 @@ export type VoiceTransport = VoiceWebRTCTransport | VoiceWebSocketTransport
 export type VoiceDictateResponse = {
   data: { text: string; language?: string | undefined; segments?: Array<VoiceIngestSegment> | undefined }
 }
+
+export type VoiceSpeakersResponse = { data: { speakers: Array<VoiceSpeaker> } }
+
+export type VoiceEnrollResponse = { data: { speakers: Array<VoiceSpeaker> } }
+
+export type VoiceForgetResponse = { data: { removed: boolean; speakers: Array<VoiceSpeaker> } }
 
 export type IntegrationCommandMethod = {
   id: IntegrationMethodID
@@ -4065,6 +4073,22 @@ export type ExperimentalVoiceDictateInput = { readonly audio: string; readonly l
 
 export type ExperimentalVoiceDictateOutput = VoiceDictateResponse["data"]
 
+export type ExperimentalVoiceSpeakersOutput = VoiceSpeakersResponse["data"]
+
+export type ExperimentalVoiceEnrollInput = {
+  readonly name: string
+  readonly audio?: string | undefined
+  readonly audioPath?: string | undefined
+  readonly ranges?: ReadonlyArray<readonly [number, number]> | undefined
+  readonly source?: string | undefined
+}
+
+export type ExperimentalVoiceEnrollOutput = VoiceEnrollResponse["data"]
+
+export type ExperimentalVoiceForgetInput = { readonly name: string }
+
+export type ExperimentalVoiceForgetOutput = VoiceForgetResponse["data"]
+
 export type ExperimentalVoiceAcceptInput = {
   readonly itemId: string
   readonly sessionID: string
@@ -5088,6 +5112,21 @@ export type VoiceDictateInput = ExperimentalVoiceDictateInput
 
 /** @deprecated Use `ExperimentalVoiceDictateOutput`. Removed in the next minor. */
 export type VoiceDictateOutput = ExperimentalVoiceDictateOutput
+
+/** @deprecated Use `ExperimentalVoiceSpeakersOutput`. Removed in the next minor. */
+export type VoiceSpeakersOutput = ExperimentalVoiceSpeakersOutput
+
+/** @deprecated Use `ExperimentalVoiceEnrollInput`. Removed in the next minor. */
+export type VoiceEnrollInput = ExperimentalVoiceEnrollInput
+
+/** @deprecated Use `ExperimentalVoiceEnrollOutput`. Removed in the next minor. */
+export type VoiceEnrollOutput = ExperimentalVoiceEnrollOutput
+
+/** @deprecated Use `ExperimentalVoiceForgetInput`. Removed in the next minor. */
+export type VoiceForgetInput = ExperimentalVoiceForgetInput
+
+/** @deprecated Use `ExperimentalVoiceForgetOutput`. Removed in the next minor. */
+export type VoiceForgetOutput = ExperimentalVoiceForgetOutput
 
 /** @deprecated Use `ExperimentalVoiceAcceptInput`. Removed in the next minor. */
 export type VoiceAcceptInput = ExperimentalVoiceAcceptInput

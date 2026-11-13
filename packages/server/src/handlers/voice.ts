@@ -35,6 +35,14 @@ const DICTATE_MAX_BYTES = 8 * 1024 * 1024
 const rememberUnavailable = () =>
   new ServiceUnavailableError({ message: "Memory is unavailable for that project", service: "memory" })
 
+// Voiceprint calls ride the whisper endpoint: a refusal is the caller's mistake (bad audio),
+// anything else means the identity store on the transcriber host is out of reach.
+const voiceprintError = (error: Transcribe.Error) =>
+  error instanceof Transcribe.RejectedError
+    ? new InvalidRequestError({ message: error.message })
+    : new ServiceUnavailableError({ message: error.message, service: "whisper" })
+const voiceprintUnavailable = (error: Transcribe.Error) => new ServiceUnavailableError({ message: error.message, service: "whisper" })
+
 const Enrichment = Schema.Struct({
   summary: Schema.optional(Schema.String),
   todos: Schema.optional(Schema.Array(Schema.String)),
@@ -407,6 +415,75 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
             } finally {
               yield* Effect.tryPromise(() => rm(file)).pipe(Effect.catch(() => Effect.void))
             }
+          },
+          Effect.provide(services),
+          locationErrors,
+        ),
+      )
+      .handle(
+        "voice.speakers",
+        Effect.fn("server.voice.speakers")(
+          function* () {
+            const transcribe = yield* Transcribe.Service
+            const speakers = yield* transcribe.speakers().pipe(Effect.mapError(voiceprintUnavailable))
+            return { data: { speakers } }
+          },
+          Effect.provide(services),
+          locationErrors,
+        ),
+      )
+      .handle(
+        "voice.enroll",
+        Effect.fn("server.voice.enroll")(
+          function* (request) {
+            const payload = request.payload
+            const name = payload.name.trim()
+            if (name === "")
+              return yield* new InvalidRequestError({ message: "Speaker name must not be empty", field: "name" })
+            if (payload.audio === undefined && payload.audioPath === undefined)
+              return yield* new InvalidRequestError({ message: "Provide base64 `audio` or a server-side `audioPath`", field: "audio" })
+            const transcribe = yield* Transcribe.Service
+            // A phone-mic clip arrives as base64; spool it exactly like voice.dictate does.
+            let path = payload.audioPath
+            let spooled: string | undefined
+            if (path === undefined) {
+              const data = Buffer.from(payload.audio!, "base64")
+              if (data.byteLength === 0 || data.byteLength > DICTATE_MAX_BYTES)
+                return yield* new InvalidRequestError({
+                  message: `Enrollment audio must decode to between 1 and ${DICTATE_MAX_BYTES} bytes`,
+                  field: "audio",
+                })
+              spooled = join(global.tmp, `enroll-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}.webm`)
+              yield* Effect.tryPromise(() => mkdir(global.tmp, { recursive: true }).then(() => writeFile(spooled!, data))).pipe(
+                Effect.mapError((error) => new ServiceUnavailableError({ message: `Cannot spool enrollment clip: ${(error as Error).message}`, service: "whisper" })),
+              )
+              path = spooled
+            }
+            try {
+              const speakers = yield* transcribe
+                .enroll({
+                  name,
+                  path,
+                  ...(payload.ranges === undefined ? {} : { ranges: payload.ranges }),
+                  ...(payload.source === undefined ? {} : { source: payload.source }),
+                })
+                .pipe(Effect.mapError(voiceprintError))
+              return { data: { speakers } }
+            } finally {
+              if (spooled !== undefined) yield* Effect.tryPromise(() => rm(spooled!)).pipe(Effect.catch(() => Effect.void))
+            }
+          },
+          Effect.provide(services),
+          locationErrors,
+        ),
+      )
+      .handle(
+        "voice.forget",
+        Effect.fn("server.voice.forget")(
+          function* (request) {
+            const transcribe = yield* Transcribe.Service
+            const { removed, speakers } = yield* transcribe.forget(request.params.name).pipe(Effect.mapError(voiceprintUnavailable))
+            return { data: { removed, speakers } }
           },
           Effect.provide(services),
           locationErrors,

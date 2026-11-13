@@ -134,6 +134,11 @@ import type {
   ExperimentalVoiceTranscribeOutput,
   ExperimentalVoiceDictateInput,
   ExperimentalVoiceDictateOutput,
+  ExperimentalVoiceSpeakersOutput,
+  ExperimentalVoiceEnrollInput,
+  ExperimentalVoiceEnrollOutput,
+  ExperimentalVoiceForgetInput,
+  ExperimentalVoiceForgetOutput,
   ExperimentalVoiceAcceptInput,
   ExperimentalVoiceAcceptOutput,
   ExperimentalVoiceRememberInput,
@@ -1075,6 +1080,38 @@ const EndpointExperimentalVoiceDictate = (raw: RawClient["server.voice"]) => (in
     ),
   )
 
+const EndpointExperimentalVoiceSpeakers = (raw: RawClient["server.voice"]) => () =>
+  preserveEffect<ExperimentalVoiceSpeakersOutput>()(
+    raw["voice.speakers"]({}).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalVoiceEnroll = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceEnrollInput) =>
+  preserveEffect<ExperimentalVoiceEnrollOutput>()(
+    raw["voice.enroll"]({
+      payload: {
+        name: input["name"],
+        audio: input["audio"],
+        audioPath: input["audioPath"],
+        ranges: input["ranges"],
+        source: input["source"],
+      },
+    }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
+const EndpointExperimentalVoiceForget = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceForgetInput) =>
+  preserveEffect<ExperimentalVoiceForgetOutput>()(
+    raw["voice.forget"]({ params: { name: input["name"] } }).pipe(
+      Effect.mapError(mapClientError),
+      Effect.map((value) => value.data),
+    ),
+  )
+
 const EndpointExperimentalVoiceAccept = (raw: RawClient["server.voice"]) => (input: ExperimentalVoiceAcceptInput) =>
   preserveEffect<ExperimentalVoiceAcceptOutput>()(
     raw["voice.accept"]({
@@ -1099,6 +1136,9 @@ const adaptGroupExperimentalVoice = (raw: RawClient["server.voice"]) => ({
   ingest: EndpointExperimentalVoiceIngest(raw),
   transcribe: EndpointExperimentalVoiceTranscribe(raw),
   dictate: EndpointExperimentalVoiceDictate(raw),
+  speakers: EndpointExperimentalVoiceSpeakers(raw),
+  enroll: EndpointExperimentalVoiceEnroll(raw),
+  forget: EndpointExperimentalVoiceForget(raw),
   accept: EndpointExperimentalVoiceAccept(raw),
   remember: EndpointExperimentalVoiceRemember(raw),
 })
@@ -2220,6 +2260,12 @@ const adaptClient = (raw: RawClient) => {
       transcribe: client.experimental.voice.transcribe,
       /** @deprecated Use `client.experimental.voice.dictate`. Removed in the next minor. */
       dictate: client.experimental.voice.dictate,
+      /** @deprecated Use `client.experimental.voice.speakers`. Removed in the next minor. */
+      speakers: client.experimental.voice.speakers,
+      /** @deprecated Use `client.experimental.voice.enroll`. Removed in the next minor. */
+      enroll: client.experimental.voice.enroll,
+      /** @deprecated Use `client.experimental.voice.forget`. Removed in the next minor. */
+      forget: client.experimental.voice.forget,
       /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
       accept: client.experimental.voice.accept,
       /** @deprecated Use `client.experimental.voice.remember`. Removed in the next minor. */

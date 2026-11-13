@@ -461,6 +461,103 @@ it.live(
 )
 
 it.live(
+  "proxies the whisper voiceprint store through the speakers endpoints",
+  () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-voices-")))
+      const global = path.join(tmp.path, "global")
+      yield* Effect.promise(() => fs.mkdir(global))
+      // A voiceprint store with the wrapper's /v1/voices contract, so the proxy is tested
+      // against the real multipart and status semantics rather than a service stub.
+      const enrolled: Array<{ name: string; created: number; source?: string }> = []
+      const whisper = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request) {
+          const url = new URL(request.url)
+          if (!url.pathname.includes("/voices")) return new Response("not found", { status: 404 })
+          if (request.method === "GET") return Response.json({ voices: enrolled })
+          if (request.method === "DELETE") {
+            const name = decodeURIComponent(url.pathname.split("/voices/")[1] ?? "")
+            const removed = enrolled.some((voice) => voice.name === name)
+            enrolled.splice(
+              0,
+              enrolled.length,
+              ...enrolled.filter((voice) => voice.name !== name),
+            )
+            return Response.json({ ok: true, removed, voices: enrolled })
+          }
+          return request.formData().then((form) => {
+            const name = String(form.get("name") ?? "").trim()
+            if (!name || form.get("file") === null) return Response.json({ error: { message: "missing fields" } }, { status: 400 })
+            enrolled.push({ name, created: 1760000000000, ...(form.get("source") ? { source: String(form.get("source")) } : {}) })
+            return Response.json({ ok: true, voices: enrolled })
+          })
+        },
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => whisper.stop()))
+      const handler = yield* ServerFetch.make(
+        {
+          database: { path: ":memory:" },
+          config: {
+            directory: global,
+            content: JSON.stringify({ experimental: { voice: { transcribe: { url: `http://127.0.0.1:${whisper.port}/v1` } } } }),
+          },
+          fs: { filewatcher: false },
+          models: { fetch: false },
+        },
+        { overrides: [Generate.node.replace(generate)] },
+      )
+      const send = (pathname: string, init?: RequestInit) =>
+        Effect.promise(() => handler(new Request(`http://opencode.local${pathname}`, init)))
+      const speakersOf = (response: Response) =>
+        Effect.promise(() => response.json()).pipe(Effect.map((body: any) => body.data.speakers as Array<Record<string, unknown>>))
+
+      expect((yield* send("/api/experimental/voice/speakers")).status).toBe(200)
+      expect(yield* speakersOf(yield* send("/api/experimental/voice/speakers"))).toEqual([])
+
+      // A phone-mic enrollment arrives as base64 and must reach the wrapper as multipart.
+      const enrolledRes = yield* send("/api/experimental/voice/enroll", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audio: Buffer.from("fake clip bytes").toString("base64"), name: "Alex", source: "mobile" }),
+      })
+      expect(enrolledRes.status).toBe(200)
+      expect(yield* speakersOf(enrolledRes)).toEqual([{ name: "Alex", created: 1760000000000, source: "mobile" }])
+
+      // Enrolling without a name fails on the server before touching the wrapper.
+      expect(
+        (
+          yield* send("/api/experimental/voice/enroll", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ audio: Buffer.from("x").toString("base64"), name: " " }),
+          })
+        ).status,
+      ).toBe(400)
+      // A wrapper refusal (quiet audio) is a client mistake, not a 503.
+      expect(
+        (
+          yield* send("/api/experimental/voice/enroll", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ audio: Buffer.from("x").toString("base64"), name: "" }),
+          })
+        ).status,
+      ).toBe(400)
+
+      const forgotten = yield* send("/api/experimental/voice/speakers/Alex", { method: "DELETE" })
+      expect(forgotten.status).toBe(200)
+      expect((yield* Effect.promise(() => forgotten.json())) as any).toMatchObject({ data: { removed: true, speakers: [] } })
+      // Forgetting a name that was never enrolled is a success with removed: false.
+      const nobody = yield* send("/api/experimental/voice/speakers/Nobody", { method: "DELETE" })
+      expect(nobody.status).toBe(200)
+      expect((yield* Effect.promise(() => nobody.json())) as any).toMatchObject({ data: { removed: false } })
+    }),
+  { timeout: 45_000 },
+)
+
+it.live(
   "waits for the transcriber to come back and still delivers the note",
   () =>
     Effect.gen(function* () {

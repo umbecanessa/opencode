@@ -1633,6 +1633,46 @@ export type ExperimentalVoiceDictateOperation<E = never> = (
   input: ExperimentalVoiceDictateInput,
 ) => Effect.Effect<ExperimentalVoiceDictateOutput, E>
 
+export type ExperimentalVoiceSpeakersOutput = {
+  readonly speakers: ReadonlyArray<{
+    readonly name: string
+    readonly created?: number | undefined
+    readonly source?: string | undefined
+  }>
+}
+export type ExperimentalVoiceSpeakersOperation<E = never> = () => Effect.Effect<ExperimentalVoiceSpeakersOutput, E>
+
+export type ExperimentalVoiceEnrollInput = {
+  readonly name: string
+  readonly audio?: string | undefined
+  readonly audioPath?: string | undefined
+  readonly ranges?: ReadonlyArray<readonly [number, number]> | undefined
+  readonly source?: string | undefined
+}
+export type ExperimentalVoiceEnrollOutput = {
+  readonly speakers: ReadonlyArray<{
+    readonly name: string
+    readonly created?: number | undefined
+    readonly source?: string | undefined
+  }>
+}
+export type ExperimentalVoiceEnrollOperation<E = never> = (
+  input: ExperimentalVoiceEnrollInput,
+) => Effect.Effect<ExperimentalVoiceEnrollOutput, E>
+
+export type ExperimentalVoiceForgetInput = { readonly name: string }
+export type ExperimentalVoiceForgetOutput = {
+  readonly removed: boolean
+  readonly speakers: ReadonlyArray<{
+    readonly name: string
+    readonly created?: number | undefined
+    readonly source?: string | undefined
+  }>
+}
+export type ExperimentalVoiceForgetOperation<E = never> = (
+  input: ExperimentalVoiceForgetInput,
+) => Effect.Effect<ExperimentalVoiceForgetOutput, E>
+
 export type ExperimentalVoiceAcceptInput = {
   readonly itemId: SessionMessage.ID
   readonly sessionID: Session.ID
@@ -1658,6 +1698,9 @@ export interface ExperimentalVoiceApi<E = never> {
   readonly ingest: ExperimentalVoiceIngestOperation<E>
   readonly transcribe: ExperimentalVoiceTranscribeOperation<E>
   readonly dictate: ExperimentalVoiceDictateOperation<E>
+  readonly speakers: ExperimentalVoiceSpeakersOperation<E>
+  readonly enroll: ExperimentalVoiceEnrollOperation<E>
+  readonly forget: ExperimentalVoiceForgetOperation<E>
   readonly accept: ExperimentalVoiceAcceptOperation<E>
   readonly remember: ExperimentalVoiceRememberOperation<E>
 }
@@ -3153,6 +3196,30 @@ export type VoiceDictateOutput = ExperimentalVoiceDictateOutput
 /** @deprecated Use `ExperimentalVoiceDictateOperation`. Removed in the next minor. */
 export type VoiceDictateOperation<E = never> = ExperimentalVoiceDictateOperation<E>
 
+/** @deprecated Use `ExperimentalVoiceSpeakersOutput`. Removed in the next minor. */
+export type VoiceSpeakersOutput = ExperimentalVoiceSpeakersOutput
+
+/** @deprecated Use `ExperimentalVoiceSpeakersOperation`. Removed in the next minor. */
+export type VoiceSpeakersOperation<E = never> = ExperimentalVoiceSpeakersOperation<E>
+
+/** @deprecated Use `ExperimentalVoiceEnrollInput`. Removed in the next minor. */
+export type VoiceEnrollInput = ExperimentalVoiceEnrollInput
+
+/** @deprecated Use `ExperimentalVoiceEnrollOutput`. Removed in the next minor. */
+export type VoiceEnrollOutput = ExperimentalVoiceEnrollOutput
+
+/** @deprecated Use `ExperimentalVoiceEnrollOperation`. Removed in the next minor. */
+export type VoiceEnrollOperation<E = never> = ExperimentalVoiceEnrollOperation<E>
+
+/** @deprecated Use `ExperimentalVoiceForgetInput`. Removed in the next minor. */
+export type VoiceForgetInput = ExperimentalVoiceForgetInput
+
+/** @deprecated Use `ExperimentalVoiceForgetOutput`. Removed in the next minor. */
+export type VoiceForgetOutput = ExperimentalVoiceForgetOutput
+
+/** @deprecated Use `ExperimentalVoiceForgetOperation`. Removed in the next minor. */
+export type VoiceForgetOperation<E = never> = ExperimentalVoiceForgetOperation<E>
+
 /** @deprecated Use `ExperimentalVoiceAcceptInput`. Removed in the next minor. */
 export type VoiceAcceptInput = ExperimentalVoiceAcceptInput
 
@@ -3347,6 +3414,15 @@ export interface AppApi<E = never> {
 
     /** @deprecated Use `client.experimental.voice.dictate`. Removed in the next minor. */
     readonly dictate: ExperimentalVoiceDictateOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.speakers`. Removed in the next minor. */
+    readonly speakers: ExperimentalVoiceSpeakersOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.enroll`. Removed in the next minor. */
+    readonly enroll: ExperimentalVoiceEnrollOperation<E>
+
+    /** @deprecated Use `client.experimental.voice.forget`. Removed in the next minor. */
+    readonly forget: ExperimentalVoiceForgetOperation<E>
 
     /** @deprecated Use `client.experimental.voice.accept`. Removed in the next minor. */
     readonly accept: ExperimentalVoiceAcceptOperation<E>

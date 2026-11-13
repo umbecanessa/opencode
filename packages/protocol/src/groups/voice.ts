@@ -114,6 +114,25 @@ export const VoiceRememberInput = Schema.Struct({
   directory: Schema.String.pipe(Schema.optional),
 }).annotate({ identifier: "VoiceRememberInput" })
 
+export interface VoiceSpeaker extends Schema.Schema.Type<typeof VoiceSpeaker> {}
+export const VoiceSpeaker = Schema.Struct({
+  name: Schema.String,
+  created: Schema.Finite.pipe(Schema.optional),
+  source: Schema.String.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceSpeaker" })
+
+export interface VoiceEnrollInput extends Schema.Schema.Type<typeof VoiceEnrollInput> {}
+export const VoiceEnrollInput = Schema.Struct({
+  name: Schema.String,
+  /** Base64-encoded enrollment clip (e.g. recorded live in the mobile app). */
+  audio: Schema.String.pipe(Schema.optional),
+  /** Server-side audio file (e.g. a Pocket recording) to build the voiceprint from. */
+  audioPath: Schema.String.pipe(Schema.optional),
+  /** [start, end] second ranges inside `audioPath` belonging to this speaker (from diarized segments). */
+  ranges: Schema.Array(Schema.Tuple([Schema.Finite, Schema.Finite])).pipe(Schema.optional),
+  source: Schema.String.pipe(Schema.optional),
+}).annotate({ identifier: "VoiceEnrollInput" })
+
 export const VoiceGroup = HttpApiGroup.make("server.voice")
   .add(
     HttpApiEndpoint.get("voice.models", "/api/experimental/voice/models", {
@@ -205,6 +224,60 @@ export const VoiceGroup = HttpApiGroup.make("server.voice")
         summary: "Transcribe a dictation clip synchronously",
         description:
           "Experimental: may change without compatibility guarantees. Transcribes a short base64-encoded microphone clip with the same server-side whisper endpoint the voice recorder pipeline uses, returning the text (and segments) in the response instead of starting a background job. Nothing is stored; use voice.transcribe for long recordings that should become voice notes.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.get("voice.speakers", "/api/experimental/voice/speakers", {
+      success: Schema.Struct({
+        data: Schema.Struct({
+          speakers: Schema.Array(VoiceSpeaker),
+        }),
+      }).annotate({ identifier: "VoiceSpeakersResponse" }),
+      error: [ServiceUnavailableError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.speakers",
+        summary: "List enrolled speaker voiceprints",
+        description:
+          "Experimental: may change without compatibility guarantees. Lists the named voiceprints stored on the server's whisper host. Diarized transcriptions label segments with these names when a speaker's voiceprint matches a cluster.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.post("voice.enroll", "/api/experimental/voice/enroll", {
+      payload: VoiceEnrollInput,
+      success: Schema.Struct({
+        data: Schema.Struct({
+          speakers: Schema.Array(VoiceSpeaker),
+        }),
+      }).annotate({ identifier: "VoiceEnrollResponse" }),
+      error: [InvalidRequestError, ServiceUnavailableError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.enroll",
+        summary: "Enroll a speaker voiceprint",
+        description:
+          "Experimental: may change without compatibility guarantees. Builds a voiceprint for `name` from a base64 `audio` clip or from `ranges` of a server-side `audioPath` (e.g. the segments a diarized note attributed to one speaker). Re-enrolling a name replaces its voiceprint. Future diarized transcriptions automatically label that person by name.",
+      }),
+    ),
+  )
+  .add(
+    HttpApiEndpoint.delete("voice.forget", "/api/experimental/voice/speakers/:name", {
+      params: { name: Schema.String },
+      success: Schema.Struct({
+        data: Schema.Struct({
+          removed: Schema.Boolean,
+          speakers: Schema.Array(VoiceSpeaker),
+        }),
+      }).annotate({ identifier: "VoiceForgetResponse" }),
+      error: [ServiceUnavailableError, LocationNotFoundError],
+    }).annotateMerge(
+      OpenApi.annotations({
+        identifier: "experimental.voice.forget",
+        summary: "Remove an enrolled speaker voiceprint",
+        description:
+          "Experimental: may change without compatibility guarantees. Deletes the stored voiceprint for `name`; future transcriptions fall back to numeric speaker labels for that person. Removing a name that was never enrolled succeeds with `removed: false`.",
       }),
     ),
   )
