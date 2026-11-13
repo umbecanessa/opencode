@@ -245,6 +245,25 @@ export class Client {
       body: JSON.stringify(directory ? { itemId, directory } : { itemId }),
     })
 
+  // Named speaker voiceprints (server 26.12.20+). Diarized transcripts label enrolled
+  // speakers by name automatically; a 404 here means the host predates the feature.
+  voiceSpeakers = () =>
+    this.request<{ data: { speakers: { name: string; created?: number; source?: string }[] } }>(
+      "/api/experimental/voice/speakers",
+    ).then((r) => r.data.speakers)
+
+  voiceEnroll = (body: { name: string; audioPath?: string; audio?: string; ranges?: [number, number][]; source?: string }) =>
+    this.request<{ data: { speakers: { name: string; created?: number; source?: string }[] } }>("/api/experimental/voice/enroll", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }).then((r) => r.data.speakers)
+
+  voiceForget = (name: string) =>
+    this.request<{ data: { removed: boolean; speakers: { name: string }[] } }>(
+      `/api/experimental/voice/speakers/${encodeURIComponent(name)}`,
+      { method: "DELETE" },
+    ).then((r) => r.data.speakers)
+
   // Delete a pending card without delivering it anywhere (the inbox cancel route answers 204).
   // A 404 means it was already consumed — the card is done either way.
   voiceDismiss = async (itemId: string) => {

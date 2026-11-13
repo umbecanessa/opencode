@@ -56,6 +56,7 @@ export default function RootLayout() {
             <Stack.Screen name="new-project" options={{ presentation: "modal", title: "New project" }} />
             <Stack.Screen name="new-todo" options={{ presentation: "modal", title: "New todo" }} />
             <Stack.Screen name="pocket" options={{ title: "Pocket" }} />
+            <Stack.Screen name="voices" options={{ title: "Voices" }} />
           </Stack>
         </PocketProvider>
       </HostsProvider>

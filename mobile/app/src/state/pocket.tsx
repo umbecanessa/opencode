@@ -383,7 +383,7 @@ export function usePocket() {
 
 // Recordings land under a project directory on the host (persistent, user-owned); the server
 // creates the voice/pocket tree inside it. Any session directory works as a fallback.
-async function resolveDirectory(client: Client) {
+export async function resolveDirectory(client: Client) {
   const projects = await client.projects().catch(() => [])
   const project = projects.find((p) => p.canonical)?.canonical
   if (project) return project

@@ -15,7 +15,9 @@
         "aps-environment": "development"
       },
       "infoPlist": {
-        "UIBackgroundModes": ["remote-notification"],
+        "UIBackgroundModes": [
+          "remote-notification"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
@@ -26,7 +28,13 @@
       }
     },
     "plugins": [
-      ["onesignal-expo-plugin", { "mode": "development", "disableLocation": true }],
+      [
+        "onesignal-expo-plugin",
+        {
+          "mode": "development",
+          "disableLocation": true
+        }
+      ],
       "expo-router",
       "expo-secure-store",
       "expo-web-browser",
@@ -57,8 +65,16 @@
         "react-native-ble-plx",
         {
           "isBackgroundEnabled": true,
-          "modes": ["central"],
+          "modes": [
+            "central"
+          ],
           "bluetoothAlwaysPermission": "OpenCode Mobile connects to your Pocket voice recorder over Bluetooth to pull its recordings."
+        }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "OpenCode Mobile records a short voice sample so it can recognize that speaker in your meeting transcripts."
         }
       ]
     ],

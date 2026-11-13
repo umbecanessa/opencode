@@ -1,6 +1,6 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import * as ExpoLinking from "expo-linking"
-import { useLocalSearchParams } from "expo-router"
+import { useRouter, useLocalSearchParams } from "expo-router"
 import { useEffect, useState } from "react"
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../src/components/LargeTitle"
@@ -27,6 +27,7 @@ function formatDuration(seconds: number) {
 export default function Pocket() {
   const t = useTheme()
   const pocket = usePocket()
+  const router = useRouter()
   // Route-param and URL-event deliveries; the provider owns dedupe and also polls
   // the native App Intent's stashed action app-wide (see state/pocket.tsx).
   const params = useLocalSearchParams<{ action?: string }>()
@@ -259,6 +260,24 @@ export default function Pocket() {
       {!!pocket.error && (
         <Text style={[t.font.footnote, styles.note, { color: t.status.failed }]}>{pocket.error}</Text>
       )}
+
+      <Pressable
+        onPress={() => router.push("/voices")}
+        style={({ pressed }) => [styles.card, { backgroundColor: t.surface, marginTop: 16, opacity: pressed ? 0.8 : 1 }]}
+      >
+        <View style={styles.row}>
+          <View style={[styles.icon, { backgroundColor: t.fill.tertiary }]}>
+            <Ionicons name="people-outline" size={20} color={t.tint} />
+          </View>
+          <View style={{ flex: 1, gap: 2 }}>
+            <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>Voices</Text>
+            <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+              Enroll names once — transcripts use them instead of Speaker 1, 2, 3.
+            </Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={t.tertiaryLabel} />
+        </View>
+      </Pressable>
 
       {pocket.processing.length > 0 && (
         <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
