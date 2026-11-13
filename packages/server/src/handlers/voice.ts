@@ -299,7 +299,7 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                 const enrichment = silent
                   ? undefined
                   : yield* generate
-                      .text({ prompt: enrichPrompt(transcribed.text, projectNames) })
+                      .text({ prompt: enrichPrompt(speakerTurns(transcribed.segments) ?? transcribed.text, projectNames) })
                       .pipe(
                         Effect.flatMap(parseEnrichment),
                         Effect.tapError((error) =>
@@ -591,13 +591,14 @@ function ingestText(payload: VoiceIngestInput) {
   ]
     .filter((line): line is string => Boolean(line))
     .join("\n")
+  const turns = speakerTurns(payload.segments)
   return [
     header,
     payload.summary && `Summary:\n${payload.summary}`,
-    `Transcript:\n${payload.transcript}`,
+    `Transcript:\n${turns ?? payload.transcript}`,
     payload.segments?.length &&
       `Segments:\n${payload.segments
-        .map((segment) => `[${stamp(segment.start)}]${segment.speaker ? ` (${segment.speaker})` : ""} ${segment.text}`)
+        .map((segment) => `[${stamp(segment.start)}]${speakerLabel(segment.speaker) ? ` (${speakerLabel(segment.speaker)})` : ""} ${segment.text}`)
         .join("\n")}`,
     payload.todos?.length && `Todos:\n${payload.todos.map((todo) => `- ${todo}`).join("\n")}`,
   ]
@@ -606,3 +607,29 @@ function ingestText(payload: VoiceIngestInput) {
 }
 
 const stamp = (seconds: number) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`
+
+// The local wrapper's diarizer emits 0-based cluster indexes as strings; render those
+// as 1-based "Speaker N". Any other value (a hosted provider's real name) is kept as-is.
+function speakerLabel(speaker: string | undefined) {
+  if (speaker === undefined || speaker === "") return undefined
+  return /^\d+$/.test(speaker) ? `Speaker ${Number(speaker) + 1}` : speaker
+}
+
+// A diarized meeting reads far better as speaker turns than as one whisper
+// monologue: consecutive same-speaker segments merge into a labeled paragraph.
+// Single-voice notes keep the raw transcript (undefined → caller falls back).
+function speakerTurns(segments: VoiceIngestInput["segments"]) {
+  if (segments === undefined || segments.length < 2) return undefined
+  const labels = segments.map((segment) => speakerLabel(segment.speaker))
+  if (new Set(labels.filter((label) => label !== undefined)).size < 2) return undefined
+  const turns: string[] = []
+  segments.forEach((segment, index) => {
+    const label = labels[index]
+    const text = segment.text.trim()
+    const previous = turns[turns.length - 1]
+    if (label !== undefined && !(previous !== undefined && previous.startsWith(`${label}: `))) turns.push(`${label}: ${text}`)
+    else if (previous !== undefined) turns[turns.length - 1] = `${previous} ${text}`
+    else turns.push(text)
+  })
+  return turns.join("\n\n")
+}

@@ -319,6 +319,81 @@ it.live(
 )
 
 it.live(
+  "renders diarized segments as speaker turns",
+  () =>
+    Effect.gen(function* () {
+      const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-speaker-")))
+      const global = path.join(tmp.path, "global")
+      yield* Effect.promise(() => fs.mkdir(global))
+      // A diarized meeting: the wrapper labels its segments with cluster indexes.
+      const whisper = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(request) {
+          if (!new URL(request.url).pathname.endsWith("/audio/transcriptions"))
+            return new Response("not found", { status: 404 })
+          return Response.json({
+            text: "hello there how is it going thanks fine",
+            language: "en",
+            speakers: 2,
+            segments: [
+              { id: 0, start: 0, end: 2, speaker: "0", text: " hello there" },
+              { id: 1, start: 2, end: 4, speaker: "1", text: " how is it going" },
+              { id: 2, start: 4, end: 6, speaker: "0", text: " thanks fine" },
+            ],
+          })
+        },
+      })
+      yield* Effect.addFinalizer(() => Effect.sync(() => whisper.stop()))
+      const handler = yield* ServerFetch.make(
+        {
+          database: { path: ":memory:" },
+          config: {
+            directory: global,
+            content: JSON.stringify({ experimental: { voice: { transcribe: { url: `http://127.0.0.1:${whisper.port}/v1` } } } }),
+          },
+          fs: { filewatcher: false },
+          models: { fetch: false },
+        },
+        { overrides: [Generate.node.replace(generate)] },
+      )
+      const send = (pathname: string, init?: RequestInit) =>
+        Effect.promise(() => handler(new Request(`http://opencode.local${pathname}`, init)))
+      const upload = yield* send("/api/experimental/fs/write?path=" + encodeURIComponent(path.join(global, "voice", "meeting.mp3")), {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x00]),
+      })
+      expect(upload.status).toBe(200)
+      const audioPath = ((yield* Effect.promise(() => upload.json())) as { data: { path: string } }).data.path
+      expect(
+        (
+          yield* send("/api/experimental/voice/transcribe", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ audioPath, recordingId: "20261113meeting", itemId: "msg_voice_s1", duration: 6 }),
+          })
+        ).status,
+      ).toBe(200)
+      const item = yield* Effect.gen(function* () {
+        const inbox = yield* send("/api/session/ses_voice_inbox/inbox")
+        const entries = ((yield* Effect.promise(() => inbox.json())) as {
+          data: Array<{ id: string; payload: { text: string } }>
+        }).data
+        const found = entries.find((entry) => entry.id === "msg_voice_s1")
+        if (found === undefined) return yield* Effect.fail("pending")
+        return found
+      }).pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.timeout("30 seconds"))
+      // 0-based cluster indexes become 1-based "Speaker N" turns, and the
+      // timestamped timeline carries the same labels.
+      expect(item.payload.text).toContain("Transcript:\nSpeaker 1: hello there")
+      expect(item.payload.text).toContain("Speaker 2: how is it going")
+      expect(item.payload.text).toContain("[0:02] (Speaker 2) how is it going")
+    }),
+  { timeout: 45_000 },
+)
+
+it.live(
   "waits for the transcriber to come back and still delivers the note",
   () =>
     Effect.gen(function* () {
