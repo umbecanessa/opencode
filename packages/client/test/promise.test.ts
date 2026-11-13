@@ -63,6 +63,7 @@ test("exposes every standard HTTP API group", () => {
     "media",
     "schedule",
     "artifacts",
+    "todo",
     "migration",
     "usage",
     "config",
@@ -73,10 +74,23 @@ test("exposes every standard HTTP API group", () => {
     "export",
     "skill",
     "wait",
+    "wake",
     "instructions",
     "log",
+    "peer",
   ])
-  expect(Object.keys(client.experimental.voice)).toEqual(["models", "session"])
+  expect(Object.keys(client.experimental.voice)).toEqual([
+    "models",
+    "session",
+    "ingest",
+    "transcribe",
+    "dictate",
+    "speakers",
+    "enroll",
+    "forget",
+    "accept",
+    "remember",
+  ])
   expect(Object.keys(client.experimental.usage)).toEqual(["limits"])
   expect(Object.keys(client.experimental.mcp)).toEqual(["add", "remove", "connect", "disconnect", "client"])
   expect(Object.keys(client.experimental.integration.wellknown)).toEqual(["add"])
@@ -160,12 +174,22 @@ test("nests a method under client.experimental exactly when its route is experim
     "session.instructions.entry.put",
     "session.instructions.entry.remove",
     "session.log",
+    "session.peer.servers",
     "session.skill",
     "session.stats",
     "session.wait",
+    "session.wake",
     "usage.limits",
+    "voice.accept",
+    "voice.dictate",
+    "voice.enroll",
+    "voice.forget",
+    "voice.ingest",
     "voice.models",
+    "voice.remember",
     "voice.session",
+    "voice.speakers",
+    "voice.transcribe",
   ])
   expect(Object.keys(client.shell)).toEqual(["list", "create", "get", "output", "remove"])
   expect(Object.keys(client.project)).toEqual(["list", "update"])
