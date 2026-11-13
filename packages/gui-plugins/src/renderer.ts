@@ -35,6 +35,8 @@ import memory from "./memory"
 import memoryRenderer from "./memory/renderer"
 import todos from "./todos"
 import todosRenderer from "./todos/renderer"
+import voice from "./voice"
+import voiceRenderer from "./voice/renderer"
 
 // The window renders once every built-in is active, so the small renderer entries load with the app, like the
 // features they replaced. Heavy UI stays behind `lazy()` inside them.
@@ -61,4 +63,5 @@ export const builtins = compose({
   goal: { ...goal, windowEntry: eager(goalRenderer) },
   memory: { ...memory, windowEntry: eager(memoryRenderer) },
   todos: { ...todos, windowEntry: eager(todosRenderer) },
+  voice: { ...voice, windowEntry: eager(voiceRenderer) },
 })

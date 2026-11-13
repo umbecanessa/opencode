@@ -734,6 +734,7 @@ export const builtins = compose({
   goal: { ...goal, windowEntry: eager(goalRenderer) },
   memory: { ...memory, windowEntry: eager(memoryRenderer) },
   todos: { ...todos, windowEntry: eager(todosRenderer) },
+  voice: { ...voice, windowEntry: eager(voiceRenderer) },
 })
 ```
 
