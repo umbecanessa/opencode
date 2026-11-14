@@ -51,7 +51,7 @@ const meter = (status: string, percent: number) => ({ status, percent, resetsAt:
 
 /** Reads usage limits for a location whose active OpenCode Console connection resolves to `credential`. */
 const read = (
-  credential: Credential.Value | undefined,
+  credential: Credential.Value | ((integrationID: string) => Credential.Value | undefined) | undefined,
   respond: (url: string) => Response,
   requests: HttpClientRequest.HttpClientRequest[] = [],
   configured: readonly Provider.Info[] = [],
@@ -71,16 +71,26 @@ const read = (
               revision: () => 0,
               get: unused,
               connection: {
-                active: () =>
-                  Effect.succeed(
-                    credential && {
+                active: (id) => {
+                  const cred = typeof credential === "function" ? credential(String(id)) : credential
+                  return Effect.succeed(
+                    cred && {
                       type: "credential" as const,
-                      id: Credential.ID.make("console"),
-                      label: "Anomaly",
+                      id: Credential.ID.make(String(id)),
+                      label: String(id),
                       method: "oauth" as const,
                     },
-                  ),
-                resolve: () => Effect.succeed(credential),
+                  )
+                },
+                resolve: (conn) => {
+                  const cred =
+                    typeof credential === "function"
+                      ? conn.type === "credential"
+                        ? credential(conn.id)
+                        : undefined
+                      : credential
+                  return Effect.succeed(cred)
+                },
                 key: unused,
                 external: unused,
                 activate: unused,
@@ -284,5 +294,224 @@ it.effect("shows the Console alone when a provider's usage endpoint fails", () =
       },
       budgets: [expect.objectContaining({ id: "rule_astra" })],
     })
+  }),
+)
+
+it.effect("probes Google Antigravity quota summary when an active Antigravity OAuth connection exists", () =>
+  Effect.gen(function* () {
+    const antigravityProvider = {
+      id: Provider.ID.make("google-antigravity"),
+      name: "Google Antigravity",
+      activation: "enabled",
+      package: "aisdk:@ai-sdk/google-antigravity",
+    } satisfies Provider.Info
+
+    const antigravityCred = Credential.OAuth.make({
+      type: "oauth",
+      methodID: Integration.MethodID.make("oauth"),
+      access: "google-access-token",
+      refresh: "google-refresh-token",
+      expires: Date.now() + 3600_000,
+      metadata: { project: "project-123", plan: "Ultra" },
+    })
+
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const limits = yield* read(
+      (id) => (id === "google-antigravity" ? antigravityCred : undefined),
+      (url) =>
+        url.includes("retrieveUserQuotaSummary")
+          ? Response.json({
+              groups: [
+                {
+                  displayName: "Gemini models",
+                  buckets: [
+                    {
+                      window: "five-hour",
+                      remainingFraction: 0.85,
+                      resetTime: "2026-11-14T20:00:00.000Z",
+                    },
+                    {
+                      window: "weekly",
+                      remainingFraction: 0.95,
+                      resetTime: "2026-11-20T00:00:00.000Z",
+                    },
+                  ],
+                },
+                {
+                  displayName: "Claude models",
+                  buckets: [
+                    {
+                      window: "five-hour",
+                      remainingFraction: 0.0,
+                      resetTime: "2026-11-14T21:00:00.000Z",
+                    },
+                  ],
+                },
+              ],
+            })
+          : new Response("not found", { status: 404 }),
+      requests,
+      [antigravityProvider],
+    )
+
+    expect(limits).toEqual({
+      budgets: [],
+      providers: [
+        {
+          providerID: Provider.ID.make("google-antigravity"),
+          name: "Google Antigravity",
+          windows: [
+            {
+              label: "Gemini models · 5-hour",
+              percent: 15,
+              limited: false,
+              resetsAt: Date.parse("2026-11-14T20:00:00.000Z"),
+            },
+            {
+              label: "Gemini models · Weekly",
+              percent: 5,
+              limited: false,
+              resetsAt: Date.parse("2026-11-20T00:00:00.000Z"),
+            },
+            {
+              label: "Claude models · 5-hour",
+              percent: 100,
+              limited: true,
+              resetsAt: Date.parse("2026-11-14T21:00:00.000Z"),
+            },
+          ],
+        },
+      ],
+    })
+    expect(requests[0].headers.authorization).toBe("Bearer google-access-token")
+  }),
+)
+
+it.effect("probes Claude subscription usage when an active Anthropic OAuth connection exists", () =>
+  Effect.gen(function* () {
+    const anthropicProvider = {
+      id: Provider.ID.make("anthropic"),
+      name: "Anthropic",
+      activation: "auto",
+      package: "@opencode/ai/providers/anthropic",
+    } satisfies Provider.Info
+
+    const claudeCred = Credential.OAuth.make({
+      type: "oauth",
+      methodID: Integration.MethodID.make("claude-subscription"),
+      access: "claude-access-token",
+      refresh: "claude-refresh-token",
+      expires: Date.now() + 3600_000,
+      metadata: { plan: "Max", email: "user@example.com" },
+    })
+
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const limits = yield* read(
+      (id) => (id === "anthropic" ? claudeCred : undefined),
+      (url) =>
+        url.endsWith("/api/oauth/usage")
+          ? Response.json({
+              five_hour: { utilization: 0.12, resets_at: "2026-11-14T19:00:00.000Z" },
+              seven_day: { utilization: 0.45, resets_at: "2026-11-21T00:00:00.000Z" },
+              seven_day_opus: { utilization: 1.0, resets_at: "2026-11-21T00:00:00.000Z" },
+            })
+          : new Response("not found", { status: 404 }),
+      requests,
+      [anthropicProvider],
+    )
+
+    expect(limits).toEqual({
+      budgets: [],
+      providers: [
+        {
+          providerID: Provider.ID.make("anthropic"),
+          name: "Anthropic",
+          windows: [
+            {
+              label: "5-hour",
+              percent: 12,
+              limited: false,
+              resetsAt: Date.parse("2026-11-14T19:00:00.000Z"),
+            },
+            {
+              label: "Weekly",
+              percent: 45,
+              limited: false,
+              resetsAt: Date.parse("2026-11-21T00:00:00.000Z"),
+            },
+            {
+              label: "Weekly · Opus",
+              percent: 100,
+              limited: true,
+              resetsAt: Date.parse("2026-11-21T00:00:00.000Z"),
+            },
+          ],
+        },
+      ],
+    })
+    expect(requests[0].headers.authorization).toBe("Bearer claude-access-token")
+  }),
+)
+
+it.effect("probes ChatGPT WHAM usage when an active OpenAI OAuth connection exists", () =>
+  Effect.gen(function* () {
+    const openaiProvider = {
+      id: Provider.ID.make("openai"),
+      name: "OpenAI",
+      activation: "auto",
+      package: "@opencode/ai/providers/openai",
+    } satisfies Provider.Info
+
+    const chatgptCred = Credential.OAuth.make({
+      type: "oauth",
+      methodID: Integration.MethodID.make("chatgpt-browser"),
+      access: "chatgpt-access-token",
+      refresh: "chatgpt-refresh-token",
+      expires: Date.now() + 3600_000,
+      metadata: { accountID: "acc_chatgpt_123" },
+    })
+
+    const requests: HttpClientRequest.HttpClientRequest[] = []
+    const limits = yield* read(
+      (id) => (id === "openai" ? chatgptCred : undefined),
+      (url) =>
+        url.endsWith("/backend-api/wham/usage")
+          ? Response.json({
+              rate_limit: {
+                allowed: true,
+                primary_window: { used_percent: 25, reset_at: 1793400000 },
+                secondary_window: { used_percent: 60, reset_at: 1794000000 },
+              },
+            })
+          : new Response("not found", { status: 404 }),
+      requests,
+      [openaiProvider],
+    )
+
+    expect(limits).toEqual({
+      budgets: [],
+      providers: [
+        {
+          providerID: Provider.ID.make("openai"),
+          name: "OpenAI",
+          windows: [
+            {
+              label: "5-hour",
+              percent: 25,
+              limited: false,
+              resetsAt: 1793400000000,
+            },
+            {
+              label: "Weekly",
+              percent: 60,
+              limited: false,
+              resetsAt: 1794000000000,
+            },
+          ],
+        },
+      ],
+    })
+    expect(requests[0].headers.authorization).toBe("Bearer chatgpt-access-token")
+    expect(requests[0].headers["chatgpt-account-id"]).toBe("acc_chatgpt_123")
   }),
 )

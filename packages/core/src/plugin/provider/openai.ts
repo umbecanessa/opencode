@@ -58,7 +58,7 @@ const browser = (app: App.Info) =>
     method: {
       id: browserMethodID,
       type: "oauth",
-      label: "Codex browser (legacy)",
+      label: "Sign in with ChatGPT (Subscription)",
     },
     authorize: () =>
       Effect.gen(function* () {
@@ -177,7 +177,7 @@ const headless = (app: App.Info) =>
     method: {
       id: headlessMethodID,
       type: "oauth",
-      label: "Codex device code (legacy)",
+      label: "Sign in with ChatGPT (Device Code)",
     },
     authorize: () =>
       Effect.gen(function* () {
