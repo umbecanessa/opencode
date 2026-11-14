@@ -69,8 +69,10 @@ export function ProjectSidebar() {
 
   const hosts = createMemo(() => home.server.list().map((connection) => ({ connection, key: ServerConnection.key(connection), ctx: home.server.context(connection), label: home.server.label(connection) })))
 
+  // Ordinary sessions only: the scrum coordinator renders as its own pinned row
+  // at the head of the list, never inline among the recents or under a project.
   const entries = createMemo(() => hosts().flatMap((host) => (state.byHost[host.key] ?? [])
-    .filter((session) => !session.parentID && !state.removed.includes(session.id) && !session.time.archived)
+    .filter((session) => session.id !== SCRUM_SESSION_ID && !session.parentID && !state.removed.includes(session.id) && !session.time.archived)
     .map((session) => ({ host, session }))))
 
   const sorted = createMemo(() => [...entries()].sort((a, b) => Number(!!pinned[b.session.id]) - Number(!!pinned[a.session.id]) || b.session.time.updated - a.session.time.updated))
@@ -214,6 +216,25 @@ export function ProjectSidebar() {
     return route.type === "session" && route.sessionId === SCRUM_SESSION_ID
   })
 
+  // The coordinator's live row when some host already lists it: same status dot,
+  // host chip, and relative time as an ordinary session row.
+  const scrumEntry = createMemo(() => {
+    for (const host of hosts()) {
+      const session = (state.byHost[host.key] ?? []).find((item) => item.id === SCRUM_SESSION_ID && !item.parentID && !item.time.archived)
+      if (session) return { host, session }
+    }
+    return undefined
+  })
+  const scrumStatus = createMemo(() => {
+    const entry = scrumEntry()
+    return entry ? status(entry.host, entry.session) : "done"
+  })
+  const openScrumRow = () => {
+    const entry = scrumEntry()
+    if (entry) return open(entry)
+    void openScrum()
+  }
+
   // The scrum coordinator is a server-wide singleton with a fixed id: probe the
   // hosts for the row the wake plugin adopts, and create it lazily on the first
   // host when the plugin has not run (its move leg relocates such rows on the
@@ -259,12 +280,20 @@ export function ProjectSidebar() {
           <span class="flex w-full items-center justify-between gap-3"><span>{language.t("command.project.open")}</span><span class="sidebar-host shrink-0">{home.server.label(connection)}</span></span>
         </Menu.Item>}</For></Menu.Content></Menu.Portal>
       </Menu>
-      <button type="button" class="sidebar-row flex h-7 w-full items-center gap-1.5 rounded-md ps-1.5 pe-2 text-start text-13-regular" classList={{ "sidebar-row-active": scrumActive() }} onClick={() => void openScrum()}>
-        <Icon name="graduation-cap" size="small" /><span class="min-w-0 truncate">{language.t("sidebar.scrum")}</span>
-      </button>
     </div>
     <div class="min-h-0 flex-1 overflow-auto px-2 pb-4">
       <div class="sidebar-label px-2 pb-1 pt-3">{language.t("sidebar.recentConversations")}</div>
+      <div class="sidebar-row flex min-w-0 items-center" classList={{ "sidebar-row-active": scrumActive() }}>
+        <button type="button" class="flex min-h-9 min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-start text-13-regular" onClick={openScrumRow}>
+          <span class="sidebar-status" data-status={scrumStatus()} title={language.t(`sidebar.status.${scrumStatus()}`)} />
+          <Icon name="graduation-cap" size="small" />
+          <span class="min-w-0 flex-1 truncate">{language.t("sidebar.scrum")}</span>
+          <Show when={scrumEntry()}>{(entry) => <>
+            <span class="sidebar-host truncate">{entry().host.label}</span>
+            <span class="shrink-0 text-12-regular text-v2-text-text-faint" title={new Date(entry().session.time.updated).toLocaleString()}>{getRelativeTime(new Date(entry().session.time.updated).toISOString(), language.t)}</span>
+          </>}</Show>
+        </button>
+      </div>
       <For each={recent()}>{(entry) => row(entry, true)}</For>
       <Show when={sorted().length > LIST_LIMIT}>{showMore(state.recentExpanded, () => setState("recentExpanded", (current) => !current))}</Show>
       <For each={hosts()}>{(host) => <HostProjects host={host} entries={entries()} collapsedKey={(worktree) => `${host.key}\u0000${worktree}`} collapsed={collapsed} toggleCollapsed={(worktree) => setCollapsed((current) => ({ ...current, [`${host.key}\u0000${worktree}`]: !current[`${host.key}\u0000${worktree}`] }))}
