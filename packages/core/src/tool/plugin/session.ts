@@ -797,7 +797,11 @@ export const Plugin = {
                   : "no session_spawn marker in its transcript names this session as its spawner (a lane spawned before the marker shipped reads this way too)"
                 yield* permission
                   .assert({
-                    action: "session",
+                    // Dedicated action, NOT the shared "session" family action: personas
+                    // like scrum allow session:* for silent spawn/send, and that allow
+                    // must not auto-approve the archive proposal. Catalog visibility
+                    // still follows the family via options.permission.
+                    action: "session_archive",
                     resources: [input.sessionID],
                     save: [input.sessionID],
                     message: `Archive "${target.title ?? input.sessionID}"? ${reason}.`,

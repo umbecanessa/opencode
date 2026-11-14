@@ -117,7 +117,7 @@ const it = testEffect(
 // path: a session-scoped ask rule ordered after the broad allow, since rule
 // evaluation keeps the last matching rule.
 const withTools =
-  (permissionEffect: "allow" | "deny" | "ask") =>
+  (permissionEffect: "allow" | "deny" | "ask" | "persona") =>
   (
     run: (
       registry: Tool.Interface,
@@ -145,6 +145,14 @@ const withTools =
             if (permissionEffect === "ask") {
               agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
               agent.permissions.push({ action: "session", resource: "*", effect: "ask" })
+              agent.permissions.push({ action: "session_archive", resource: "*", effect: "ask" })
+            } else if (permissionEffect === "persona") {
+              // The scrum persona shape: a deny-all base, with the session family
+              // allowed so spawn/send run silent. Archive must not inherit that
+              // allow; the explicit ask rule is what keeps its proposal path alive.
+              agent.permissions.push({ action: "*", resource: "*", effect: "deny" })
+              agent.permissions.push({ action: "session", resource: "*", effect: "allow" })
+              agent.permissions.push({ action: "session_archive", resource: "*", effect: "ask" })
             } else agent.permissions.push({ action: "*", resource: "*", effect: permissionEffect })
           })
         }),
@@ -166,9 +174,7 @@ const call = (registry: Tool.Interface, sessionID: Session.ID, name: string, inp
 // then rejects to land the call on its error channel.
 const waitForAsk = (permission: Permission.Interface, sessionID: Session.ID, target: Session.ID) =>
   permission.forSession(sessionID).pipe(
-    Effect.map((requests) =>
-      requests.find((request) => request.action === "session" && request.resources.includes(target)),
-    ),
+    Effect.map((requests) => requests.find((request) => request.resources.includes(target))),
     Effect.repeat({ while: (found) => found === undefined, schedule: Schedule.spaced("10 millis") }),
     Effect.timeout("10 seconds"),
     Effect.catchTag("TimeoutError", () => Effect.die("archive permission ask never appeared")),
@@ -338,6 +344,41 @@ describe("session_archive", () => {
         )
         const request = yield* waitForAsk(permission, sessionID, lane.id)
         expect(request.message).toContain("1 unmarked user entry")
+        yield* permission.reply({ requestID: request.id, reply: "reject" }).pipe(Effect.orDie)
+        const exit = yield* Fiber.join(fiber).pipe(Effect.exit)
+        const cause = exit._tag === "Success" ? "success" : exit.cause
+        expect(String(cause)).toContain("Permission.DeclinedError")
+        const row = yield* sessions.get(lane.id).pipe(Effect.orDie)
+        expect(row.time.archived).toBeUndefined()
+      }),
+    ),
+  )
+
+  // Keeper for the scrum-reported defect: a persona that allows the session
+  // family (so spawn/send stay silent) must NOT auto-approve archive's ask.
+  // Before the dedicated session_archive action, the session allow rule matched
+  // the guard assert and guarded archives passed silently on such personas.
+  it.live(
+    "a session-family-allowing persona still gets asked to archive",
+    withTools("persona")((registry, sessionID, sessions, location, permission) =>
+      Effect.gen(function* () {
+        const coordinator = yield* sessions.create({ location, title: "OtherCoordinator" }).pipe(Effect.orDie)
+        const lane = yield* sessions.create({ location, title: "Lane4" }).pipe(Effect.orDie)
+        // Machine-marked turns only, but the spawn marker names a DIFFERENT session.
+        yield* sessions
+          .prompt({
+            sessionID: lane.id,
+            text: "lane prompt",
+            resume: false,
+            metadata: { source: "session_spawn", parentSessionID: coordinator.id },
+          })
+          .pipe(Effect.orDie)
+        const fiber = yield* Effect.forkChild(
+          call(registry, sessionID, "opencode_session_archive", { sessionID: lane.id }),
+        )
+        const request = yield* waitForAsk(permission, sessionID, lane.id)
+        expect(request.action).toBe("session_archive")
+        expect(request.message).toContain("no session_spawn marker")
         yield* permission.reply({ requestID: request.id, reply: "reject" }).pipe(Effect.orDie)
         const exit = yield* Fiber.join(fiber).pipe(Effect.exit)
         const cause = exit._tag === "Success" ? "success" : exit.cause

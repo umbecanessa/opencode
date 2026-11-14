@@ -130,6 +130,10 @@ export const Plugin = define({
           { action: "read", resource: "*.env", effect: "ask" },
           { action: "read", resource: "*.env.*", effect: "ask" },
           { action: "session", resource: "*", effect: "allow" },
+          // Session-archive stays an ask even though the session family is
+          // allowed above: archive's proposal path must survive the spawn/send
+          // allow, and this persona's deny-all base would otherwise DENY it.
+          { action: "session_archive", resource: "*", effect: "ask" },
           { action: "subagent", resource: "*", effect: "allow" },
           { action: "external_directory", resource: "*", effect: "allow" },
         )
