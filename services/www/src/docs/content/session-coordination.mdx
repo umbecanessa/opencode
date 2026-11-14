@@ -18,8 +18,8 @@ The tools cover the whole lifecycle:
   activity, and outcome. Use it to find a session the user refers to without an
   ID.
 - `opencode_session_spawn` — create a new top-level session and run a prompt in
-  it. Accepts `agent`, `model`, `directory`, `workspace`, `background`, and
-  `temporary`.
+  it. Accepts `agent`, `model`, `directory`, `workspace`, `background`,
+  `temporary`, and `projectless`.
 - `opencode_session_send` — a follow-up prompt to an existing session by ID,
   reusing everything it already knows.
 - `opencode_session_stop` — interrupt a session's active run. History stays
@@ -110,6 +110,19 @@ Run a quick temporary session to summarize this log file, then report back.
 
 A session-not-found result from `session_send` may be an expired temporary
 session; spawn a fresh one with the needed context instead of retrying.
+
+`projectless: true` anchors the session to the server's config-directory home
+instead of binding a project, so disposable work stops minting project rows;
+`directory` and `workspace` do not apply with it. The flags compose: a
+`temporary` + `projectless` spawn leaves nothing behind in history or the
+project list.
+
+```text
+Answer this in a quick temporary projectless session when you're done here.
+```
+
+The same option exists on the `session.create` HTTP payload and SDK as
+`projectless`, where it overrides any passed `location`.
 
 ## Cross-server dispatch
 
