@@ -167,6 +167,10 @@ const WaitInput = Schema.Struct({
   server: serverField,
 })
 
+const ArchiveInput = Schema.Struct({
+  sessionID: SessionSchema.ID,
+})
+
 const ReadInput = Schema.Struct({
   sessionID: SessionSchema.ID,
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))).annotate({
@@ -547,11 +551,14 @@ export const Plugin = {
 
               // Admit without waking so the owned job run drives the first execution,
               // mirroring how background subagent children are observed and recovered.
+              // The metadata marker is what session_archive later reads as durable
+              // spawned-by lineage: job rows are deleted once completions are consumed.
               yield* sessions
                 .prompt({
                   sessionID: child.id,
                   text: input.prompt,
                   ...(background ? { resume: false } : {}),
+                  metadata: { source: "session_spawn", parentSessionID: context.sessionID },
                 })
                 .pipe(Effect.mapError(() => new ToolFailure({ message: `Failed to prompt session: ${child.id}` })))
 
@@ -655,6 +662,7 @@ export const Plugin = {
                   text: input.prompt,
                   ...(input.delivery === undefined ? {} : { delivery: input.delivery }),
                   ...(input.resume === undefined ? {} : { resume: input.resume }),
+                  metadata: { source: "session_send", senderSessionID: context.sessionID },
                 })
                 .pipe(
                   Effect.mapError(() => new ToolFailure({ message: `Failed to prompt session: ${input.sessionID}` })),
@@ -720,6 +728,99 @@ export const Plugin = {
               return {
                 output: { sessionID: input.sessionID, interrupted },
                 content: interrupted ? `Interrupted ${input.sessionID}.` : `${input.sessionID} was already idle.`,
+              }
+            }),
+        })
+
+        editor.add({
+          name: "session_archive",
+          description: [
+            "Archives a session by id: it leaves active history and lists, and the transcript stays recoverable.",
+            "Server-side guard, not a prompt rule: a session this session spawned, with no human prompts in it, archives silently. Anything else raises a permission request - that request is the proposal to the user; on denial, do not retry, propose it in chat instead.",
+            "A session with human prompts is never archived silently, even one this session spawned.",
+            "Sessions dispatched to a peer server are not covered: archive them there.",
+          ].join("\n"),
+          input: ArchiveInput,
+          output: Schema.Struct({ sessionID: SessionSchema.ID, archived: Schema.Boolean }),
+          options: { namespace: "opencode", codemode: false, permission: "session" },
+          execute: (input, context) =>
+            Effect.gen(function* () {
+              const target = yield* sessions
+                .get(input.sessionID)
+                .pipe(Effect.mapError(() => new ToolFailure({ message: `Session not found: ${input.sessionID}` })))
+              if (target.time.archived !== undefined)
+                return {
+                  output: { sessionID: input.sessionID, archived: true },
+                  content: `${input.sessionID} was already archived.`,
+                }
+              const messages = yield* sessions
+                .messages({ sessionID: input.sessionID, order: "asc" })
+                .pipe(
+                  Effect.mapError(
+                    () => new ToolFailure({ message: `Failed to read the transcript of ${input.sessionID}` }),
+                  ),
+                )
+              // Prompts still waiting in the inbox count as turns too: a human prompt
+              // that was never delivered still came from a human.
+              const pending = yield* sessions
+                .inbox(input.sessionID)
+                .pipe(
+                  Effect.mapError(
+                    () => new ToolFailure({ message: `Failed to read the inbox of ${input.sessionID}` }),
+                  ),
+                )
+              // User entries admitted by session tools carry a machine marker in metadata;
+              // any other user entry came from a human. Fail closed: unrecognized markers
+              // count as human, so a future prompt path cannot open a silent archive by accident.
+              const machine = (metadata: Record<string, unknown> | undefined) =>
+                metadata?.source === "session_spawn" || metadata?.source === "session_send"
+              const spawned =
+                messages.some(
+                  (message) =>
+                    message.type === "user" &&
+                    message.metadata?.source === "session_spawn" &&
+                    message.metadata.parentSessionID === context.sessionID,
+                ) ||
+                pending.some(
+                  (item) =>
+                    item.type === "user" &&
+                    item.payload.metadata?.source === "session_spawn" &&
+                    item.payload.metadata.parentSessionID === context.sessionID,
+                )
+              const human =
+                messages.some((message) => message.type === "user" && !machine(message.metadata)) ||
+                pending.some((item) => item.type === "user" && !machine(item.payload.metadata))
+              if (!(spawned && !human))
+                yield* permission
+                  .assert({
+                    action: "session",
+                    resources: [input.sessionID],
+                    save: [input.sessionID],
+                    sessionID: context.sessionID,
+                    agent: context.agent,
+                    source: { type: "tool", messageID: context.messageID, id: context.id },
+                  })
+                  .pipe(
+                    Effect.mapError(
+                      (error) =>
+                        new ToolFailure({
+                          message: spawned
+                            ? `Archiving ${input.sessionID} needs the user's approval: it has human turns. Propose it in chat instead of retrying.`
+                            : `Archiving ${input.sessionID} needs the user's approval: it was not spawned by this session. Propose it in chat instead of retrying.`,
+                          error,
+                        }),
+                    ),
+                  )
+              yield* sessions
+                .archive(input.sessionID)
+                .pipe(
+                  Effect.mapError(
+                    () => new ToolFailure({ message: `Failed to archive session: ${input.sessionID}` }),
+                  ),
+                )
+              return {
+                output: { sessionID: input.sessionID, archived: true },
+                content: `Archived ${input.sessionID}.`,
               }
             }),
         })
