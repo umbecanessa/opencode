@@ -1,3 +1,4 @@
+import path from "path"
 import { describe, expect } from "bun:test"
 import { Effect, Fiber, Layer, Schema, Stream } from "effect"
 import { LanguageModel } from "@opencode/ai/effect"
@@ -21,7 +22,9 @@ import { Agent } from "@opencode/core/agent"
 import { Job } from "@opencode/core/job"
 import { KV } from "@opencode/core/kv"
 import { LocationServiceMap } from "@opencode/core/location-service-map"
+import { ProjectTable } from "@opencode/core/project/sql"
 import { Session } from "@opencode/core/session"
+import { SessionTable } from "@opencode/core/session/sql"
 import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
@@ -114,6 +117,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     SubagentJob.node,
     Tool.node,
     Workspace.node,
+    Global.node,
     PluginHooks.node,
   ],
 })
@@ -316,6 +320,127 @@ describe("SessionTools", () => {
           expect(ordinary.data.map((session) => session.id)).not.toContain(childID)
           const disposables = yield* sessions.list({ temporary: true })
           expect(disposables.data.map((session) => session.id)).toEqual([childID])
+        }),
+      ),
+    ),
+  )
+
+  it.live("spawns a projectless session at the config home without an extra project row", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const database = yield* Database.Service
+          const parent = yield* sessions.create({ location, title: "Orchestrator" })
+          yield* withSessionTools(location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+
+          const settled = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-session-spawn-projectless",
+              name: "opencode_session_spawn",
+              input: { title: "quick question", prompt: "do the thing", projectless: true },
+            },
+          })
+          expect(settled.status).toBe("completed")
+          const child = yield* sessions.get(outputSessionID(settled.metadata))
+          // The child left the parent's project: it runs in the shared neutral
+          // home, and its project row is keyed by exactly that home directory.
+          expect(path.resolve(child.location.directory)).not.toBe(path.resolve(dir.path))
+          expect(child.projectID).not.toBe(parent.projectID)
+          const projectRows = yield* database.db
+            .select({ id: ProjectTable.id, canonical: ProjectTable.worktree })
+            .from(ProjectTable)
+            .all()
+          const childProject = projectRows.find((project) => project.id === child.projectID)
+          expect(path.resolve(childProject!.canonical)).toBe(path.resolve(child.location.directory))
+          // Only the parent's project and the one shared home project exist; the
+          // spawn created no project row for any other path.
+          expect(projectRows.length).toBe(2)
+
+          // A second projectless spawn reuses the same home project row.
+          const again = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-session-spawn-projectless-again",
+              name: "opencode_session_spawn",
+              input: { title: "another question", prompt: "do the thing", projectless: true },
+            },
+          })
+          expect(again.status).toBe("completed")
+          const second = yield* sessions.get(outputSessionID(again.metadata))
+          expect(second.projectID).toBe(child.projectID)
+          const afterSecond = yield* database.db
+            .select({ id: ProjectTable.id, canonical: ProjectTable.worktree })
+            .from(ProjectTable)
+            .all()
+          expect(afterSecond).toEqual(projectRows)
+        }),
+      ),
+    ),
+  )
+
+  it.live("temporary spawns inherit the parent project and leave no residue after reaping", () =>
+    Effect.acquireRelease(
+      Effect.promise(() => tmpdir()),
+      (dir) => Effect.promise(() => dir[Symbol.asyncDispose]()),
+    ).pipe(
+      Effect.flatMap((dir) =>
+        Effect.gen(function* () {
+          const location = Location.Ref.make({ directory: AbsolutePath.make(dir.path) })
+          const sessions = yield* Session.Service
+          const database = yield* Database.Service
+          const parent = yield* sessions.create({ location, title: "Orchestrator" })
+          yield* withSessionTools(location)
+          const locations = yield* LocationServiceMap.Service
+          const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
+          const projectsBefore = yield* database.db
+            .select({ id: ProjectTable.id, canonical: ProjectTable.worktree })
+            .from(ProjectTable)
+            .all()
+
+          const settled = yield* executeTool(registry, {
+            sessionID: parent.id,
+            ...toolIdentity,
+            call: {
+              type: "tool-call",
+              id: "call-session-spawn-temporary-reaped",
+              name: "opencode_session_spawn",
+              input: { title: "spot task", prompt: "do the thing", temporary: true },
+            },
+          })
+          expect(settled.status).toBe("completed")
+          const childID = outputSessionID(settled.metadata)
+          const child = yield* sessions.get(childID)
+          // A temporary spawn with no directory shares the parent's project row:
+          // nothing project-side to clean up afterwards.
+          expect(child.projectID).toBe(parent.projectID)
+          const projectsAfterSpawn = yield* database.db
+            .select({ id: ProjectTable.id, canonical: ProjectTable.worktree })
+            .from(ProjectTable)
+            .all()
+          expect(projectsAfterSpawn).toEqual(projectsBefore)
+
+          yield* sessions.reapTemporary
+          const gone = yield* sessions.get(childID).pipe(Effect.exit)
+          expect(gone._tag).toBe("Failure")
+          const sessionsLeft = yield* database.db.select({ id: SessionTable.id }).from(SessionTable).all()
+          expect(sessionsLeft.map((row) => row.id)).toEqual([parent.id])
+          const projectsAfterReap = yield* database.db
+            .select({ id: ProjectTable.id, canonical: ProjectTable.worktree })
+            .from(ProjectTable)
+            .all()
+          expect(projectsAfterReap).toEqual(projectsBefore)
         }),
       ),
     ),

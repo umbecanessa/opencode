@@ -145,6 +145,7 @@ const sessionToolPluginSupervisor = makeLocationNode({
     SubagentJob.node,
     Tool.node,
     Workspace.node,
+    Global.node,
     PluginHooks.node,
   ],
 })

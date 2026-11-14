@@ -29,6 +29,7 @@ import {
   SkillNotFoundError,
 } from "@opencode/protocol/errors"
 import { AbsolutePath } from "@opencode/core/schema"
+import { Global } from "@opencode/util/global"
 import { locationErrors } from "../location"
 import { failedMessageDecode, failedSnapshot, missingMessage, missingSession } from "./session-error"
 
@@ -44,6 +45,7 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
     const transfer = yield* SessionTransfer.Service
     const instructions = yield* InstructionEntry.Service
     const instances = yield* Instance.Service
+    const global = yield* Global.Service
     const requireSession = (sessionID: Session.ID) =>
       session.get(sessionID).pipe(Effect.catchTag("Session.NotFoundError", missingSession))
     const requireOwnedForm = Effect.fnUntraced(function* (sessionID: Form.Info["sessionID"], formID: Form.ID) {
@@ -116,7 +118,12 @@ export const SessionHandler = HttpApiBuilder.group(Api, "server.session", (handl
                 permissions: ctx.payload.permissions,
                 ...(ctx.payload.temporary === undefined ? {} : { temporary: ctx.payload.temporary }),
                 ...(ctx.payload.parentID === undefined
-                  ? { location: ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) } }
+                  ? {
+                      location:
+                        ctx.payload.projectless === true
+                          ? { directory: AbsolutePath.make(global.config) }
+                          : (ctx.payload.location ?? { directory: AbsolutePath.make(process.cwd()) }),
+                    }
                   : { parentID: ctx.payload.parentID }),
               })
               .pipe(Effect.catchTag("Session.NotFoundError", missingSession)),

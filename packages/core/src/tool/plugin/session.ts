@@ -5,6 +5,7 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import type { Tool } from "@opencode/schema/tool"
 import { SessionInbox } from "@opencode/schema/session-inbox"
+import { Global } from "@opencode/util/global"
 import { DateTime, Effect, Schema } from "effect"
 import { Agent } from "../../agent.js"
 import { Config } from "../../config.js"
@@ -129,6 +130,10 @@ const SpawnInput = Schema.Struct({
     description:
       "true creates a disposable session: it never appears in session lists and is deleted roughly a day after finishing. Prefer true for spot tasks the user should not see in history. The session's permissions default to no edits, no subagents, and no peer spawning.",
   }),
+  projectless: Schema.optionalKey(Schema.Boolean).annotate({
+    description:
+      "true runs the session in the neutral config-directory home instead of any project: it creates no project row and needs no checkout. directory and workspace do not apply with it. Combine with temporary=true for throwaway quick questions that leave no residue.",
+  }),
   server: serverField,
   workspace: workspaceField,
 })
@@ -239,6 +244,7 @@ export const Plugin = {
     const placements = yield* PeerPlacements.Service
     const config = yield* Config.Service
     const workspaces = yield* Workspace.Service
+    const global = yield* Global.Service
 
     // Placement on a configured ssh workspace: the session row stays in this
     // server's database; only the location gains a workspace whose driver
@@ -379,6 +385,7 @@ export const Plugin = {
             "Foreground (default) blocks until the session goes idle and returns its final text.",
             "With background=true it returns immediately and a <peer> completion message is added to this conversation when it finishes; DO NOT sleep or poll before that message arrives.",
             "Set temporary=true for disposable spot tasks that should stay out of the user's session history.",
+            "Set projectless=true to run the spawn in the neutral config-directory home instead of any project; directory and workspace do not apply with it.",
             "Set server to dispatch the whole task to a named peer OpenCode server (config `servers` or registered by the desktop): it runs there and returns its final text. background=true is supported there too: the dispatch returns immediately and its completion arrives as a <peer> message.",
             "The server parameter is optional for session_send, session_stop, session_wait, and session_read on sessions you dispatched: their placement routes the call by session ID alone.",
             "Set workspace to a named ssh workspace from the config `workspaces` map: the session's shell and file tools operate on that remote host inside the entry's directory (directory does not apply).",
@@ -411,6 +418,7 @@ export const Plugin = {
                   ...(input.agent === undefined ? {} : { agent: input.agent }),
                   ...(remoteModel === undefined ? {} : { model: remoteModel }),
                   ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+                  ...(input.projectless === undefined ? {} : { projectless: input.projectless }),
                 }
                 if (input.background === true) {
                   const dispatched = yield* peers
@@ -481,6 +489,10 @@ export const Plugin = {
                 return yield* new ToolFailure({
                   message: "directory does not apply with workspace: the config entry's directory is the remote project root.",
                 })
+              if (input.projectless === true && (input.directory !== undefined || input.workspace !== undefined))
+                return yield* new ToolFailure({
+                  message: "directory and workspace do not apply with projectless: the session runs in the config-directory home.",
+                })
               const agent =
                 input.agent === undefined
                   ? yield* (parent.agent === undefined ? Effect.succeed(undefined) : agents.resolve(parent.agent))
@@ -517,19 +529,21 @@ export const Plugin = {
                 (yield* models.available()).some((m) => m.providerID === fallback.providerID && m.id === fallback.id)
 
               const location =
-                input.workspace !== undefined
-                  ? yield* placeOnWorkspace(input.workspace, context)
-                  : input.directory === undefined
-                    ? parent.location
-                    : {
-                        directory: (yield* access
-                          .resolve({ path: input.directory, kind: "directory" })
-                          .pipe(
-                            Effect.mapError(
-                              () => new ToolFailure({ message: `Unable to resolve directory: ${input.directory}` }),
-                            ),
-                          )).absolute,
-                      }
+                input.projectless === true
+                  ? { directory: AbsolutePath.make(global.config) }
+                  : input.workspace !== undefined
+                    ? yield* placeOnWorkspace(input.workspace, context)
+                    : input.directory === undefined
+                      ? parent.location
+                      : {
+                          directory: (yield* access
+                            .resolve({ path: input.directory, kind: "directory" })
+                            .pipe(
+                              Effect.mapError(
+                                () => new ToolFailure({ message: `Unable to resolve directory: ${input.directory}` }),
+                              ),
+                            )).absolute,
+                        }
               const model =
                 override ?? agent?.model ?? (fallbackAvailable ? fallback : undefined) ?? parent.model
               const child = yield* sessions
