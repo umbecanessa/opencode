@@ -18,6 +18,7 @@ export const dict = {
   "sidebar.agentWorking": "Agent working",
   "sidebar.subagents": "Subagents",
   "sidebar.host": "Host",
+  "sidebar.scrum": "Scrum",
   "sidebar.recentConversations": "Recent",
   "sidebar.projects": "Projects",
   "sidebar.sessionsUnavailable": "Conversations could not be refreshed. Reconnect to try again.",

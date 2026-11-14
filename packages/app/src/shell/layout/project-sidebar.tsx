@@ -26,6 +26,8 @@ import "./project-sidebar.css"
 
 const LIST_LIMIT = 5
 const LIMIT_REFRESH_MS = 60_000
+// Fixed id of the scrum coordinator session adopted by the wake plugin.
+const SCRUM_SESSION_ID = "ses_scrum"
 
 type Host = { connection: ServerConnection.Any; key: ReturnType<typeof ServerConnection.key>; ctx: ReturnType<ReturnType<typeof createHomeController>["server"]["context"]>; label: string }
 
@@ -207,6 +209,28 @@ export function ProjectSidebar() {
   const add = (connection: ServerConnection.Any) => pickDirectory({ server: connection, title: language.t("command.project.open"), multiple: true,
     onSelect: (result) => { if (result) home.project.add(connection, Array.isArray(result) ? result : [result]) } })
 
+  const scrumActive = createMemo(() => {
+    const route = layout.route()
+    return route.type === "session" && route.sessionId === SCRUM_SESSION_ID
+  })
+
+  // The scrum coordinator is a server-wide singleton with a fixed id: probe the
+  // hosts for the row the wake plugin adopts, and create it lazily on the first
+  // host when the plugin has not run (its move leg relocates such rows on the
+  // next boot with the gate on).
+  const openScrum = async () => {
+    for (const host of hosts()) {
+      const session = await host.ctx.sdk.api.session.get({ sessionID: SCRUM_SESSION_ID }).catch(() => undefined)
+      if (session) return open({ host, session })
+    }
+    const host = hosts()[0]
+    if (!host) return
+    const created = await host.ctx.sdk.api.session
+      .create({ id: SCRUM_SESSION_ID, title: language.t("sidebar.scrum"), agent: "scrum" })
+      .catch((error) => (failure(error as Error), undefined))
+    if (created) open({ host, session: created })
+  }
+
   // Whose usage the sidebar shows: the open session, else the most recent one, else the first
   // project the registry knows. Providers are server-wide, so any real directory of that host
   // resolves the same set; the pick only decides which host answers.
@@ -235,6 +259,9 @@ export function ProjectSidebar() {
           <span class="flex w-full items-center justify-between gap-3"><span>{language.t("command.project.open")}</span><span class="sidebar-host shrink-0">{home.server.label(connection)}</span></span>
         </Menu.Item>}</For></Menu.Content></Menu.Portal>
       </Menu>
+      <button type="button" class="sidebar-row flex h-7 w-full items-center gap-1.5 rounded-md ps-1.5 pe-2 text-start text-13-regular" classList={{ "sidebar-row-active": scrumActive() }} onClick={() => void openScrum()}>
+        <Icon name="graduation-cap" size="small" /><span class="min-w-0 truncate">{language.t("sidebar.scrum")}</span>
+      </button>
     </div>
     <div class="min-h-0 flex-1 overflow-auto px-2 pb-4">
       <div class="sidebar-label px-2 pb-1 pt-3">{language.t("sidebar.recentConversations")}</div>
