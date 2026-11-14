@@ -5,16 +5,20 @@ import { Database } from "@opencode/core/database/database"
 import { ScrumPlugin } from "@opencode/core/plugin/scrum"
 import { Session } from "@opencode/core/session"
 import { Todo } from "@opencode/core/todo"
+import { Global } from "@opencode/util/global"
 import { TestClock } from "effect/testing"
 import { it } from "../lib/effect"
 import { host } from "./host"
 
 const scrumID = Session.ID.make("ses_scrum")
 const DAY = 86_400_000
+// The stubbed config directory the coordinator is anchored to, mirroring the
+// Voice Inbox pattern (location = global config dir, never an ambient project).
+const CONFIG = "/config"
 
 type Row = { id: string; directory: string; text: string; status: "open" | "done"; assignee?: string }
 type Wake = { sessionID: Session.ID; id: string; text: string; delivery?: string }
-type Call = { id: Session.ID; title?: string; agent?: string }
+type Call = { id: Session.ID; title?: string; agent?: string; location?: { directory: string } }
 
 // The plugin's decision logic against stubbed domains and services: real event
 // filtering, id derivation, and gating; the durable inbox's first-admission-wins
@@ -24,9 +28,11 @@ const run = Effect.fnUntraced(function* (input: {
   rows?: Row[]
   idleProjects?: string[]
   agents?: Record<string, string>
+  location?: string
 }) {
   const wakes: Wake[] = []
   const created: Call[] = []
+  const moved: { sessionID: Session.ID; directory: string }[] = []
   const events = yield* Queue.unbounded<{ type: string; data: any }>()
   const rows = input.rows ?? []
   const context = host({
@@ -37,10 +43,21 @@ const run = Effect.fnUntraced(function* (input: {
             id: input?.id as Session.ID,
             title: input?.title,
             agent: input?.agent && String(input?.agent),
+            location: input?.location && { directory: String(input.location.directory) },
           })
           return {} as never
         }),
-      get: (get) => Effect.succeed({ id: get.sessionID, agent: input.agents?.[String(get.sessionID)] } as never),
+      get: (get) =>
+        Effect.succeed({
+          id: get.sessionID,
+          agent: input.agents?.[String(get.sessionID)],
+          location: { directory: input.location ?? CONFIG },
+        } as never),
+      move: (move) =>
+        Effect.sync(() => {
+          moved.push({ sessionID: move.sessionID, directory: String(move.directory) })
+          return {} as never
+        }),
       synthetic: (wake) =>
         Effect.sync(() => {
           wakes.push({ sessionID: wake.sessionID, id: String(wake.id), text: wake.text, delivery: wake.delivery })
@@ -50,6 +67,7 @@ const run = Effect.fnUntraced(function* (input: {
     event: { subscribe: () => Stream.fromQueue(events) as never },
   })
   const services = Layer.mergeAll(
+    Layer.succeed(Global.Service, Global.Service.of({ ...Global.make(), config: CONFIG })),
     Layer.succeed(
       Config.Service,
       Config.Service.of({
@@ -86,7 +104,7 @@ const run = Effect.fnUntraced(function* (input: {
   yield* ScrumPlugin.Plugin.effect(context).pipe(Effect.provide(services))
   const emit = (type: string, sessionID: string, data: Record<string, unknown> = {}) =>
     Queue.offer(events, { type, data: { sessionID, ...data } }).pipe(Effect.flatMap(() => flush))
-  return { wakes, created, emit }
+  return { wakes, created, moved, emit }
 })
 
 // Lets the forked subscription and scan fibers settle between steps.
@@ -95,9 +113,18 @@ const flush = Effect.forEach(Array.from({ length: 20 }), () => Effect.yieldNow, 
 describe("scrum plugin", () => {
   it.effect("adopts the pinned scrum session when enabled", () =>
     Effect.gen(function* () {
-      const { created } = yield* run({ enabled: true })
+      const { created, moved } = yield* run({ enabled: true })
       yield* flush
-      expect(created).toEqual([{ id: scrumID, title: "Scrum", agent: "scrum" }])
+      expect(created).toEqual([{ id: scrumID, title: "Scrum", agent: "scrum", location: { directory: CONFIG } }])
+      expect(moved).toEqual([])
+    }),
+  )
+
+  it.effect("relocates a session adopted into a project location", () =>
+    Effect.gen(function* () {
+      const { moved } = yield* run({ enabled: true, location: "E:/mobile-personal-assistant" })
+      yield* flush
+      expect(moved).toEqual([{ sessionID: scrumID, directory: CONFIG }])
     }),
   )
 

@@ -3,16 +3,22 @@ export * as ScrumPlugin from "./scrum.js"
 import { define } from "@opencode/plugin/effect/plugin"
 import { and, isNull, lt } from "drizzle-orm"
 import { Effect, Schedule, Stream } from "effect"
+import { Global } from "@opencode/util/global"
+import { sameDirectory } from "@opencode/util/path"
 import { Agent } from "../agent.js"
 import { Config } from "../config.js"
 import { Database } from "../database/database.js"
+import { AbsolutePath } from "../schema.js"
 import { ProjectTable } from "../project/sql.js"
 import { Session } from "../session.js"
 import { SessionMessage } from "../session/message.js"
 import { Todo } from "../todo.js"
 
 // One coordinator session for the whole server; Session.create adopts a reused ID,
-// so instantiation from several locations converges on the same row.
+// so instantiation from several locations converges on the same row. Adoption is
+// anchored to the config directory (like the Voice Inbox), NOT to whichever project
+// location booted the plugin first — an ambient location would nest the coordinator
+// under some unrelated project in the sidebar.
 const ScrumSessionID = Session.ID.make("ses_scrum")
 const DAY_MS = 86_400_000
 const IDLE_PROJECT_DAYS = 3
@@ -25,7 +31,15 @@ export const Plugin = define({
 
     const todo = yield* Todo.Service
     const database = yield* Database.Service
-    yield* ctx.session.create({ id: ScrumSessionID, title: "Scrum", agent: Agent.ID.make("scrum") }).pipe(Effect.orDie)
+    const global = yield* Global.Service
+    const home = AbsolutePath.make(global.config)
+    yield* ctx.session
+      .create({ id: ScrumSessionID, title: "Scrum", agent: Agent.ID.make("scrum"), location: { directory: home } })
+      .pipe(Effect.orDie)
+    // Cut over hosts that adopted the session in a project location before this fix.
+    const adopted = yield* ctx.session.get({ sessionID: ScrumSessionID }).pipe(Effect.orElseSucceed(() => undefined))
+    if (adopted?.location && !sameDirectory(adopted.location.directory, home))
+      yield* ctx.session.move({ sessionID: ScrumSessionID, directory: home }).pipe(Effect.ignore)
 
     // Wakes ride the durable synthetic inbox with stable derived ids: first admission
     // wins, so repeated events, repeated scans, and duplicate plugin instances coalesce.
