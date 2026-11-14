@@ -14,6 +14,7 @@ export const ID = Schema.String.pipe(
     anthropic: schema.make("anthropic"),
     openai: schema.make("openai"),
     google: schema.make("google"),
+    googleAntigravity: schema.make("google-antigravity"),
     googleVertex: schema.make("google-vertex"),
     githubCopilot: schema.make("github-copilot"),
     claudeAgent: schema.make("claude-agent"),

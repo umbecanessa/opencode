@@ -28,7 +28,6 @@ const tokenSharingScope = "chatgpt.tokens.use.direct"
 const providerID = Provider.ID.openai
 const integrationID = Integration.ID.make("openai")
 const methodID = Integration.MethodID.make("chatgpt-token-sharing")
-const modelCacheKey = (clientID: string) => `models:${clientID}`
 const fallbackModels = new Set([
   "gpt-5.5",
   "gpt-5.5-fast",
@@ -82,6 +81,7 @@ const RemoteModel = Schema.Struct({
 })
 type RemoteModel = typeof RemoteModel.Type
 const RemoteModels = Schema.Struct({ models: Schema.Array(RemoteModel) })
+
 const decodeCachedModels = Schema.decodeUnknownOption(Schema.Array(RemoteModel))
 
 const decodeMetadata = Schema.decodeUnknownOption(
@@ -245,9 +245,9 @@ export const ChatGPTPlugin = define({
         const metadata = Option.getOrUndefined(decodeMetadata(value.metadata))
         if (!metadata) return Effect.void
         return Effect.gen(function* () {
-          const saved = yield* ctx.storage.get(modelCacheKey(metadata.clientID))
+          const saved = yield* ctx.storage.get(`models:${metadata.clientID}`)
           if (!Option.isSome(decodeCachedModels(saved)) && metadata.models)
-            yield* ctx.storage.set(modelCacheKey(metadata.clientID), metadata.models)
+            yield* ctx.storage.set(`models:${metadata.clientID}`, metadata.models)
           const { models: _, ...rest } = value.metadata ?? {}
           yield* credentials.update(entry.id, {
             value: Credential.OAuth.make({ ...value, methodID, metadata: rest }),

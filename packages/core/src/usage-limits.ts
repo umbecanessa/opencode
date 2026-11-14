@@ -110,7 +110,71 @@ const ProviderUsageResponse = Schema.Union([
   Schema.Struct({ data: Schema.Struct({ total_credits: Schema.Finite, total_usage: Schema.Finite }) }),
 ])
 
-/** The usage of every available provider that configures a `usageURL`. One failing provider simply reports nothing. */
+const AntigravityBucket = Schema.Struct({
+  window: Schema.optional(Schema.String),
+  bucketId: Schema.optional(Schema.String),
+  displayName: Schema.optional(Schema.String),
+  remainingFraction: Schema.optional(Schema.Finite),
+  remainingPercentage: Schema.optional(Schema.Finite),
+  remaining: Schema.optional(
+    Schema.Struct({
+      remainingFraction: Schema.optional(Schema.Finite),
+      remainingPercentage: Schema.optional(Schema.Finite),
+    }),
+  ),
+  resetTime: Schema.optional(Schema.String),
+})
+const AntigravityGroup = Schema.Struct({
+  displayName: Schema.optional(Schema.String),
+  buckets: Schema.optional(Schema.Array(AntigravityBucket)),
+})
+const AntigravityQuotaResponse = Schema.Struct({
+  groups: Schema.optional(Schema.Array(AntigravityGroup)),
+})
+
+const AnthropicBucket = Schema.Struct({
+  utilization: Schema.optional(Schema.Finite),
+  resets_at: Schema.optional(Schema.String),
+})
+const AnthropicUsageResponse = Schema.Struct({
+  five_hour: Schema.optional(Schema.NullOr(AnthropicBucket)),
+  seven_day: Schema.optional(Schema.NullOr(AnthropicBucket)),
+  seven_day_opus: Schema.optional(Schema.NullOr(AnthropicBucket)),
+  seven_day_sonnet: Schema.optional(Schema.NullOr(AnthropicBucket)),
+})
+
+const ChatGPTWindow = Schema.Struct({
+  used_percent: Schema.optional(Schema.Finite),
+  limit_window_seconds: Schema.optional(Schema.Finite),
+  reset_at: Schema.optional(Schema.Finite),
+})
+const ChatGPTUsageResponse = Schema.Struct({
+  rate_limit: Schema.optional(
+    Schema.Struct({
+      allowed: Schema.optional(Schema.Boolean),
+      primary_window: Schema.optional(Schema.NullOr(ChatGPTWindow)),
+      secondary_window: Schema.optional(Schema.NullOr(ChatGPTWindow)),
+      tertiary_window: Schema.optional(Schema.NullOr(ChatGPTWindow)),
+    }),
+  ),
+  additional_rate_limits: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        limit_name: Schema.optional(Schema.String),
+        rate_limit: Schema.optional(
+          Schema.Struct({
+            primary_window: Schema.optional(Schema.NullOr(ChatGPTWindow)),
+            secondary_window: Schema.optional(Schema.NullOr(ChatGPTWindow)),
+          }),
+        ),
+      }),
+    ),
+  ),
+})
+
+const SUBSCRIPTION_PROVIDERS = new Set(["google-antigravity", "anthropic", "openai"])
+
+/** The usage of every available provider that configures a `usageURL` or has an active subscription connection. */
 const readProviders = Effect.fn("UsageLimits.readProviders")(function* (
   providers: Provider.Interface,
   integrations: Integration.Interface,
@@ -118,14 +182,16 @@ const readProviders = Effect.fn("UsageLimits.readProviders")(function* (
   http: HttpClient.HttpClient,
 ) {
   const configured = (yield* providers.available()).filter(
-    (provider) => typeof provider.settings?.usageURL === "string" && provider.settings.usageURL !== "",
+    (provider) =>
+      (typeof provider.settings?.usageURL === "string" && provider.settings.usageURL !== "") ||
+      SUBSCRIPTION_PROVIDERS.has(provider.id),
   )
   return yield* Effect.forEach(
     configured,
     (provider) =>
       readProvider(http, integrations, credentials, provider).pipe(
         Effect.timeout(Duration.seconds(15)),
-        Effect.catch(() => Effect.succeed(undefined)),
+        Effect.orElseSucceed(() => undefined),
       ),
     { concurrency: 4 },
   ).pipe(Effect.map((usage) => usage.flatMap((entry) => (entry ? [entry] : []))))
@@ -143,6 +209,25 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
   const stored = connection
     ? undefined
     : (yield* credentials.list(integrationID)).flatMap((entry) => (entry.value.type === "key" ? [entry.value] : []))[0]
+
+  if (credential && credential.type === "oauth") {
+    if (provider.id === "google-antigravity" || String(integrationID) === "google-antigravity") {
+      const project = typeof credential.metadata?.project === "string" ? credential.metadata.project : ""
+      return yield* readAntigravityUsage(http, credential.access, project, provider)
+    }
+    if (provider.id === "anthropic" || String(integrationID) === "anthropic") {
+      return yield* readAnthropicUsage(http, credential.access, provider)
+    }
+    if (provider.id === "openai" || String(integrationID) === "openai") {
+      const accountID = typeof credential.metadata?.accountID === "string" ? credential.metadata.accountID : ""
+      return yield* readChatGPTUsage(http, credential.access, accountID, provider)
+    }
+  }
+
+  if (typeof provider.settings?.usageURL !== "string" || !provider.settings.usageURL) {
+    return undefined
+  }
+
   const token =
     credential && credential.type !== "external"
       ? credential.type === "oauth"
@@ -151,7 +236,7 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
       : typeof provider.settings?.apiKey === "string"
         ? provider.settings.apiKey
         : stored?.key
-  const request = HttpClientRequest.get(provider.settings?.usageURL ?? "").pipe(HttpClientRequest.acceptJson)
+  const request = HttpClientRequest.get(provider.settings.usageURL).pipe(HttpClientRequest.acceptJson)
   const body = yield* HttpClient.withScope(http)
     .execute(token === undefined ? request : HttpClientRequest.bearerToken(token)(request))
     .pipe(
@@ -188,6 +273,152 @@ const readProvider = Effect.fn("UsageLimits.readProvider")(function* (
               balance: Money.USD.make(Math.max(0, body.data.total_credits - body.data.total_usage)),
             },
           ],
+  }
+})
+
+const readAntigravityUsage = Effect.fnUntraced(function* (
+  http: HttpClient.HttpClient,
+  token: string,
+  project: string,
+  provider: Provider.Info,
+) {
+  const url = "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+  const request = yield* HttpClientRequest.post(url).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeader("User-Agent", "antigravity/ide/2.5.5 (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)"),
+    HttpClientRequest.acceptJson,
+    HttpClientRequest.bodyJson({ project }),
+  )
+  const body = yield* HttpClient.withScope(http)
+    .execute(request)
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(AntigravityQuotaResponse)),
+      Effect.scoped,
+    )
+  const windows = (body.groups ?? []).flatMap((group) => {
+    const groupName = group.displayName ?? "Models"
+    return (group.buckets ?? []).flatMap((b) => {
+      const target = b.remaining ?? b
+      const remaining = target.remainingFraction ?? (target.remainingPercentage !== undefined ? target.remainingPercentage / 100 : undefined)
+      if (remaining === undefined) return []
+      const span = `${b.window ?? ""} ${b.bucketId ?? ""} ${b.displayName ?? ""}`.toLowerCase()
+      const period = span.includes("week") ? "Weekly" : span.includes("5h") || span.includes("five") ? "5-hour" : ""
+      const label = period ? `${groupName} · ${period}` : groupName
+      const percent = Math.min(100, Math.max(0, Math.round((1 - remaining) * 100)))
+      const resetsAt = b.resetTime ? Date.parse(b.resetTime) : undefined
+      return [
+        {
+          label,
+          percent,
+          limited: remaining <= 0,
+          ...(resetsAt && Number.isFinite(resetsAt) ? { resetsAt } : {}),
+        },
+      ]
+    })
+  })
+  return {
+    providerID: Provider.ID.make(provider.id),
+    ...(provider.name === provider.id ? { name: "Google Antigravity" } : { name: provider.name }),
+    windows,
+  }
+})
+
+const readAnthropicUsage = Effect.fnUntraced(function* (
+  http: HttpClient.HttpClient,
+  token: string,
+  provider: Provider.Info,
+) {
+  const url = "https://api.anthropic.com/api/oauth/usage"
+  const request = HttpClientRequest.get(url).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeader("User-Agent", "claude-cli/2.1.280 (external, cli)"),
+    HttpClientRequest.acceptJson,
+  )
+  const body = yield* HttpClient.withScope(http)
+    .execute(request)
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(AnthropicUsageResponse)),
+      Effect.scoped,
+    )
+  const bucket = (b: { utilization?: number; resets_at?: string } | null | undefined, label: string) => {
+    if (!b || b.utilization === undefined) return []
+    const percent = Math.min(100, Math.max(0, Math.round(b.utilization * 100)))
+    const resetsAt = b.resets_at ? Date.parse(b.resets_at) : undefined
+    return [
+      {
+        label,
+        percent,
+        limited: b.utilization >= 1,
+        ...(resetsAt && Number.isFinite(resetsAt) ? { resetsAt } : {}),
+      },
+    ]
+  }
+  const windows = [
+    ...bucket(body.five_hour, "5-hour"),
+    ...bucket(body.seven_day, "Weekly"),
+    ...bucket(body.seven_day_opus, "Weekly · Opus"),
+    ...bucket(body.seven_day_sonnet, "Weekly · Sonnet"),
+  ]
+  const result: UsageLimits.ProviderUsage = {
+    providerID: Provider.ID.make(provider.id),
+    ...(provider.name === provider.id ? { name: "Claude Subscription" } : { name: provider.name }),
+    windows,
+  }
+  return result
+})
+
+const readChatGPTUsage = Effect.fnUntraced(function* (
+  http: HttpClient.HttpClient,
+  token: string,
+  accountID: string,
+  provider: Provider.Info,
+) {
+  const url = "https://chatgpt.com/backend-api/wham/usage"
+  const request = HttpClientRequest.get(url).pipe(
+    HttpClientRequest.bearerToken(token),
+    HttpClientRequest.setHeader("chatgpt-account-id", accountID),
+    HttpClientRequest.acceptJson,
+  )
+  const body = yield* HttpClient.withScope(http)
+    .execute(request)
+    .pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(ChatGPTUsageResponse)),
+      Effect.scoped,
+    )
+  const limits = body.rate_limit
+  const allowed = limits?.allowed !== false
+  const windowOf = (w: { used_percent?: number; reset_at?: number } | null | undefined, label: string) => {
+    if (!w || w.used_percent === undefined) return []
+    const percent = Math.min(100, Math.max(0, Math.round(w.used_percent)))
+    const resetsAt = w.reset_at ? w.reset_at * 1000 : undefined
+    return [
+      {
+        label,
+        percent,
+        limited: !allowed || percent >= 100,
+        ...(resetsAt && Number.isFinite(resetsAt) ? { resetsAt } : {}),
+      },
+    ]
+  }
+  const windows = [
+    ...windowOf(limits?.primary_window, "5-hour"),
+    ...windowOf(limits?.secondary_window, "Weekly"),
+    ...windowOf(limits?.tertiary_window, "Monthly"),
+  ]
+  for (const extra of body.additional_rate_limits ?? []) {
+    const name = extra.limit_name ? `${extra.limit_name} · ` : ""
+    windows.push(
+      ...windowOf(extra.rate_limit?.primary_window, `${name}5-hour`),
+      ...windowOf(extra.rate_limit?.secondary_window, `${name}Weekly`),
+    )
+  }
+  return {
+    providerID: Provider.ID.make(provider.id),
+    ...(provider.name === provider.id ? { name: "ChatGPT Subscription" } : { name: provider.name }),
+    windows,
   }
 })
 
