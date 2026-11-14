@@ -400,12 +400,22 @@ it.live(
       const tmp = yield* Effect.acquireDisposable(Effect.promise(() => tmpdir("opencode-voice-dictate-")))
       const global = path.join(tmp.path, "global")
       yield* Effect.promise(() => fs.mkdir(global))
+      let calls = 0
       const whisper = Bun.serve({
         hostname: "127.0.0.1",
         port: 0,
         fetch(request) {
           if (!new URL(request.url).pathname.endsWith("/audio/transcriptions"))
             return new Response("not found", { status: 404 })
+          calls += 1
+          if (calls === 2)
+            // Whisper over silence: confident filler with garbage confidence, no duration of
+            // its own. Must come back as empty text, not "Thank you." in the composer.
+            return Response.json({
+              text: "Thank you.",
+              language: "en",
+              segments: [{ id: 0, start: 0, end: 2.4, text: " Thank you.", avg_logprob: -5.5 }],
+            })
           return Response.json({
             text: "ship the dictate endpoint",
             language: "en",
@@ -445,6 +455,19 @@ it.live(
       expect(result.data.language).toBe("en")
       // Segments arrive with diarizer labels intact, so the client can render speakers.
       expect(result.data.segments?.map((segment) => segment.speaker)).toEqual(["0", "1"])
+
+      // A silent clip's hallucinated filler is gated to empty text, which the composer
+      // renders as its "No speech detected" notice rather than committing into the prompt.
+      const silentDictated = yield* send("/api/experimental/voice/dictate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ audio: Buffer.from("silent webm bytes").toString("base64") }),
+      })
+      expect(silentDictated.status).toBe(200)
+      expect(((yield* Effect.promise(() => silentDictated.json())) as { data: { text: string; language?: string; segments?: unknown } }).data).toEqual({
+        text: "",
+        language: "en",
+      })
 
       // An empty clip is a client mistake, not a transcriber failure.
       expect(
@@ -659,6 +682,20 @@ it.live(
               language: "en",
               segments: [{ id: 0, start: 0, end: 1.2, text: "You", avg_logprob: -5.2 }],
             })
+          if (calls === 3)
+            // A real 17-minute meeting: healthy mean like the measured ones (-0.33) with ~1% of
+            // audio time in sub-cutoff fragments (a laugh, hold music). Must NOT gate.
+            return Response.json({
+              text: "Let's go through the roadmap. Thanks everyone.",
+              duration: 1000,
+              language: "en",
+              segments: [
+                { id: 0, start: 0, end: 500, text: "Let's go through the roadmap.", avg_logprob: -0.3 },
+                { id: 1, start: 500, end: 960, text: "Priorities for next quarter.", avg_logprob: -0.4 },
+                { id: 2, start: 960, end: 970, text: "ha ha ha", avg_logprob: -4.9 },
+                { id: 3, start: 970, end: 1000, text: "Thanks everyone.", avg_logprob: -0.5 },
+              ],
+            })
           return Response.json({
             text: "Thank you.",
             duration: 9.1,
@@ -735,8 +772,37 @@ it.live(
         return found
       }).pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.timeout("30 seconds"))
       expect(overflowItem.payload.metadata.summary).toBe("No speech detected — the clip was probably silent.")
+
+      // The long-meeting false positive (26.12.24 hosts): a 17-min recording whose diarized
+      // transcript is complete but where a handful of sub-cutoff fragments used to poison the
+      // whole clip via some(). Now the gate weighs low-confidence share of audio time.
+      const meetingUpload = yield* send("/api/experimental/fs/write?path=" + encodeURIComponent(path.join(global, "voice", "meeting.mp3")), {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array([0x49, 0x44, 0x33, 0x04, 0x02]),
+      })
+      expect(meetingUpload.status).toBe(200)
+      const meetingPath = ((yield* Effect.promise(() => meetingUpload.json())) as { data: { path: string } }).data.path
+      expect(
+        (yield* send("/api/experimental/voice/transcribe", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ audioPath: meetingPath, recordingId: "20261113meeting", duration: 1000 }),
+        })).status,
+      ).toBe(200)
+
+      const meetingItem = yield* Effect.gen(function* () {
+        const inbox = yield* send("/api/session/ses_voice_inbox/inbox")
+        const entries = ((yield* Effect.promise(() => inbox.json())) as {
+          data: Array<{ payload: { metadata: Record<string, unknown> } }>
+        }).data
+        const found = entries.find((entry) => entry.payload.metadata.recordingId === "20261113meeting")
+        if (found === undefined) return yield* Effect.fail("pending")
+        return found
+      }).pipe(Effect.retry(Schedule.spaced("50 millis")), Effect.timeout("30 seconds"))
+      expect(meetingItem.payload.metadata.summary).not.toBe("No speech detected — the clip was probably silent.")
     }),
-  { timeout: 45_000 },
+  { timeout: 60_000 },
 )
 
 it.live("routes pending voice notes to sessions or project memory", () =>

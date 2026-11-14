@@ -394,6 +394,19 @@ export const VoiceHandler = HttpApiBuilder.group(Api, "server.voice", (handlers)
                   ...(request.payload.language === undefined ? {} : { language: request.payload.language }),
                 })
                 .pipe(Effect.mapError((error) => new ServiceUnavailableError({ message: error.message, service: "whisper" })))
+              // Same hallucination gate as the ingest path: over silence whisper emits confident
+              // filler ("Thank you."). Returning it would commit that text into the composer as if
+              // the user had spoken it; an empty text routes the client to its existing
+              // "No speech detected" notice instead.
+              if (isSilenceHallucination(audio)) {
+                yield* Effect.logWarning("dictation clip produced no real speech; text gated", { bytes: data.byteLength })
+                return {
+                  data: {
+                    text: "",
+                    ...(audio.language === undefined ? {} : { language: audio.language }),
+                  },
+                }
+              }
               return {
                 data: {
                   text: audio.text,
@@ -592,16 +605,24 @@ function voiceItemID(sessionID: Session.ID, payload: { readonly itemId?: Session
   return derivedID(sessionID, payload.recordingId)
 }
 
-/** Whisper produces confident garbage over near-silence; a segment claiming speech past the file's end (observed: 27.1s on a 9.1s clip) is the tell. Empty text is its quiet cousin, and low mean token log-probability is the loudest: real speech sits near -0.4, silence hallucinations below -5 (observed on a 6s silent clip). */
+/** Whisper produces confident garbage over near-silence; a segment claiming speech past the file's end (observed: 27.1s on a 9.1s clip) is the tell. Empty text is its quiet cousin. Low mean token log-probability is the loudest, judged by share of AUDIO TIME not the worst segment: a silent clip is garbage across its whole length, while a real 16-70min meeting always carries a few percent of sub-cutoff fragments (crosstalk, laughter, hold music — measured 3.3% and 6.3% with healthy means of -0.33 and -0.43), and gating on one bad segment discarded whole meetings that way. */
 function isSilenceHallucination(audio: Transcribe.Audio, duration?: number) {
   if (audio.text.trim() === "") return true
-  if ((audio.segments ?? []).some((segment) => (segment.avgLogprob ?? 0) < -1.5)) return true
+  const segments = audio.segments ?? []
+  const total = segments.reduce((sum, segment) => sum + (segment.end - segment.start), 0)
+  if (total > 0) {
+    const low = segments.reduce(
+      (sum, segment) => sum + ((segment.avgLogprob ?? 0) < -1.5 ? segment.end - segment.start : 0),
+      0,
+    )
+    if (low / total > 0.5) return true
+  }
   // Device-reported durations are approximate (observed 24s short on a 34min file, gating a real
   // meeting via its own valid tail); whisper's decoded duration is the better floor. The max errs
   // toward not gating, which is right when a human triages the card either way.
   const floor = Math.max(duration ?? 0, audio.durationSeconds ?? 0)
   if (floor === 0) return false
-  return (audio.segments ?? []).some((segment) => segment.end > floor + 2)
+  return segments.some((segment) => segment.end > floor + 2)
 }
 
 // Recovery waits are human-scale: a wrapper restart or the desktop's lazy launch can take
