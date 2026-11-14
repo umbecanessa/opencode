@@ -184,7 +184,10 @@ export const make = Effect.fn("Session.make")(function* () {
         }).pipe(
           Effect.catchTag("SessionInbox.LifecycleConflict", () => new PromptConflictError({ sessionID, messageID })),
         )
-        if (input.resume !== false) yield* execution.wake(sessionID)
+        // Same contract as Session.synthetic: a retried stable id whose row was already
+        // delivered admitted nothing, so it must not schedule a wake.
+        if (input.resume !== false && (yield* SessionInbox.find(database.db, messageID)) !== undefined)
+          yield* execution.wake(sessionID)
         return admitted
       }),
     ),
@@ -320,7 +323,16 @@ export const make = Effect.fn("Session.make")(function* () {
                 () => new SyntheticConflictError({ sessionID, inputID }),
               ),
             )
-          if (input.resume !== false && !(yield* get(sessionID)).revert) yield* execution.wake(sessionID)
+          // A retried stable id whose row was already delivered admitted nothing new; waking
+          // would boot an empty drain (observed: the scrum coordinator woken all night by its
+          // own deduplicated scan wakes). Wake only when work is genuinely pending: a fresh
+          // admission, or a retry whose row is still waiting on a lost wake.
+          if (
+            input.resume !== false &&
+            (yield* SessionInbox.find(database.db, inputID)) !== undefined &&
+            !(yield* get(sessionID)).revert
+          )
+            yield* execution.wake(sessionID)
           return admitted
         }),
       ),
