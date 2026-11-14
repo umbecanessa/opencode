@@ -663,6 +663,7 @@ export function make(options: ClientOptions) {
               metadata: input?.["metadata"],
               permissions: input?.["permissions"],
               temporary: input?.["temporary"],
+              projectless: input?.["projectless"],
             },
             successStatus: 200,
             declaredStatuses: [400, 401, 404],
