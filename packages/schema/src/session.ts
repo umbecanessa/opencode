@@ -96,7 +96,7 @@ const ListFilterFields = {
     )
     .annotate({
       description:
-        "Filter by archive state. Use true to return only archived sessions or false to exclude them. Omit to include both.",
+        "Filter by archive state. Archived sessions are excluded by default; use true to list only archived sessions or false to keep them hidden.",
     })
     .pipe(Schema.optional),
 }

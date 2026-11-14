@@ -122,7 +122,11 @@ export { DestinationNotFoundError, DestinationNotDirectoryError, DestinationUnav
 export { TurnRangeError }
 
 export interface Interface {
-  /** A cursor carries the filters of the request that produced it, so filters passed with a cursor are ignored. */
+  /**
+   * A cursor carries the filters of the request that produced it, so filters passed with a cursor are ignored.
+   * Archived sessions are excluded unless `archived` is set: `true` lists only archived sessions, `false` is
+   * the default exclusion. Callers that must see both pass them through separate queries or restore by id.
+   */
   readonly list: (input?: ListFilter & { readonly limit?: number; readonly cursor?: ListCursor }) => Effect.Effect<
     {
       readonly data: SessionSchema.Info[]
@@ -401,10 +405,16 @@ const layer = Layer.effect(
         yield* bus.remove(sessionID)
       }),
       list: Effect.fn("Session.list")(function* (input = {}) {
-        const filter =
+        const requested =
           input.cursor === undefined
             ? input
             : yield* ListCursor.parse(input.cursor).pipe(Effect.mapError(() => new InvalidListCursorError()))
+        // Archived sessions stay out of listings unless the caller opts in with archived=true,
+        // mirroring the project.list archived opt-in. Pinning the default into the filter here also
+        // puts it in cursors minted below, so paged follow-ups keep excluding archived sessions.
+        // SessionStore.list itself stays neutral: internal callers such as remove's child cascade
+        // need archived rows through the store.
+        const filter = { ...requested, archived: requested.archived ?? false }
         const data = yield* store.list({ ...filter, limit: input.limit ?? DefaultListLimit })
         const first = data[0]
         const last = data.at(-1)
