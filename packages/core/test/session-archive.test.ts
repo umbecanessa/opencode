@@ -64,9 +64,46 @@ describe("Session.archive", () => {
 
       const ids = (input?: Session.ListInput) =>
         session.list(input).pipe(Effect.map((page) => page.data.map((item) => item.id).toSorted()))
-      expect(yield* ids()).toEqual([active.id, archived.id].toSorted())
+      expect(yield* ids()).toEqual([active.id])
       expect(yield* ids({ archived: false })).toEqual([active.id])
       expect(yield* ids({ archived: true })).toEqual([archived.id])
+    }),
+  )
+
+  it.effect("hides archived sessions from default listings across pages", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const active = yield* session.create({ location, title: "active" })
+      const archived = yield* session.create({ location, title: "archived" })
+      yield* session.archive(archived.id)
+      const later = yield* session.create({ location, title: "later" })
+
+      const first = yield* session.list({ limit: 1, order: "desc" })
+      expect(first.data.some((item) => item.id === archived.id)).toBe(false)
+      const second = yield* session.list({ cursor: first.cursor.next })
+      expect(second.data.some((item) => item.id === archived.id)).toBe(false)
+      expect([...first.data, ...second.data].map((item) => item.id).toSorted()).toEqual(
+        [active.id, later.id].toSorted(),
+      )
+
+      const archivedPage = yield* session.list({ archived: true })
+      expect(archivedPage.data.map((item) => item.id)).toEqual([archived.id])
+      const archivedCursor = yield* session.list({ cursor: archivedPage.cursor.next })
+      expect(archivedCursor.data).toEqual([])
+    }),
+  )
+
+  it.effect("restores an archived session by id without listing it", () =>
+    Effect.gen(function* () {
+      const session = yield* Session.Service
+      const created = yield* session.create({ location })
+      yield* session.archive(created.id)
+
+      expect((yield* session.get(created.id)).time.archived).toBeDefined()
+      expect((yield* session.list()).data.map((item) => item.id)).toEqual([])
+
+      yield* session.unarchive(created.id)
+      expect((yield* session.list()).data.map((item) => item.id)).toEqual([created.id])
     }),
   )
 

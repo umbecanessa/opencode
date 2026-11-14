@@ -139,7 +139,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "session.list",
           summary: "List sessions",
           description:
-            "Retrieve sessions in the requested order. Items keep that order across pages; use cursor.next or cursor.previous to move through the ordered list.",
+            "Retrieve sessions in the requested order. Archived sessions are excluded unless archived=true is passed. Items keep that order across pages; use cursor.next or cursor.previous to move through the ordered list.",
         }),
       ),
     )
