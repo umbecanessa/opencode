@@ -736,7 +736,7 @@ export const Plugin = {
           name: "session_archive",
           description: [
             "Archives a session by id: it leaves active history and lists, and the transcript stays recoverable.",
-            "Server-side guard, not a prompt rule: a session this session spawned, with no human prompts in it, archives silently. Anything else raises a permission request - that request is the proposal to the user; on denial, do not retry, propose it in chat instead.",
+            "Server-side guard, not a prompt rule: a session this session spawned, with no human prompts in it, archives silently. Anything else raises a permission request - that request is the proposal to the user, and its message names which guard tripped (unmarked human turns, or no spawn marker naming you); on denial, do not retry, propose it in chat instead.",
             "A session with human prompts is never archived silently, even one this session spawned.",
             "Sessions dispatched to a peer server are not covered: archive them there.",
           ].join("\n"),
@@ -747,7 +747,14 @@ export const Plugin = {
             Effect.gen(function* () {
               const target = yield* sessions
                 .get(input.sessionID)
-                .pipe(Effect.mapError(() => new ToolFailure({ message: `Session not found: ${input.sessionID}` })))
+                .pipe(
+                  Effect.mapError(
+                    () =>
+                      new ToolFailure({
+                        message: `Session not found: ${input.sessionID}. A session dispatched to a peer server must be archived there.`,
+                      }),
+                  ),
+                )
               if (target.time.archived !== undefined)
                 return {
                   output: { sessionID: input.sessionID, archived: true },
@@ -774,43 +781,38 @@ export const Plugin = {
               // count as human, so a future prompt path cannot open a silent archive by accident.
               const machine = (metadata: Record<string, unknown> | undefined) =>
                 metadata?.source === "session_spawn" || metadata?.source === "session_send"
-              const spawned =
-                messages.some(
-                  (message) =>
-                    message.type === "user" &&
-                    message.metadata?.source === "session_spawn" &&
-                    message.metadata.parentSessionID === context.sessionID,
-                ) ||
-                pending.some(
-                  (item) =>
-                    item.type === "user" &&
-                    item.payload.metadata?.source === "session_spawn" &&
-                    item.payload.metadata.parentSessionID === context.sessionID,
-                )
-              const human =
-                messages.some((message) => message.type === "user" && !machine(message.metadata)) ||
-                pending.some((item) => item.type === "user" && !machine(item.payload.metadata))
-              if (!(spawned && !human))
+              const turns = [
+                ...messages.flatMap((message) => (message.type === "user" ? [message.metadata] : [])),
+                ...pending.flatMap((item) => (item.type === "user" ? [item.payload.metadata] : [])),
+              ]
+              const spawned = turns.some(
+                (metadata) => metadata?.source === "session_spawn" && metadata.parentSessionID === context.sessionID,
+              )
+              const unmarked = turns.filter((metadata) => !machine(metadata))
+              if (!(spawned && unmarked.length === 0)) {
+                // The reason names WHICH guard tripped, so the human reading the ask and
+                // the agent explaining it both get a real answer, not just "it asked".
+                const reason = unmarked.length
+                  ? `its transcript holds ${unmarked.length} unmarked user ${unmarked.length === 1 ? "entry" : "entries"}; human-typed prompts and unrecognized markers count as human turns`
+                  : "no session_spawn marker in its transcript names this session as its spawner (a lane spawned before the marker shipped reads this way too)"
                 yield* permission
                   .assert({
                     action: "session",
                     resources: [input.sessionID],
                     save: [input.sessionID],
-                    sessionID: context.sessionID,
-                    agent: context.agent,
-                    source: { type: "tool", messageID: context.messageID, id: context.id },
+                    message: `Archive "${target.title ?? input.sessionID}"? ${reason}.`,
+                    ...Permission.invocation(context),
                   })
                   .pipe(
                     Effect.mapError(
                       (error) =>
                         new ToolFailure({
-                          message: spawned
-                            ? `Archiving ${input.sessionID} needs the user's approval: it has human turns. Propose it in chat instead of retrying.`
-                            : `Archiving ${input.sessionID} needs the user's approval: it was not spawned by this session. Propose it in chat instead of retrying.`,
+                          message: `Archiving ${input.sessionID} needs the user's approval: ${reason}. Propose it in chat instead of retrying.`,
                           error,
                         }),
                     ),
                   )
+              }
               yield* sessions
                 .archive(input.sessionID)
                 .pipe(

@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Fiber, Layer, Schedule } from "effect"
 import { Agent } from "@opencode/core/agent"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
@@ -113,15 +113,18 @@ const it = testEffect(
 
 // The invoking agent's session-coordination policy: "deny" proves the silent path
 // never asks, and proves the guarded path actually routes through the permission
-// layer rather than deciding in the executor.
+// layer rather than deciding in the executor. "ask" reaches the interactive ask
+// path: a session-scoped ask rule ordered after the broad allow, since rule
+// evaluation keeps the last matching rule.
 const withTools =
-  (permissionEffect: "allow" | "deny") =>
+  (permissionEffect: "allow" | "deny" | "ask") =>
   (
     run: (
       registry: Tool.Interface,
       sessionID: Session.ID,
       sessions: Session.Interface,
       location: Location.Ref,
+      permission: Permission.Interface,
     ) => Effect.Effect<void>,
   ) =>
     () =>
@@ -139,12 +142,16 @@ const withTools =
         agents.transform((editor) => {
           editor.update(toolIdentity.agent, (agent) => {
             agent.mode = "primary"
-            agent.permissions.push({ action: "*", resource: "*", effect: permissionEffect })
+            if (permissionEffect === "ask") {
+              agent.permissions.push({ action: "*", resource: "*", effect: "allow" })
+              agent.permissions.push({ action: "session", resource: "*", effect: "ask" })
+            } else agent.permissions.push({ action: "*", resource: "*", effect: permissionEffect })
           })
         }),
       ).pipe(Effect.provide(locations.get(location)))
       const registry = yield* Tool.Service.pipe(Effect.provide(locations.get(location)))
-      yield* run(registry, parent.id, sessions, location)
+      const permission = yield* Permission.Service.pipe(Effect.provide(locations.get(location)))
+      yield* run(registry, parent.id, sessions, location, permission)
     })
 
 const call = (registry: Tool.Interface, sessionID: Session.ID, name: string, input: Record<string, unknown>) =>
@@ -154,11 +161,28 @@ const call = (registry: Tool.Interface, sessionID: Session.ID, name: string, inp
     call: { type: "tool-call", id: `call-${name}-${Math.random()}`, name, input },
   })
 
+// The archive tool's assert registers a pending ask before it waits for a reply,
+// so the call runs in a fiber and the request itself is observed here; the test
+// then rejects to land the call on its error channel.
+const waitForAsk = (permission: Permission.Interface, sessionID: Session.ID, target: Session.ID) =>
+  permission.forSession(sessionID).pipe(
+    Effect.map((requests) =>
+      requests.find((request) => request.action === "session" && request.resources.includes(target)),
+    ),
+    Effect.repeat({ while: (found) => found === undefined, schedule: Schedule.spaced("10 millis") }),
+    Effect.timeout("10 seconds"),
+    Effect.catchTag("TimeoutError", () => Effect.die("archive permission ask never appeared")),
+    Effect.flatMap((found) =>
+      found === undefined ? Effect.die("archive permission ask vanished") : Effect.succeed(found),
+    ),
+  )
+
 const spawnLane = Effect.fn("spawnLane")(function* (
   registry: Tool.Interface,
   parentID: Session.ID,
   promptText: string,
-) {  const settled = yield* call(registry, parentID, "opencode_session_spawn", {
+) {
+  const settled = yield* call(registry, parentID, "opencode_session_spawn", {
     title: "throwaway lane",
     prompt: promptText,
     background: true,
@@ -268,6 +292,58 @@ describe("session_archive", () => {
         expect(settled.status).toBe("completed")
         const row = yield* sessions.get(lane.id).pipe(Effect.orDie)
         expect(row.time.archived).toBeDefined()
+      }),
+    ),
+  )
+
+  it.live(
+    "the ask names the guard that tripped: no spawn marker",
+    withTools("ask")((registry, sessionID, sessions, location, permission) =>
+      Effect.gen(function* () {
+        const other = yield* sessions.create({ location, title: "Elsewhere" }).pipe(Effect.orDie)
+        const fiber = yield* Effect.forkChild(
+          call(registry, sessionID, "opencode_session_archive", { sessionID: other.id }),
+        )
+        const request = yield* waitForAsk(permission, sessionID, other.id)
+        expect(request.message).toContain("no session_spawn marker")
+        yield* permission.reply({ requestID: request.id, reply: "reject" }).pipe(Effect.orDie)
+        // The decline travels as a deliberate defect (resurfaces typed only at
+        // SessionModelRequest.executeTool, outside this harness), so the fiber's
+        // exit cause carries it rather than a settled tool result.
+        const exit = yield* Fiber.join(fiber).pipe(Effect.exit)
+        const cause = exit._tag === "Success" ? "success" : exit.cause
+        expect(String(cause)).toContain("Permission.DeclinedError")
+        const row = yield* sessions.get(other.id).pipe(Effect.orDie)
+        expect(row.time.archived).toBeUndefined()
+      }),
+    ),
+  )
+
+  it.live(
+    "the ask names the guard that tripped: unmarked human turns",
+    withTools("ask")((registry, sessionID, sessions, location, permission) =>
+      Effect.gen(function* () {
+        const lane = yield* sessions.create({ location, title: "Lane3" }).pipe(Effect.orDie)
+        yield* sessions
+          .prompt({
+            sessionID: lane.id,
+            text: "lane prompt",
+            resume: false,
+            metadata: { source: "session_spawn", parentSessionID: sessionID },
+          })
+          .pipe(Effect.orDie)
+        yield* sessions.prompt({ sessionID: lane.id, text: "a human typed this", resume: false }).pipe(Effect.orDie)
+        const fiber = yield* Effect.forkChild(
+          call(registry, sessionID, "opencode_session_archive", { sessionID: lane.id }),
+        )
+        const request = yield* waitForAsk(permission, sessionID, lane.id)
+        expect(request.message).toContain("1 unmarked user entry")
+        yield* permission.reply({ requestID: request.id, reply: "reject" }).pipe(Effect.orDie)
+        const exit = yield* Fiber.join(fiber).pipe(Effect.exit)
+        const cause = exit._tag === "Success" ? "success" : exit.cause
+        expect(String(cause)).toContain("Permission.DeclinedError")
+        const row = yield* sessions.get(lane.id).pipe(Effect.orDie)
+        expect(row.time.archived).toBeUndefined()
       }),
     ),
   )
