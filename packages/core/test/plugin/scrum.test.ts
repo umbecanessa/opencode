@@ -199,6 +199,22 @@ describe("scrum plugin", () => {
     }),
   )
 
+  it.effect("fires a daily board-review digest on every scan, coalesced by day", () =>
+    Effect.gen(function* () {
+      const { wakes } = yield* run({ enabled: true })
+      // The scan runs once at start; a six-hour clock step runs it again. Same day,
+      // so both admissions share the digest id and the inbox keeps only the first.
+      yield* TestClock.adjust("6 hours")
+      const digest = wakes.filter((wake) => wake.id.startsWith("msg_scrum_digest_"))
+      expect(digest).toHaveLength(2)
+      expect(new Set(digest.map((wake) => wake.id)).size).toBe(1)
+      expect(digest[0].id).toBe(`msg_scrum_digest_${Math.floor(Date.now() / DAY)}`)
+      expect(digest[0].sessionID).toBe(scrumID)
+      expect(digest[0].delivery).toBe("queue")
+      expect(digest[0].text).toContain("daily board review")
+    }),
+  )
+
   it.effect("surfaces unclaimed todos and idle projects on each scan, coalesced by id", () =>
     Effect.gen(function* () {
       const { wakes } = yield* run({

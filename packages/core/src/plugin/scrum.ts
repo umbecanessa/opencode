@@ -80,9 +80,14 @@ export const Plugin = define({
       )
 
     // Periodic scans, cheap enough to run every six hours:
+    // - a daily board-review digest, so quiet days still get a triage pass;
     // - unclaimed open todos wake scrum once per item, forever (id is the todo id);
     // - idle projects wake scrum once per project per week.
     yield* Effect.gen(function* () {
+      yield* wake(
+        `msg_scrum_digest_${Math.floor(Date.now() / DAY_MS)}`,
+        "scrum wake: daily board review. Reconcile open todos against reality (releases, commits, finished sessions) and mark the completed ones done with ledger notes; sweep stale and duplicate items; then if exactly one item is ripe and unowned, propose it to the user: what you see, why it matters now, shall we do it?",
+      )
       const unclaimed = (yield* todo.list({ status: "all" })).filter((item) => item.status === "open" && !item.assignee)
       yield* Effect.forEach(unclaimed, (item) =>
         wake(`msg_scrum_unclaimed_${item.id}`, `scrum wake: unclaimed todo in ${item.directory}: "${item.text}"`),
