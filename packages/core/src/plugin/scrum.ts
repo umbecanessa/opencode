@@ -1,18 +1,23 @@
 export * as ScrumPlugin from "./scrum.js"
 
+import path from "path"
 import { define } from "@opencode/plugin/effect/plugin"
-import { and, isNull, lt } from "drizzle-orm"
+import { and, eq, exists, isNull, like, lt, ne, not, or, sql } from "drizzle-orm"
 import { Effect, Schedule, Stream } from "effect"
 import { Global } from "@opencode/util/global"
 import { sameDirectory } from "@opencode/util/path"
 import { Agent } from "../agent.js"
 import { Config } from "../config.js"
 import { Database } from "../database/database.js"
+import { storedAbsolutePath } from "../database/path.js"
 import { AbsolutePath } from "../schema.js"
+import { ProjectSchema } from "../project/schema.js"
 import { ProjectTable } from "../project/sql.js"
 import { Session } from "../session.js"
 import { SessionMessage } from "../session/message.js"
+import { SessionTable } from "../session/sql.js"
 import { Todo } from "../todo.js"
+import { WorktreeTable } from "../worktree/sql.js"
 
 // One coordinator session for the whole server; Session.create adopts a reused ID,
 // so instantiation from several locations converges on the same row. Adoption is
@@ -27,7 +32,11 @@ export const Plugin = define({
   id: "opencode.scrum",
   effect: Effect.fnUntraced(function* (ctx) {
     const config = yield* Config.Service
-    if (Config.latest(yield* config.entries(), "experimental")?.scrum !== true) return
+    const scrum = Config.latest(yield* config.entries(), "experimental")?.scrum
+    // A settings block counts as enabled, like the memory/voice keys; the struct
+    // form exists to tune the scan, so gating it off behind `true` would defeat it.
+    if (scrum !== true && typeof scrum !== "object") return
+    const idleDays = (typeof scrum === "object" ? scrum.idle_project_days : undefined) ?? IDLE_PROJECT_DAYS
 
     const todo = yield* Todo.Service
     const database = yield* Database.Service
@@ -82,7 +91,7 @@ export const Plugin = define({
     // Periodic scans, cheap enough to run every six hours:
     // - a daily board-review digest, so quiet days still get a triage pass;
     // - unclaimed open todos wake scrum once per item, forever (id is the todo id);
-    // - idle projects wake scrum once per project per week.
+    // - idle projects ride one week-scoped digest, so a sweep costs one wake, not N.
     yield* Effect.gen(function* () {
       yield* wake(
         `msg_scrum_digest_${Math.floor(Date.now() / DAY_MS)}`,
@@ -93,24 +102,53 @@ export const Plugin = define({
         wake(`msg_scrum_unclaimed_${item.id}`, `scrum wake: unclaimed todo in ${item.directory}: "${item.text}"`),
       )
       const week = Math.floor(Date.now() / (7 * DAY_MS))
-      // Same predicate as Project.list's default: skip archived projects.
+      // Idle sweep. Archived projects are skipped, matching Project.list's default.
+      // A project that never held a session is a directory that was merely glanced
+      // at, not a project, and directories registered as worktrees of another
+      // project (agent lanes, release cuts) belong to their parent's activity, so
+      // neither wakes scrum. The "global" catch-all row is where sessionless orphans
+      // live, never a real idle repository; Project.sweep excludes it the same way.
+      const managed = storedAbsolutePath(path.join(global.data, "worktree")) + "/%"
       const idle = yield* database.db
-        .select({ id: ProjectTable.id })
+        .select({ id: ProjectTable.id, worktree: ProjectTable.worktree })
         .from(ProjectTable)
         .where(
           and(
             isNull(ProjectTable.time_archived),
-            lt(ProjectTable.time_active, Date.now() - IDLE_PROJECT_DAYS * DAY_MS),
+            ne(ProjectTable.id, ProjectSchema.ID.global),
+            lt(ProjectTable.time_active, Date.now() - idleDays * DAY_MS),
+            exists(database.db.select({ one: sql`1` }).from(SessionTable).where(eq(SessionTable.project_id, ProjectTable.id))),
+            not(
+              exists(
+                database.db
+                  .select({ one: sql`1` })
+                  .from(WorktreeTable)
+                  .where(
+                    and(
+                      ne(WorktreeTable.project_id, ProjectTable.id),
+                      or(
+                        eq(WorktreeTable.directory, ProjectTable.worktree),
+                        like(ProjectTable.worktree, sql`${WorktreeTable.directory} || '/%'`),
+                      ),
+                    ),
+                  ),
+              ),
+            ),
+            not(like(ProjectTable.worktree, managed)),
           ),
         )
         .all()
         .pipe(Effect.orDie)
-      yield* Effect.forEach(idle, (item) =>
-        wake(
-          `msg_scrum_idle_${item.id}_${week}`,
-          `scrum wake: project ${item.id} has been idle for over ${IDLE_PROJECT_DAYS} days.`,
-        ),
-      )
+      if (idle.length > 0)
+        yield* wake(
+          `msg_scrum_idle_${week}`,
+          `scrum wake: ${idle.length} project(s) idle for over ${idleDays} days: ` +
+            idle
+              .slice(0, 20)
+              .map((item) => `${item.id} (${item.worktree})`)
+              .join(", ") +
+            (idle.length > 20 ? ` and ${idle.length - 20} more` : ""),
+        )
     }).pipe(Effect.ignore, Effect.repeat(Schedule.spaced("6 hours")), Effect.forkScoped({ startImmediately: true }))
   }),
 })

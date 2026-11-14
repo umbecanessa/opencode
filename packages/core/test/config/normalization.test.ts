@@ -606,9 +606,9 @@ describe("ConfigNormalize", () => {
 
   test("carries experimental.scrum through normalization", () => {
     // The scrum plugin's boot gate reads this key; a whitelist that drops it silently disables the coordinator.
-    for (const value of [true, false])
+    for (const value of [true, false, { idle_project_days: 7 }])
       expect(normalized({ experimental: { scrum: value } }).encoded.experimental).toEqual({ scrum: value })
-    for (const value of ["yes", 1]) {
+    for (const value of ["yes", 1, { idle_project_days: 0 }]) {
       const result = normalized({ experimental: { scrum: value } })
       expect(result.encoded.experimental).toBeUndefined()
       expect(result.diagnostics.map((item) => [item.kind, item.path])).toEqual([
