@@ -177,6 +177,10 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
             description:
               "Create a disposable spot-task session: omitted from default listings and garbage-collected after terminal idle.",
           }),
+          projectless: Schema.Boolean.pipe(Schema.optional).annotate({
+            description:
+              "Start the session in the server's neutral config home instead of bound to a project: no project row is created for an arbitrary path. Overrides location; ignored with parentID, whose child follows the parent's location.",
+          }),
         }),
         success: Schema.Struct({ data: PublicSessionInfo }),
         error: SessionNotFoundError,
@@ -185,7 +189,7 @@ export const makeSessionGroup = <I extends HttpApiMiddleware.AnyId, S, FormI ext
           identifier: "session.create",
           summary: "Create session",
           description:
-            "Create a session at the requested location. A parentID creates a linked child session at its parent's location.",
+            "Create a session at the requested location. A parentID creates a linked child session at its parent's location. Set projectless to start an unprojected session in the server's config home.",
         }),
       ),
     )

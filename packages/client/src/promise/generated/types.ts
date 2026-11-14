@@ -2578,6 +2578,7 @@ export type ConfigEntry =
           media_blob?: boolean
           image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           schedules?: boolean
+          scrum?: boolean
           artifacts?: boolean
           memory?: boolean | { embedding?: { url?: string; model?: string } }
           voice?: boolean | { transcribe?: { url?: string; model?: string } }
@@ -3370,6 +3371,7 @@ export type SessionCreateInput = {
     | null
     | undefined
   readonly temporary?: boolean | null | undefined
+  readonly projectless?: boolean | null | undefined
 }
 
 export type SessionCreateOutput = { data: SessionInfo }["data"]

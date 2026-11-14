@@ -60,6 +60,7 @@ export interface Interface {
       readonly agent?: string
       readonly model?: typeof Model.Ref.Type
       readonly temporary?: boolean
+      readonly projectless?: boolean
     },
   ) => Effect.Effect<
     { readonly sessionID: SessionSchema.ID; readonly text?: string; readonly outcome?: Outcome },
@@ -74,6 +75,7 @@ export interface Interface {
       readonly agent?: string
       readonly model?: typeof Model.Ref.Type
       readonly temporary?: boolean
+      readonly projectless?: boolean
     },
   ) => Effect.Effect<{ readonly sessionID: SessionSchema.ID }, Failure>
   /**
@@ -162,6 +164,7 @@ const CreateBody = Schema.Struct({
   agent: Schema.optionalKey(Schema.String),
   model: Schema.optionalKey(Model.Ref),
   temporary: Schema.optionalKey(Schema.Boolean),
+  projectless: Schema.optionalKey(Schema.Boolean),
 })
 
 const PromptBody = Schema.Struct({
@@ -351,6 +354,7 @@ const layer = Layer.effect(
         readonly agent?: string
         readonly model?: typeof Model.Ref.Type
         readonly temporary?: boolean
+        readonly projectless?: boolean
       },
     ) =>
       Effect.gen(function* () {
@@ -361,6 +365,7 @@ const layer = Layer.effect(
             ...(input.agent === undefined ? {} : { agent: input.agent }),
             ...(input.model === undefined ? {} : { model: input.model }),
             ...(input.temporary === undefined ? {} : { temporary: input.temporary }),
+            ...(input.projectless === undefined ? {} : { projectless: input.projectless }),
           }),
         ).pipe(Effect.flatMap(json(server, SessionResponse)))
         const sessionID = created.data.id

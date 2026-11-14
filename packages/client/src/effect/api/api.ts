@@ -161,6 +161,7 @@ export type SessionCreateInput = {
   readonly metadata?: Session.Metadata | undefined
   readonly permissions?: Permission.Ruleset | undefined
   readonly temporary?: boolean | undefined
+  readonly projectless?: boolean | undefined
 }
 export type SessionCreateOutput = Session.Info
 export type SessionCreateOperation<E = never> = (input?: SessionCreateInput) => Effect.Effect<SessionCreateOutput, E>
