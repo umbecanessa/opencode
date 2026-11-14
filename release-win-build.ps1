@@ -2,7 +2,7 @@ $ErrorActionPreference = "Continue"
 # Builds the checkout this script lives in; on a release run that tree must be at
 # the intended release commit (the mac side does an explicit reset to fork/dev).
 $log = Join-Path $PSScriptRoot "win-release.log"
-$env:OPENCODE_VERSION = "26.12.26"
+$env:OPENCODE_VERSION = "26.12.27"
 "=== head $(git -C $PSScriptRoot log --oneline -1)" | Add-Content $log
 Set-Location (Join-Path $PSScriptRoot "packages\cli")
 "=== cli build $(Get-Date -Format T)" | Add-Content $log
