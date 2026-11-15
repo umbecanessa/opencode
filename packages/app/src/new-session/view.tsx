@@ -122,7 +122,7 @@ export function NewSessionView(props: {
                 <div class="relative z-10">
                   <Composer
                     model={props.composer}
-                    extraControls={
+                    extraActions={
                       <NewSessionTemporaryToggle temporary={props.temporary} onChange={props.setTemporary} />
                     }
                   />

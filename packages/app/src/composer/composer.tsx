@@ -20,8 +20,8 @@ export function Composer(props: {
   borderUnderlay?: boolean
   readOnly?: boolean
   suggestionBoundary?: () => HTMLElement | undefined
-  /** Controls appended to the model row; only screens whose controls are creation-time pass these. */
-  extraControls?: JSX.Element
+  /** Controls joined to the composer's right-hand action cluster; only screens whose controls are creation-time pass these. */
+  extraActions?: JSX.Element
 }) {
   const dialog = useDialog()
   const command = useCommand()
@@ -58,7 +58,7 @@ export function Composer(props: {
         borderUnderlay={props.borderUnderlay}
         readOnly={props.readOnly}
         class={props.class}
-        extraControls={props.extraControls}
+        extraActions={props.extraActions}
         modelControlsVisible={!props.model.model.loading || !!props.model.model.preview}
         attachKeybind={command.keybindParts("file.attach")}
         attachShortcut={command.keybind("file.attach")}

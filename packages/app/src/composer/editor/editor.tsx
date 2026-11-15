@@ -78,8 +78,8 @@ export type ComposerEditorProps = {
   class?: string
   modelControl?: JSX.Element
   modelControlsVisible?: boolean
-  /** Screen-specific controls appended to the model row (e.g. the new session's temporary toggle). */
-  extraControls?: JSX.Element
+  /** Screen-specific controls joined to the right-hand action cluster, left of the mic (e.g. the new session's temporary toggle). */
+  extraActions?: JSX.Element
   attachKeybind?: string[]
   attachShortcut?: string
   alternateKeybind?: string[]
@@ -449,10 +449,10 @@ export function ComposerEditor(props: ComposerEditorProps) {
                   )}
                 </Show>
               </Show>
-              {props.extraControls}
             </div>
           </div>
           <div data-slot="composer-actions" class="flex shrink-0 items-center">
+            <Show when={state.mode === "normal"}>{props.extraActions}</Show>
             <Show when={state.mode === "normal"}>
               <ComposerEditorAlternateDelivery
                 controller={props.controller}
