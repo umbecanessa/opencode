@@ -109,7 +109,13 @@ export class Client {
       "/api/project",
     )
 
-  createSession = (directory: string) => this.request<{ data: { id: string; title?: string } }>("/api/session", { method: "POST", body: JSON.stringify({ location: { directory } }) }).then((r) => r.data)
+  // temporary is omitted unless set: the server treats it as a disposable session, hidden from
+  // default listings and garbage-collected a day after it goes terminally idle.
+  createSession = (directory: string, temporary?: boolean) =>
+    this.request<{ data: { id: string; title?: string } }>("/api/session", {
+      method: "POST",
+      body: JSON.stringify({ location: { directory }, ...(temporary ? { temporary: true } : {}) }),
+    }).then((r) => r.data)
 
   sessions = (query: string) =>
     this.request<{ data: unknown[]; cursor?: { next: string | null } }>(`/api/session?${query}`)

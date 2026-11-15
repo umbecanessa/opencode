@@ -1,7 +1,7 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
 import { useRouter } from "expo-router"
 import { useEffect, useState } from "react"
-import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native"
 import { joinPath } from "../src/api/files"
 import type { FileEntry } from "../src/api/types"
 import { useHosts } from "../src/state/hosts"
@@ -21,6 +21,7 @@ export default function NewProject() {
   const [browsing, setBrowsing] = useState(false)
   const [note, setNote] = useState("")
   const [busy, setBusy] = useState(false)
+  const [temporary, setTemporary] = useState(false)
   const host = hostID ?? hosts[0]?.id
   const c = host ? client(host) : undefined
 
@@ -62,7 +63,7 @@ export default function NewProject() {
     setBusy(true)
     setNote("")
     try {
-      const session = await c.createSession(directory)
+      const session = await c.createSession(directory, temporary)
       router.replace({ pathname: "/session", params: { host, id: session.id, title: session.title ?? "New chat" } })
     } catch (e) {
       setNote(e instanceof Error ? e.message : String(e))
@@ -166,6 +167,20 @@ export default function NewProject() {
           </>
         )}
 
+        <View style={styles.toggleRow}>
+          <View style={{ flex: 1 }}>
+            <Text style={[t.font.subhead, { color: t.label, fontWeight: "600" }]}>Temporary session</Text>
+            <Text style={[t.font.caption, { color: t.tertiaryLabel, marginTop: 2 }]}>Hidden from session lists, cleaned up a day after it ends.</Text>
+          </View>
+          <Switch
+            value={temporary}
+            onValueChange={setTemporary}
+            accessibilityLabel="Temporary session"
+            trackColor={{ false: t.fill.primary, true: t.tint }}
+            ios_backgroundColor={t.fill.primary}
+          />
+        </View>
+
         {!!note && <Text accessibilityRole="alert" style={[t.font.footnote, styles.note, { color: t.status.failed }]}>{note}</Text>}
 
         <Pressable
@@ -201,5 +216,6 @@ const styles = StyleSheet.create({
   browserUp: { width: 30, height: 30, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(120,120,128,0.15)" },
   browserRow: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 11, borderTopWidth: StyleSheet.hairlineWidth },
   note: { marginTop: 14 },
+  toggleRow: { flexDirection: "row", alignItems: "center", gap: 12, marginTop: 22 },
   button: { alignItems: "center", paddingVertical: 15, borderRadius: 14, marginTop: 22 },
 })
