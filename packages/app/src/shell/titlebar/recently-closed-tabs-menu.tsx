@@ -10,6 +10,7 @@ import { Tooltip } from "@opencode/ui/tooltip"
 import { useLanguage } from "@/runtime/i18n/language"
 import { ServerConnection } from "@/runtime/server/registry"
 import { useGlobal, useServerCtx } from "@/runtime/server/runtime"
+import { useCommand } from "@/shell/commands/command"
 import { SessionTabAvatarView } from "@/shell/layout/session-tab-avatar"
 import { compareSessionTime } from "@/shell/layout/helpers"
 import { mergeHomeSessionIndex } from "@/home/sessions/index"
@@ -28,8 +29,17 @@ export function RecentlyClosedTabsMenu(props: {
   const language = useLanguage()
   const tabs = useTabs()
   const global = useGlobal()
+  const command = useCommand()
   const [state, setState] = createStore({ query: "", open: false })
   let search: HTMLInputElement | undefined
+
+  // The titlebar owns the tab.newTemporary registration (the palette and the native menu run the very same
+  // command). Mirror the windows-menu pattern: disabled until a registration resolves it.
+  const temporaryDisabled = () => {
+    const option = command.options.find((option) => option.id === "tab.newTemporary")
+
+    return !option || (option.disabled ?? false)
+  }
 
   const recent = createMemo(() => {
     const query = state.query.trim().toLocaleLowerCase()
@@ -136,6 +146,14 @@ export function RecentlyClosedTabsMenu(props: {
             queueMicrotask(() => search?.focus())
           }}
         >
+          <Menu.Item
+            disabled={temporaryDisabled()}
+            shortcut={command.keybind("tab.newTemporary")}
+            onSelect={() => void command.trigger("tab.newTemporary")}
+          >
+            {language.t("command.session.newTemporary")}
+          </Menu.Item>
+          <Menu.Separator />
           <div class="recently-closed-search m-1" data-empty={!state.query}>
             <TextInput
               ref={search}
