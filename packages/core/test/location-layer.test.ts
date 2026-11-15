@@ -512,16 +512,16 @@ describe("LocationServiceMap", () => {
 
   it.live("isolates provider state by location", () =>
     Effect.acquireRelease(
-      Effect.promise(() => Promise.all([tmpdir(), tmpdir()])),
+      Effect.promise(() => Promise.all([tmpdir(), tmpdir(), tmpdir()])),
       (dirs) => Effect.promise(() => Promise.all(dirs.map((dir) => dir[Symbol.asyncDispose]())).then(() => undefined)),
     ).pipe(
-      Effect.flatMap(([blocked, allowed]) =>
+      Effect.flatMap(([blocked, allowed, plain]) =>
         Effect.gen(function* () {
-          const update = (directory: string, providerID: Provider.ID) =>
+          const update = (directory: string, providerID?: Provider.ID) =>
             Effect.gen(function* () {
               yield* Reference.Service
               const providers = yield* Provider.Service
-              yield* providers.transform((editor) => editor.update(providerID, () => {}))
+              if (providerID) yield* providers.transform((editor) => editor.update(providerID, () => {}))
               const plugins = yield* Plugin.Service
               yield* plugins.awaitActivation
               const registry = yield* Tool.Service
@@ -538,43 +538,27 @@ describe("LocationServiceMap", () => {
 
           const blockedID = Provider.ID.make("blocked-location")
           const allowedID = Provider.ID.make("allowed-location")
+          // Derive the default tool inventory from a control location booted without any
+          // provider transform, instead of a hand-typed snapshot that rots as tools are added.
+          const defaultTools = (yield* update(plain.path)).tools
+            .map((tool) => tool.name)
+            .filter((name) => name !== "execute")
+            .sort()
+          // Anchors: a control boot that lost the core file tools would otherwise make the
+          // equality checks below vacuous.
+          expect(defaultTools.length).toBeGreaterThan(0)
+          for (const name of ["edit", "read", "shell", "write"]) expect(defaultTools).toContain(name)
           const blockedState = yield* update(blocked.path, blockedID)
           expect(blockedState.providers.some((provider) => provider.id === blockedID)).toBe(true)
           expect(blockedState.providers.some((provider) => provider.id === allowedID)).toBe(false)
           const blockedTools = blockedState.tools.map((tool) => tool.name)
-          expect(blockedTools.filter((name) => name !== "execute").sort()).toEqual([
-            "edit",
-            "glob",
-            "grep",
-            "patch",
-            "question",
-            "read",
-            "shell",
-            "skill",
-            "subagent",
-            "webfetch",
-            "websearch",
-            "write",
-          ])
+          expect(blockedTools.filter((name) => name !== "execute").sort()).toEqual(defaultTools)
           const allowedState = yield* update(allowed.path, allowedID)
           expect(allowedState.providers.some((provider) => provider.id === allowedID)).toBe(true)
           expect(allowedState.providers.some((provider) => provider.id === blockedID)).toBe(false)
           const allowedTools = allowedState.tools.map((tool) => tool.name)
           expect(blockedTools.includes("execute")).toBe(allowedTools.includes("execute"))
-          expect(allowedTools.filter((name) => name !== "execute").sort()).toEqual([
-            "edit",
-            "glob",
-            "grep",
-            "patch",
-            "question",
-            "read",
-            "shell",
-            "skill",
-            "subagent",
-            "webfetch",
-            "websearch",
-            "write",
-          ])
+          expect(allowedTools.filter((name) => name !== "execute").sort()).toEqual(defaultTools)
         }),
       ),
     ),
