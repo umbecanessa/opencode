@@ -71,11 +71,14 @@ export async function openSession(page: Page, input: WorkspaceInput & { sessionI
 }
 
 // Opens a new-session draft (no sessions by default) and waits until its composer accepts input.
-export async function openDraft(page: Page, input: WorkspaceInput & { draftID?: string }) {
+export async function openDraft(page: Page, input: WorkspaceInput & { draftID?: string; temporary?: boolean }) {
   const draftID = input.draftID ?? `draft_${input.name.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`
   const directory = input.directory ?? `C:/OpenCode/${input.name}`
   const sessions = input.sessions ?? []
-  const tabs: TabSeed[] = [...sessions.map((item) => item.id), { draft: draftID, directory }]
+  const tabs: TabSeed[] = [
+    ...sessions.map((item) => item.id),
+    { draft: draftID, directory, ...(input.temporary ? { temporary: true } : {}) },
+  ]
   const workspace = await mockWorkspace(page, { ...input, directory, sessions, seed: { tabs, ...input.seed } })
   await page.goto(draftHref(draftID))
   const editor = page.locator('[data-component="composer-editor"]')

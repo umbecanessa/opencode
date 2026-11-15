@@ -58,6 +58,43 @@ test("the new session screen does not show session details", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Session details", exact: true })).toHaveCount(0)
 })
 
+const temporarySwitch = (page: Page) => page.getByRole("switch", { name: "Temporary", exact: true })
+
+const temporaryBadge = (page: Page) =>
+  page.locator('[data-component="new-session"]').getByText("Temporary session", { exact: true })
+
+test("the composer temporary toggle drives the badge and the create payload", async ({ page }) => {
+  const creates: unknown[] = []
+  const view = await openDraft(page, { name: "TemporaryComposer", onSessionCreate: (body) => void creates.push(body) })
+
+  await expect(temporarySwitch(page)).toBeVisible()
+  await expect(temporarySwitch(page)).not.toBeChecked()
+  await expect(temporaryBadge(page)).toHaveCount(0)
+
+  // The switch is keyboard-operable, and the badge lights up in sync with it.
+  await temporarySwitch(page).focus()
+  await page.keyboard.press("Space")
+  await expect(temporarySwitch(page)).toBeChecked()
+  await expect(temporaryBadge(page)).toBeVisible()
+
+  await view.editor.fill("Forget this one")
+  await submit(page).click()
+  await expect.poll(() => creates.length).toBe(1)
+  expect(creates[0]).toEqual(expect.objectContaining({ temporary: true }))
+  const sessionPath = sessionHref("")
+  await expect(page).toHaveURL((url) => url.pathname.startsWith(sessionPath) && /\/ses_[^/]+$/.test(url.pathname))
+
+  // The toggle is creation-time only: the live session composer offers it nowhere.
+  await expect(temporarySwitch(page)).toHaveCount(0)
+  await expect(temporaryBadge(page)).toHaveCount(0)
+})
+
+test("a draft opened as temporary starts with the composer toggle on", async ({ page }) => {
+  await openDraft(page, { name: "TemporarySeed", temporary: true })
+  await expect(temporarySwitch(page)).toBeChecked()
+  await expect(temporaryBadge(page)).toBeVisible()
+})
+
 test("the location shortcuts choose worktrees from every state and keep cycling", async ({ page }) => {
   const existing = "C:/OpenCode/LocationShortcut/.worktrees/quiet-river"
 

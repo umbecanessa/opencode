@@ -37,6 +37,7 @@ import { useSettings } from "@/settings/model"
 import type { NewSessionWorkspaceController } from "./workspace/controller"
 import { NewSessionBranch } from "./workspace/selector"
 import { NewSessionBrickBreaker } from "./brick-breaker"
+import { NewSessionTemporaryToggle } from "./temporary-toggle"
 import { NewSessionPinBoard, type PinBoardHandle } from "./pin-board"
 import { NewSessionWordmark, type LodgerBall } from "./wordmark"
 
@@ -67,6 +68,7 @@ export function NewSessionView(props: {
   workspace: NewSessionWorkspaceController
   location: ReturnType<typeof useNewSessionLocationDialog>
   temporary: () => boolean
+  setTemporary: (value: boolean) => void
 }) {
   const [onboarding, setOnboarding, , onboardingReady] = persisted(
     Persist.global("workspace-onboarding"),
@@ -118,7 +120,12 @@ export function NewSessionView(props: {
             <div class="mt-8 flex flex-col gap-3">
               <div data-slot="new-session-composer" class="flex flex-col gap-1">
                 <div class="relative z-10">
-                  <Composer model={props.composer} />
+                  <Composer
+                    model={props.composer}
+                    extraControls={
+                      <NewSessionTemporaryToggle temporary={props.temporary} onChange={props.setTemporary} />
+                    }
+                  />
                 </div>
                 <Show when={props.project.selected()}>
                   {(project) => (

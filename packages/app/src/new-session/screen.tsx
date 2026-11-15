@@ -99,6 +99,9 @@ export default function NewSessionPage(props: { draftId: string }) {
           workspace={workspace}
           location={location}
           temporary={() => draftTab()?.temporary === true}
+          setTemporary={(temporary) => {
+            if (search.draftId) tabs.updateDraft(search.draftId, { temporary })
+          }}
         />
       </div>
     </div>

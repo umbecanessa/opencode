@@ -719,6 +719,7 @@ export const dict = {
   "session.new.project.search": "Search projects",
   "session.new.project.add": "Add project",
   "session.new.temporary.badge": "Temporary session",
+  "session.new.temporary.toggle": "Temporary",
   "session.new.project.trigger.tooltip": "Choose project",
   "session.new.worktree.creating": "Creating worktree",
   "session.new.workspace.runIn": "Run session in",
