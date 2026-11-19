@@ -19,6 +19,7 @@
           "remote-notification"
         ],
         "ITSAppUsesNonExemptEncryption": false,
+        "NSLocalNetworkUsageDescription": "OpenCode Mobile transfers your Pocket recordings over the recorder's own local Wi-Fi network instead of the slower Bluetooth link.",
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },

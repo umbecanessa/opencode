@@ -7,6 +7,7 @@ import { Client } from "../api/client"
 import type { VoicePendingCard } from "../api/types"
 import { PocketDevice } from "../pocket/device"
 import { PairRefusedError, pairPocket, pullPocket, setRemoteRecording, deleteDeviceFiles, listDeviceFiles, type PocketRecording, type PullProgress } from "../pocket/sync"
+import { quickTransferPocket } from "../pocket/wifi"
 import { useHosts } from "./hosts"
 
 const KEY_STORE = "pocket_session_key"
@@ -15,6 +16,8 @@ const SHIPPED_KEY = "pocket_shipped"
 // BLE streams at roughly 4–90 KB/s depending on firmware; even a long catch-up pull
 // should finish well inside this (see PROTOCOL.md throughput notes).
 const PULL_TIMEOUT = 30 * 60_000
+// Quick Transfer adds the join wait and a tailscale upload of everything streamed.
+const QUICK_TIMEOUT = 45 * 60_000
 
 type Device = { id: string; name: string }
 type Ship = PocketRecording & { at: number; host: string }
@@ -43,6 +46,8 @@ type PocketState = {
   filesBusy: boolean
   loadFiles: () => Promise<void>
   deleteFiles: (files: PocketRecording[]) => Promise<void>
+  quickTransfer: () => Promise<void>
+  joinHint?: { ssid: string; password: string; attempt: number }
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
   pair: (device: Device, key?: string) => Promise<void>
@@ -92,6 +97,7 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   const [processing, setProcessing] = useState<{ key: string; label: string; mins: number }[]>([])
   const [files, setFiles] = useState<DeviceFile[]>([])
   const [filesBusy, setFilesBusy] = useState(false)
+  const [joinHint, setJoinHint] = useState<{ ssid: string; password: string; attempt: number }>()
   // Recordings whose card has been seen or consumed; keeps shipped history rows from
   // reappearing as "processing" forever (or after triage).
   const resolved = useRef<Set<string>>(new Set())
@@ -250,6 +256,63 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     }
     // Cards appear a beat after the upload (the server's transcribe job lands in ~15s),
     // so the list refreshes right after a pull; the screen polls for the late arrivals.
+    void loadPending()
+  }
+
+  // Same queue and shipped history as pull, but the bytes ride the recorder's own
+  // Wi-Fi at ~1 MB/s. The phone must join that network (joinHint shows how); the
+  // recorder's AP has no route to the host, so uploads happen once it drops again.
+  const quickTransfer = async () => {
+    const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
+    if (!key || !device) {
+      setError("Pair the recorder first.")
+      return
+    }
+    const host = hosts.hosts[0]
+    const client = host ? hosts.client(host.id) : undefined
+    if (!host || !client) {
+      setError("Pair a host first — recordings ship to the first paired machine.")
+      return
+    }
+    setBusy(true)
+    setError(undefined)
+    setJoinHint(undefined)
+    setProgress({ phase: "connecting", done: 0, total: 0 })
+    try {
+      const skip = new Set(recent.filter((s) => s.host === host.id).map((s) => `${s.date}/${s.name}`))
+      const directory = await resolveDirectory(client)
+      const result = await withTimeout(
+        quickTransferPocket({
+          client,
+          directory,
+          device,
+          key,
+          skip,
+          onProgress: setProgress,
+          onJoin: setJoinHint,
+        }),
+        QUICK_TIMEOUT,
+      )
+      const shipped = result.shipped.map((r) => ({ ...r, at: Date.now(), host: host.id }))
+      setRecent((prev) => {
+        const next = [...shipped, ...prev].slice(0, 100)
+        AsyncStorage.setItem(SHIPPED_KEY, JSON.stringify(next)).catch(() => {})
+        return next
+      })
+      setError(
+        result.shipped.length
+          ? undefined
+          : result.skipped
+            ? "Nothing new — everything on the recorder was already shipped."
+            : "The recorder holds no recordings.",
+      )
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setBusy(false)
+      setProgress(undefined)
+      setJoinHint(undefined)
+    }
     void loadPending()
   }
 
@@ -426,7 +489,7 @@ const PROCESSING_WINDOW = 30 * 60_000
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, notesLoaded, processing, files, filesBusy, loadFiles, deleteFiles, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, notesLoaded, processing, files, filesBusy, loadFiles, deleteFiles, quickTransfer, joinHint, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {

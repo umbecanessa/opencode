@@ -1,8 +1,9 @@
 import Ionicons from "@expo/vector-icons/Ionicons"
+import * as Clipboard from "expo-clipboard"
 import * as ExpoLinking from "expo-linking"
 import { useRouter, useLocalSearchParams } from "expo-router"
 import { useEffect, useState } from "react"
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
+import { ActivityIndicator, Linking, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native"
 import { LargeTitle } from "../src/components/LargeTitle"
 import { usePocket } from "../src/state/pocket"
 import { useTheme } from "../src/theme"
@@ -77,11 +78,15 @@ export default function Pocket() {
       ? "Connecting to the recorder…"
       : pocket.progress?.phase === "listing"
         ? "Reading recordings…"
-        : pocket.progress?.phase === "downloading"
-          ? `Downloading ${pocket.progress.done + 1} of ${pocket.progress.total}…`
-          : pocket.progress?.phase === "uploading"
-            ? `Shipping ${pocket.progress.done + 1} of ${pocket.progress.total} to the host…`
-            : undefined
+        : pocket.progress?.phase === "waiting-wifi"
+          ? pocket.joinHint
+            ? `Join "${pocket.joinHint.ssid}" on your phone to start the fast transfer…`
+            : "Raising the recorder's Wi-Fi…"
+          : pocket.progress?.phase === "downloading"
+            ? `Downloading ${pocket.progress.done + 1} of ${pocket.progress.total}…`
+            : pocket.progress?.phase === "uploading"
+              ? `Shipping ${pocket.progress.done + 1} of ${pocket.progress.total} to the host…`
+              : undefined
 
   const pair = (id: string, key?: string) => {
     const device = pocket.devices.find((d) => d.id === id)
@@ -261,9 +266,68 @@ export default function Pocket() {
               <Text style={[t.font.headline, { color: "#FFFFFF", fontWeight: "600" }]}>Pull recordings</Text>
             )}
           </Pressable>
+          <Pressable
+            disabled={pocket.busy}
+            onPress={pocket.quickTransfer}
+            style={({ pressed }) => [
+              styles.button,
+              {
+                backgroundColor: pocket.busy ? t.fill.primary : t.fill.tertiary,
+                opacity: pressed ? 0.8 : 1,
+                transform: [{ scale: pressed ? 0.98 : 1 }],
+              },
+            ]}
+          >
+            <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6 }}>
+              <Ionicons name="flash-outline" size={15} color={pocket.busy ? t.secondaryLabel : t.tint} />
+              <Text style={[t.font.headline, { color: pocket.busy ? t.secondaryLabel : t.label, fontWeight: "600" }]}>
+                Ship over Wi-Fi (faster)
+              </Text>
+            </View>
+          </Pressable>
           <Text style={[t.font.footnote, { color: t.tertiaryLabel, textAlign: "center" }]}>
             Back Tap shortcut: opencode-mobile://pocket?action=record
           </Text>
+        </View>
+      )}
+
+      {pocket.busy && pocket.joinHint && (
+        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
+          <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>Join the recorder&apos;s Wi-Fi</Text>
+          <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+            Settings → Wi-Fi → join this network (it has no internet — that&apos;s fine), then come back here. Bluetooth
+            keeps running, and iOS remembers it next time.
+          </Text>
+          {[
+            { label: "Network", value: pocket.joinHint.ssid },
+            { label: "Password", value: pocket.joinHint.password },
+          ].map((row) => (
+            <View key={row.label} style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={[t.font.footnote, { color: t.secondaryLabel, width: 70 }]}>{row.label}</Text>
+              <Text style={[t.font.footnote, { color: t.label, flex: 1 }]} numberOfLines={1}>
+                {row.value}
+              </Text>
+              <Pressable
+                onPress={() => void Clipboard.setStringAsync(row.value)}
+                hitSlop={10}
+                style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+              >
+                <Ionicons name="copy-outline" size={16} color={t.tertiaryLabel} />
+              </Pressable>
+            </View>
+          ))}
+          <Pressable
+            onPress={() => void Linking.openSettings().catch(() => {})}
+            style={({ pressed }) => [styles.pill, { borderColor: t.separator, alignSelf: "flex-start", opacity: pressed ? 0.6 : 1 }]}
+          >
+            <Ionicons name="settings-outline" size={15} color={t.tint} />
+            <Text style={[t.font.footnote, { color: t.tint }]}>Open Settings</Text>
+          </Pressable>
+          {pocket.joinHint.attempt > 1 && (
+            <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+              Rejoining for the next files — usually automatic, just keep this screen open.
+            </Text>
+          )}
         </View>
       )}
 

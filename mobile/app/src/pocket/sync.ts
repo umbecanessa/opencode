@@ -4,7 +4,7 @@ import { PocketDevice } from "./device"
 export type PocketRecording = { date: string; name: string; seconds: number }
 
 export type PullProgress = {
-  phase: "connecting" | "listing" | "downloading" | "uploading" | "done"
+  phase: "connecting" | "listing" | "waiting-wifi" | "downloading" | "uploading" | "done"
   done: number
   total: number
   label?: string
@@ -215,7 +215,7 @@ export async function deleteDeviceFiles(input: {
   }
 }
 
-class LineInbox {
+export class LineInbox {
   private pending: string[] = []
   private waiters: { pred: (l: string) => boolean; resolve: (l: string) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }[] = []
 
@@ -272,7 +272,7 @@ async function reply(lines: LineInbox, device: PocketDevice, command: string, pr
   return lines.next((l) => l.startsWith(prefix), timeoutMs, command).catch(() => undefined)
 }
 
-async function listDates(lines: LineInbox, device: PocketDevice) {
+export async function listDates(lines: LineInbox, device: PocketDevice) {
   await device.command("APP&LIST_DIRS")
   await lines
     .next((l) => l.startsWith("MCU&DIRS_SUM&"), 15_000, "APP&LIST_DIRS")
@@ -284,7 +284,7 @@ async function listDates(lines: LineInbox, device: PocketDevice) {
   return lastDays(7)
 }
 
-async function listRecordings(lines: LineInbox, device: PocketDevice, date: string): Promise<PocketRecording[]> {
+export async function listRecordings(lines: LineInbox, device: PocketDevice, date: string): Promise<PocketRecording[]> {
   await device.command(`APP&LIST&${date}`)
   const count = await lines
     .next((l) => l.startsWith("MCU&LIST&"), 20_000, `APP&LIST&${date}`)
