@@ -164,6 +164,57 @@ export async function pairPocket(input: { device: { id: string; name: string }; 
   }
 }
 
+// The device's flash, listed with no bytes moved: the same LIST_DIRS/LIST phase a pull runs
+// before it downloads anything, so "what is on the recorder" needs no sync and no staging.
+export async function listDeviceFiles(input: { device: { id: string; name: string }; key: string }): Promise<PocketRecording[]> {
+  const device = await PocketDevice.connect(input.device.id, input.device.name)
+  const lines = new LineInbox()
+  const offLine = device.onLine((line) => lines.push(line))
+  try {
+    await device.command(`APP&SK&${input.key}`)
+    const auth = await lines.next((l) => l.startsWith("MCU&SK&"), 10_000, "auth")
+    if (!auth.startsWith("MCU&SK&OK")) throw new Error(`${input.device.name}: the recorder rejected the session key`)
+    const recordings: PocketRecording[] = []
+    for (const date of await listDates(lines, device)) recordings.push(...(await listRecordings(lines, device, date)))
+    return recordings.sort((a, b) => `${a.date}/${a.name}`.localeCompare(`${b.date}/${b.name}`))
+  } finally {
+    offLine()
+    await device.close()
+  }
+}
+
+// APP&D&<date>&<name> is answered by a bare MCU&D that carries no status, so the delete is
+// confirmed the only way that counts: a fresh listing of each touched date without the entry.
+// Deleted files are gone from the flash — unlike the skip-list, there is no undo.
+export async function deleteDeviceFiles(input: {
+  device: { id: string; name: string }
+  key: string
+  files: PocketRecording[]
+}): Promise<{ deleted: PocketRecording[]; left: PocketRecording[] }> {
+  const device = await PocketDevice.connect(input.device.id, input.device.name)
+  const lines = new LineInbox()
+  const offLine = device.onLine((line) => lines.push(line))
+  try {
+    await device.command(`APP&SK&${input.key}`)
+    const auth = await lines.next((l) => l.startsWith("MCU&SK&"), 10_000, "auth")
+    if (!auth.startsWith("MCU&SK&OK")) throw new Error(`${input.device.name}: the recorder rejected the session key`)
+    for (const file of input.files) {
+      await device.command(`APP&D&${file.date}&${file.name}`)
+      await lines.next((l) => l.startsWith("MCU&D"), 6_000, "MCU&D").catch(() => undefined)
+    }
+    const remaining = new Set<string>()
+    for (const date of [...new Set(input.files.map((f) => f.date))])
+      for (const r of await listRecordings(lines, device, date)) remaining.add(`${r.date}/${r.name}`)
+    return {
+      deleted: input.files.filter((f) => !remaining.has(`${f.date}/${f.name}`)),
+      left: input.files.filter((f) => remaining.has(`${f.date}/${f.name}`)),
+    }
+  } finally {
+    offLine()
+    await device.close()
+  }
+}
+
 class LineInbox {
   private pending: string[] = []
   private waiters: { pred: (l: string) => boolean; resolve: (l: string) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> }[] = []

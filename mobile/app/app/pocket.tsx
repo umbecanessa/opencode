@@ -21,7 +21,14 @@ function transcriptOf(text: string) {
 }
 
 function formatDuration(seconds: number) {
+  if (seconds >= 5400) return `${(seconds / 3600).toFixed(1)} h`
   return seconds >= 90 ? `${Math.round(seconds / 60)} min` : `${Math.round(seconds)}s`
+}
+
+// Recorder file names are the device's own start timestamps: 20261113130834.
+function stampOf(name: string) {
+  if (!/^\d{14}$/.test(name)) return name
+  return `${name.slice(4, 6)}/${name.slice(6, 8)} ${name.slice(8, 10)}:${name.slice(10, 12)}`
 }
 
 export default function Pocket() {
@@ -37,6 +44,9 @@ export default function Pocket() {
   const [pickerFor, setPickerFor] = useState<string>()
   const [expanded, setExpanded] = useState<string>()
   const [choices, setChoices] = useState<{ id: string; title?: string }[]>([])
+  // Which inventory row (or "bulk") is showing its delete confirmation.
+  const [confirming, setConfirming] = useState<string>()
+  const [listed, setListed] = useState(false)
 
   useEffect(() => {
     // Cold start or fresh navigation: params carry the action.
@@ -254,6 +264,135 @@ export default function Pocket() {
           <Text style={[t.font.footnote, { color: t.tertiaryLabel, textAlign: "center" }]}>
             Back Tap shortcut: opencode-mobile://pocket?action=record
           </Text>
+        </View>
+      )}
+
+      {pocket.device && (
+        <View style={[styles.card, { backgroundColor: t.surface, marginTop: 16 }]}>
+          <View style={styles.row}>
+            <View style={[styles.icon, { backgroundColor: t.fill.tertiary }]}>
+              <Ionicons name="documents-outline" size={20} color={t.tint} />
+            </View>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={[t.font.headline, { color: t.label, fontWeight: "600" }]}>On the recorder</Text>
+              <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>
+                What its flash holds. Listing moves nothing; deleting is final.
+              </Text>
+            </View>
+            {pocket.filesBusy ? (
+              <ActivityIndicator size="small" color={t.tint} />
+            ) : (
+              listed && (
+                <Pressable
+                  disabled={pocket.busy}
+                  onPress={pocket.loadFiles}
+                  hitSlop={12}
+                  style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+                >
+                  <Ionicons name="refresh-outline" size={20} color={t.tertiaryLabel} />
+                </Pressable>
+              )
+            )}
+          </View>
+
+          {!listed && (
+            <Pressable
+              disabled={pocket.busy || pocket.filesBusy}
+              onPress={() => pocket.loadFiles().then(() => setListed(true))}
+              style={({ pressed }) => [
+                styles.button,
+                {
+                  backgroundColor: pocket.busy || pocket.filesBusy ? t.fill.primary : t.tint,
+                  opacity: pressed ? 0.8 : 1,
+                  transform: [{ scale: pressed ? 0.98 : 1 }],
+                },
+              ]}
+            >
+              <Text style={[t.font.headline, { color: pocket.busy || pocket.filesBusy ? t.secondaryLabel : "#FFFFFF", fontWeight: "600" }]}>
+                {pocket.filesBusy ? "Reading…" : "List recordings"}
+              </Text>
+            </Pressable>
+          )}
+
+          {pocket.files.map((f) => {
+            const key = `${f.date}/${f.name}`
+            const ask = confirming === key
+            return (
+              <View key={key} style={{ paddingTop: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: t.separator }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+                  <Ionicons
+                    name={f.shipped ? "cloud-done-outline" : "ellipse-outline"}
+                    size={16}
+                    color={f.shipped ? t.status.running : t.tint}
+                  />
+                  <Text style={[t.font.footnote, { color: t.label, flex: 1 }]} numberOfLines={1}>
+                    {stampOf(f.name)}
+                  </Text>
+                  <Text style={[t.font.footnote, { color: f.seconds >= 7200 ? t.status.failed : t.tertiaryLabel }]}>
+                    {formatDuration(f.seconds)}
+                  </Text>
+                  <Pressable
+                    disabled={pocket.filesBusy || pocket.busy}
+                    onPress={() => setConfirming(ask ? undefined : key)}
+                    hitSlop={10}
+                    style={({ pressed }) => ({ opacity: pressed ? 0.5 : 1 })}
+                  >
+                    <Ionicons name="trash-outline" size={16} color={t.tertiaryLabel} />
+                  </Pressable>
+                </View>
+                {ask && (
+                  <View style={{ flexDirection: "row", alignItems: "center", gap: 8, paddingTop: 6, paddingLeft: 24 }}>
+                    <Text style={[t.font.footnote, { color: t.secondaryLabel, flex: 1 }]} numberOfLines={2}>
+                      Delete from the recorder{f.shipped ? " — already on the host" : " — never shipped"}?
+                    </Text>
+                    <Pressable
+                      disabled={pocket.filesBusy}
+                      onPress={() => {
+                        setConfirming(undefined)
+                        pocket.deleteFiles([f])
+                      }}
+                      style={({ pressed }) => [styles.pill, { borderColor: t.status.failed, opacity: pressed ? 0.6 : 1 }]}
+                    >
+                      <Text style={[t.font.footnote, { color: t.status.failed, fontWeight: "600" }]}>Delete</Text>
+                    </Pressable>
+                  </View>
+                )}
+              </View>
+            )
+          })}
+
+          {listed && pocket.files.length === 0 && !pocket.filesBusy && (
+            <Text style={[t.font.footnote, { color: t.tertiaryLabel, textAlign: "center" }]}>The recorder holds no recordings.</Text>
+          )}
+
+          {pocket.files.some((f) => f.shipped) && confirming !== "bulk" && (
+            <Pressable
+              disabled={pocket.filesBusy || pocket.busy}
+              onPress={() => setConfirming("bulk")}
+              style={({ pressed }) => [
+                styles.pill,
+                { borderColor: t.separator, alignSelf: "center", opacity: pressed ? 0.6 : pocket.filesBusy || pocket.busy ? 0.4 : 1 },
+              ]}
+            >
+              <Ionicons name="layers-outline" size={15} color={t.tertiaryLabel} />
+              <Text style={[t.font.footnote, { color: t.tertiaryLabel }]}>Clear shipped ({pocket.files.filter((f) => f.shipped).length})</Text>
+            </Pressable>
+          )}
+          {confirming === "bulk" && (
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={[t.font.footnote, { color: t.secondaryLabel, flex: 1 }]}>Free the flash — the host already holds these.</Text>
+              <Pressable
+                disabled={pocket.filesBusy}
+                onPress={() => {
+                  setConfirming(undefined)
+                  pocket.deleteFiles(pocket.files.filter((f) => f.shipped))
+                }}
+                style={({ pressed }) => [styles.pill, { borderColor: t.status.failed, opacity: pressed ? 0.6 : 1 }]}
+              >
+                <Text style={[t.font.footnote, { color: t.status.failed, fontWeight: "600" }]}>Delete</Text>
+              </Pressable>
+            </View>
+          )}
         </View>
       )}
 

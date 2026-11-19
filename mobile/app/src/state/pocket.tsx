@@ -6,17 +6,20 @@ import { consumePendingIntentAction } from "../../modules/pocket"
 import { Client } from "../api/client"
 import type { VoicePendingCard } from "../api/types"
 import { PocketDevice } from "../pocket/device"
-import { PairRefusedError, pairPocket, pullPocket, setRemoteRecording, type PocketRecording, type PullProgress } from "../pocket/sync"
+import { PairRefusedError, pairPocket, pullPocket, setRemoteRecording, deleteDeviceFiles, listDeviceFiles, type PocketRecording, type PullProgress } from "../pocket/sync"
 import { useHosts } from "./hosts"
 
 const KEY_STORE = "pocket_session_key"
 const DEVICE_KEY = "pocket_device"
 const SHIPPED_KEY = "pocket_shipped"
-// BLE streams at ~4 KB/s of audio; even a long catch-up pull should finish well inside this.
+// BLE streams at roughly 4–90 KB/s depending on firmware; even a long catch-up pull
+// should finish well inside this (see PROTOCOL.md throughput notes).
 const PULL_TIMEOUT = 30 * 60_000
 
 type Device = { id: string; name: string }
 type Ship = PocketRecording & { at: number; host: string }
+// A file as the device's flash lists it, marked by whether this phone already shipped it.
+type DeviceFile = PocketRecording & { shipped: boolean }
 
 type PocketState = {
   hasKey: boolean
@@ -36,6 +39,10 @@ type PocketState = {
   pendingBusy?: string
   notesLoaded: boolean
   processing: { key: string; label: string; mins: number }[]
+  files: DeviceFile[]
+  filesBusy: boolean
+  loadFiles: () => Promise<void>
+  deleteFiles: (files: PocketRecording[]) => Promise<void>
   scan: () => Promise<void>
   pick: (device?: Device) => Promise<void>
   pair: (device: Device, key?: string) => Promise<void>
@@ -83,6 +90,8 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
   // an empty "Pending notes" void while the host answers over the tunnel.
   const [notesLoaded, setNotesLoaded] = useState(false)
   const [processing, setProcessing] = useState<{ key: string; label: string; mins: number }[]>([])
+  const [files, setFiles] = useState<DeviceFile[]>([])
+  const [filesBusy, setFilesBusy] = useState(false)
   // Recordings whose card has been seen or consumed; keeps shipped history rows from
   // reappearing as "processing" forever (or after triage).
   const resolved = useRef<Set<string>>(new Set())
@@ -244,6 +253,51 @@ export const PocketProvider = ({ children }: { children: React.ReactNode }) => {
     void loadPending()
   }
 
+  // The flash listing is read-only and stages nothing; the shipped marker is exactly the
+  // skip-set a pull would apply, so unmarked rows are what a pull would still ship.
+  const loadFiles = async () => {
+    const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
+    if (!key || !device) {
+      setError("Pair the recorder first.")
+      return
+    }
+    setFilesBusy(true)
+    setError(undefined)
+    try {
+      const host = hosts.hosts[0]
+      const shipped = new Set(recent.filter((s) => !host || s.host === host.id).map((s) => `${s.date}/${s.name}`))
+      const listed = await withTimeout(listDeviceFiles({ device, key }), 5 * 60_000)
+      setFiles(listed.map((f) => ({ ...f, shipped: shipped.has(`${f.date}/${f.name}`) })))
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setFilesBusy(false)
+    }
+  }
+
+  // Deletion is device-side and final; the device's re-list after APP&D& is the only
+  // confirmation, so a row that survives it is reported as left, not deleted.
+  const deleteFiles = async (targets: PocketRecording[]) => {
+    if (!targets.length) return
+    const key = await SecureStore.getItemAsync(KEY_STORE).catch(() => null)
+    if (!key || !device) {
+      setError("Pair the recorder first.")
+      return
+    }
+    setFilesBusy(true)
+    setError(undefined)
+    try {
+      const { deleted, left } = await withTimeout(deleteDeviceFiles({ device, key, files: targets }), 5 * 60_000)
+      if (!deleted.length) setError("The recorder deleted nothing — its listing still shows the file.")
+      else if (left.length) setError(`Deleted ${deleted.length}; ${left.length} stayed on the recorder.`)
+      setFiles((prev) => prev.filter((f) => !deleted.some((d) => d.date === f.date && d.name === f.name)))
+    } catch (e) {
+      setError(message(e))
+    } finally {
+      setFilesBusy(false)
+    }
+  }
+
   // Triage lives on the Voice Inbox of the first paired machine — the same host pull ships to.
   const triageClient = () => {
     const host = hosts.hosts[0]
@@ -372,7 +426,7 @@ const PROCESSING_WINDOW = 30 * 60_000
 
   // Plain object: the provider only re-renders when its own state or the host list changes,
   // which is exactly when the Pocket screen should update.
-  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, notesLoaded, processing, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
+  return <PocketContext.Provider value={{ hasKey, device, devices, scanning, busy, pairing, needsKey, recording, recBusy, recordingName, progress, error, recent, pending, pendingBusy, notesLoaded, processing, files, filesBusy, loadFiles, deleteFiles, scan, pick, pair, startRecording, stopRecording, pull, runDeepAction, loadPending, acceptPending, rememberPending, dismissPending, listSessions }}>{children}</PocketContext.Provider>
 }
 
 export function usePocket() {
