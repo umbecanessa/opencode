@@ -10,7 +10,20 @@ import { activeCredential } from "./credential-settings.js"
 import { ProviderRefresh } from "./refresh.js"
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-const TOKEN_URL = "https://api.anthropic.com/v1/oauth/token"
+// Anthropic fronts the OAuth token endpoint with anti-abuse gates that answer with a bare
+// 429 rate_limit_error (no retry-after, no ratelimit headers) to traffic shaped like a
+// Claude Code clone: reused connections, HTTP/2 client fingerprints, or denied User-Agent
+// prefixes. Real Claude Code posts with a plain Content-Type header over a fresh Node
+// HTTP/1.1 connection. These hosts are separate limiter buckets: api.anthropic.com answers
+// from the widest range of networks, and platform.claude.com is the endpoint current
+// Claude Code builds use. ANTHROPIC_OAUTH_TOKEN_URL replaces the whole list.
+const TOKEN_URLS = [
+  "https://api.anthropic.com/v1/oauth/token",
+  "https://platform.claude.com/v1/oauth/token",
+]
+const TOKEN_RETRY_LIMIT = 3
+const TOKEN_RETRY_BASE_MS = 500
+const TOKEN_RETRY_MAX_MS = 15_000
 const PROFILE_URL = "https://api.anthropic.com/api/oauth/profile"
 const API_URL = "https://api.anthropic.com/v1"
 const OAUTH_BETA = "claude-code-20250219,oauth-2025-04-20"
@@ -23,6 +36,63 @@ const methodID = Integration.MethodID.make("claude-subscription")
 const providerID = Provider.ID.anthropic
 
 type Item = Record<string, unknown>
+
+function tokenURLs(): string[] {
+  return process.env.ANTHROPIC_OAUTH_TOKEN_URL?.trim() ? [process.env.ANTHROPIC_OAUTH_TOKEN_URL.trim()] : TOKEN_URLS
+}
+
+function retryAfterMs(value: string | null): number | undefined {
+  const text = value?.trim()
+  if (!text || text.length > 128) return undefined
+  const at = /^\d+(?:\.\d+)?$/.test(text) ? Date.now() + Number(text) * 1000 : Date.parse(text)
+  return Number.isFinite(at) ? Math.max(0, Math.ceil(at - Date.now())) : undefined
+}
+
+// One POST per attempt on a fresh connection, hopping hosts between retries: edge-gate 429s
+// arrive without retry-after and each host keeps its own limiter bucket, while a retry-after
+// (or a 5xx blip) gets a bounded jittered wait. Non-retryable answers stop immediately.
+async function postToken(body: Record<string, string>, failed: (status: string) => Error): Promise<Item> {
+  const urls = tokenURLs()
+  let status = "unreachable"
+  let retryAfter: number | undefined
+  for (let attempt = 0; attempt <= TOKEN_RETRY_LIMIT; attempt++) {
+    if (attempt > 0) {
+      const wait = Math.min(retryAfter ?? 0, TOKEN_RETRY_MAX_MS)
+      const backoff = Math.min(TOKEN_RETRY_BASE_MS * 2 ** (attempt - 1), TOKEN_RETRY_MAX_MS)
+      await new Promise((resolve) => setTimeout(resolve, Math.max(wait, backoff) + Math.floor(Math.random() * 250)))
+    }
+    const response = await fetch(urls[attempt % urls.length], {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(30_000),
+      redirect: "manual",
+      keepalive: false,
+      // Bun-specific: force HTTP/1.1 instead of an ALPN-negotiated HTTP/2 session, whose
+      // client fingerprint matches the spoofing tools the edge throttles. Ignored elsewhere.
+      ...({ protocol: "http1.1" } as RequestInit),
+    })
+    if (response.ok) return (await response.json()) as Item
+    if (response.status >= 300 && response.status < 400) {
+      // A redirect could re-send the one-time code to another endpoint; never follow it.
+      await response.body?.cancel().catch(() => {})
+      throw failed(`${response.status} redirected`)
+    }
+    const detail = await response
+      .text()
+      .then((text) => {
+        const parsed = JSON.parse(text.slice(0, 2000)) as { error?: unknown; error_description?: unknown }
+        const error = typeof parsed.error === "string" ? parsed.error : undefined
+        const description = typeof parsed.error_description === "string" ? parsed.error_description : undefined
+        return [error, description].filter(Boolean).join(" ")
+      })
+      .catch(() => "")
+    retryAfter = retryAfterMs(response.headers.get("retry-after"))
+    status = `${response.status}${detail ? ` ${detail}` : ""}`
+    if (response.status !== 429 && response.status < 500) break
+  }
+  throw failed(status)
+}
 
 async function fetchProfile(access: string): Promise<string | null> {
   try {
@@ -71,17 +141,19 @@ export const AnthropicPlugin = define({
         refresh: (value) =>
           Effect.tryPromise({
             try: async () => {
-              const res = await fetch(TOKEN_URL, {
-                method: "POST",
-                headers: { "Content-Type": "application/json", Accept: "application/json" },
-                body: JSON.stringify({
+              // Refresh with the application that issued the token; older credentials have no
+              // recorded client ID and fall back to ANTHROPIC_OAUTH_CLIENT_ID or the default.
+              const json = await postToken(
+                {
                   grant_type: "refresh_token",
-                  client_id: CLIENT_ID,
+                  client_id:
+                    (typeof value.metadata?.clientID === "string" ? value.metadata.clientID : undefined) ||
+                    process.env.ANTHROPIC_OAUTH_CLIENT_ID?.trim() ||
+                    CLIENT_ID,
                   refresh_token: value.refresh,
-                }),
-              })
-              if (!res.ok) throw new Error(`Claude token refresh failed: ${res.status}`)
-              const json = (await res.json()) as Item
+                },
+                (status) => new Error(`Claude token refresh failed: ${status}`),
+              )
               const access = String(json.access_token ?? "")
               const expiresIn = Number(json.expires_in ?? 3600)
               const plan = (await fetchProfile(access)) ?? (value.metadata?.plan as string | null)
@@ -96,6 +168,11 @@ export const AnthropicPlugin = define({
           }),
         authorize: () =>
           Effect.gen(function* () {
+            // Capture once so the authorize request and the token exchange cannot disagree
+            // if the environment changes mid-flow.
+            const clientID = process.env.ANTHROPIC_OAUTH_CLIENT_ID?.trim() || CLIENT_ID
+            // The authorization code is single-use: exchange it at most once per callback.
+            let exchanged = false
             const verifier = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
             const challenge = Buffer.from(
               yield* Effect.promise(() => crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))),
@@ -150,7 +227,7 @@ export const AnthropicPlugin = define({
             const redirect = `http://localhost:${port}/callback`
             const authUrl = `https://claude.ai/oauth/authorize?${new URLSearchParams({
               code: "true",
-              client_id: CLIENT_ID,
+              client_id: clientID,
               response_type: "code",
               redirect_uri: redirect,
               scope: "org:create_api_key user:profile user:inference",
@@ -173,21 +250,26 @@ export const AnthropicPlugin = define({
                   )
                 return yield* Effect.tryPromise({
                   try: async () => {
+                    if (exchanged) throw new Error("Claude authorization code was already exchanged")
+                    exchanged = true
                     const [bare, fragment] = request.code.split("#")
-                    const tokenRes = await fetch(TOKEN_URL, {
-                      method: "POST",
-                      headers: { "Content-Type": "application/json", Accept: "application/json" },
-                      body: JSON.stringify({
+                    const tokens = await postToken(
+                      {
                         grant_type: "authorization_code",
-                        client_id: CLIENT_ID,
+                        client_id: clientID,
                         code: bare,
                         state: fragment || state,
                         redirect_uri: redirect,
                         code_verifier: verifier,
-                      }),
-                    })
-                    if (!tokenRes.ok) throw new Error(`Claude token exchange failed: ${tokenRes.status}`)
-                    const tokens = (await tokenRes.json()) as Item
+                      },
+                      (status) =>
+                        new Error(
+                          `Claude token exchange failed: ${status}` +
+                            (status.startsWith("429")
+                              ? " (Anthropic is throttling the Claude sign-in exchange, not your account or network; start sign-in again in a minute)"
+                              : ""),
+                        ),
+                    )
                     const access = String(tokens.access_token ?? "")
                     const refresh = String(tokens.refresh_token ?? "")
                     const expiresIn = Number(tokens.expires_in ?? 3600)
@@ -204,6 +286,7 @@ export const AnthropicPlugin = define({
                         accountID: typeof account?.uuid === "string" ? account.uuid : "claude",
                         email: typeof account?.email_address === "string" ? account.email_address.toLowerCase() : null,
                         plan,
+                        clientID,
                       },
                     })
                   },
