@@ -74,13 +74,36 @@ it.effect("registers provider and models when Antigravity is connected", () =>
   }),
 )
 
-it.effect("fails sign-in when ANTIGRAVITY_OAUTH_CLIENT_SECRET is unset", () =>
+it.live("begins sign-in with the bundled public Google client when nothing is configured", () =>
   withEnv({ ANTIGRAVITY_OAUTH_CLIENT_ID: undefined, ANTIGRAVITY_OAUTH_CLIENT_SECRET: undefined }, () =>
+    Effect.gen(function* () {
+      const { integrations } = yield* fixture
+      const attempt = yield* integrations.oauth.connect({ integrationID, methodID })
+      const url = new URL(attempt.url)
+      expect(url.searchParams.get("client_id")).toBe("1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com")
+    }),
+  ),
+)
+
+it.live("begins sign-in with a custom client ID when its secret is configured", () =>
+  withEnv({ ANTIGRAVITY_OAUTH_CLIENT_ID: "custom-client.apps.googleusercontent.com", ANTIGRAVITY_OAUTH_CLIENT_SECRET: "test-client-secret" }, () =>
+    Effect.gen(function* () {
+      const { integrations } = yield* fixture
+      const attempt = yield* integrations.oauth.connect({ integrationID, methodID })
+      const url = new URL(attempt.url)
+      expect(url.searchParams.get("client_id")).toBe("custom-client.apps.googleusercontent.com")
+    }),
+  ),
+)
+
+it.effect("fails sign-in when ANTIGRAVITY_OAUTH_CLIENT_ID is overridden without a paired secret", () =>
+  withEnv({ ANTIGRAVITY_OAUTH_CLIENT_ID: "custom-client.apps.googleusercontent.com", ANTIGRAVITY_OAUTH_CLIENT_SECRET: undefined }, () =>
     Effect.gen(function* () {
       const { integrations } = yield* fixture
       const error = yield* integrations.oauth.connect({ integrationID, methodID }).pipe(Effect.flip)
       expect(error.message).toContain("ANTIGRAVITY_OAUTH_CLIENT_SECRET")
-      expect(error.message).toContain("console.cloud.google.com/apis/credentials")
+      expect(error.message).toContain("custom-client.apps.googleusercontent.com")
+      expect(error.message).toContain("or unset both")
     }),
   ),
 )

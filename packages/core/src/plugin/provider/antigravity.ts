@@ -11,10 +11,14 @@ import { activeCredential } from "./credential-settings.js"
 import { ProviderRefresh } from "./refresh.js"
 import { chatToGemini, geminiSessionId, geminiStreamToChat, type Item } from "../../antigravity/wire.js"
 
-// The client ID is public by OAuth design (it appears in the authorization URL). The client
-// secret is not: it is the registration owner's credential and must come from the environment,
-// mirroring the GITLAB_OAUTH_CLIENT_ID override in gitlab.ts. There is no embedded fallback.
+// This is Google's own first-party Antigravity OAuth client, not a registration of ours. Google
+// ships this id+secret pair inside its own Antigravity/Cloud Code products, so it is published
+// openly in Google's distributions and in every open-source Antigravity/Gemini-CLI integrator
+// (e.g. google-gemini/gemini-cli, NoeFabris/opencode-antigravity-auth, router-for-me/CLIProxyAPI).
+// Bundling it matches how official tooling authenticates. Users with their own OAuth registration
+// override both values through the environment, mirroring the GITLAB_OAUTH_CLIENT_ID pattern in gitlab.ts.
 const DEFAULT_CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
+const DEFAULT_CLIENT_SECRET = "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"
 const CALLBACK_PORT = 51121
 const TOKEN_URL = "https://oauth2.googleapis.com/token"
 const PROD_API = "https://cloudcode-pa.googleapis.com/v1internal"
@@ -42,19 +46,22 @@ const DEFAULT_MODELS = [
   { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", reasoning: false },
 ]
 
+// Resolution order: env override first, then the bundled public Google client. A custom client ID
+// with no paired secret fails closed below, because Google's public secret cannot authenticate a
+// foreign client id.
 function oauthClient(): { id: string; secret?: string } {
-  return {
-    id: process.env.ANTIGRAVITY_OAUTH_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID,
-    secret: process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET?.trim() || undefined,
-  }
+  const id = process.env.ANTIGRAVITY_OAUTH_CLIENT_ID?.trim() || DEFAULT_CLIENT_ID
+  const secret =
+    process.env.ANTIGRAVITY_OAUTH_CLIENT_SECRET?.trim() || (id === DEFAULT_CLIENT_ID ? DEFAULT_CLIENT_SECRET : undefined)
+  return { id, secret }
 }
 
 function missingClientSecret(client: { id: string }) {
   return new Error(
-    `Google Antigravity sign-in needs the OAuth client secret for ${client.id}. Register your own OAuth client at ` +
-      `https://console.cloud.google.com/apis/credentials (Web application, redirect URI ` +
-      `http://127.0.0.1:${CALLBACK_PORT}/callback), then set ANTIGRAVITY_OAUTH_CLIENT_SECRET to its client ` +
-      `secret. Set ANTIGRAVITY_OAUTH_CLIENT_ID too if you registered a client other than the bundled one.`,
+    `Google Antigravity sign-in cannot use ANTIGRAVITY_OAUTH_CLIENT_ID=${client.id} without a paired secret. ` +
+      `Set ANTIGRAVITY_OAUTH_CLIENT_SECRET to the client secret of the OAuth client you registered at ` +
+      `https://console.cloud.google.com/apis/credentials (redirect URI http://127.0.0.1:${CALLBACK_PORT}/callback), ` +
+      `or unset both ANTIGRAVITY_OAUTH_CLIENT_* variables to sign in with the bundled Google client.`,
   )
 }
 
