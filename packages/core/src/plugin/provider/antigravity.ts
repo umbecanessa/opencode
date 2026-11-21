@@ -425,7 +425,9 @@ export const AntigravityPlugin = define({
     yield* ctx.aisdk.hook(
       "sdk",
       Effect.fn(function* (evt) {
-        if (evt.package !== PACKAGE) return
+        // Hook events carry the npm specifier with the aisdk: prefix removed (Provider.packageName),
+        // so compare against the bare name like the other provider plugins do.
+        if (evt.package !== Provider.packageName(PACKAGE)) return
         const cred = antigravityCred
         if (!cred) return
         const project = typeof cred.metadata?.project === "string" ? cred.metadata.project : ""

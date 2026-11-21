@@ -3,6 +3,8 @@ import { Integration } from "@opencode/core/integration"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
 import { AntigravityPlugin, fetchAvailableModels } from "@opencode/core/plugin/provider/antigravity"
+import { AISDK } from "@opencode/core/aisdk"
+import { Model } from "@opencode/core/model"
 import { Provider } from "@opencode/core/provider"
 import { expect } from "bun:test"
 import { Effect, Schedule } from "effect"
@@ -41,12 +43,13 @@ const fixture = Effect.gen(function* () {
   const integrations = yield* Integration.Service
   const credentials = yield* Credential.Service
   const providers = yield* Provider.Service
+  const aisdk = yield* AISDK.Service
 
   const plugin = yield* Plugin.Service
   const host = yield* PluginHost.make(plugin, "test")
   yield* AntigravityPlugin.effect(host)
 
-  return { integrations, credentials, providers }
+  return { integrations, credentials, providers, aisdk }
 })
 
 it.effect("registers Antigravity OAuth method on google-antigravity integration", () =>
@@ -147,6 +150,35 @@ it.live("begins sign-in with the bundled client ID when a client secret is confi
       expect(url.searchParams.get("code_challenge_method")).toBe("S256")
     }),
   ),
+)
+
+it.effect("provides the bundled SDK for the stripped google-antigravity package name", () =>
+  Effect.gen(function* () {
+    const { credentials, aisdk } = yield* fixture
+    const created = yield* credentials.create({
+      integrationID,
+      value: Credential.OAuth.make({
+        type: "oauth",
+        methodID,
+        access: "google-antigravity-token",
+        refresh: "refresh-token",
+        expires: Date.now() + 3600_000,
+        metadata: { project: "test-project-123", plan: "Ultra" },
+      }),
+    })
+    yield* credentials.activate(created.id)
+
+    const event = yield* aisdk.runSDK({
+      model: Model.Info.make({
+        ...Model.Info.default(providerID, Model.ID.make("gemini-4-hydrogen-medium")),
+        modelID: Model.ID.make("gemini-4-hydrogen-medium"),
+        package: "aisdk:@ai-sdk/google-antigravity",
+      }),
+      package: "@ai-sdk/google-antigravity",
+      options: {},
+    })
+    expect(event.sdk).toBeDefined()
+  }),
 )
 
 it.effect("maps the roster to wire ids with display names and drops internal rows", () =>
