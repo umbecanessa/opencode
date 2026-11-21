@@ -38,12 +38,17 @@ const methodID = Integration.MethodID.make("oauth")
 const providerID = Provider.ID.make("google-antigravity")
 export const PACKAGE = Provider.aisdk("@ai-sdk/google-antigravity")
 
+// Fallback shown before the account's real roster arrives and when :fetchAvailableModels is
+// unreachable. Keep it at the lineup Antigravity currently ships; the roster endpoint stays the source of truth.
+// Claude rows carry the default thinking level suffix because the wire only accepts the per-level ids.
 const DEFAULT_MODELS = [
-  { id: "gemini-2.5-flash", name: "Gemini 2.5 Flash", reasoning: false },
-  { id: "gemini-2.5-pro", name: "Gemini 2.5 Pro", reasoning: true },
   { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", reasoning: false },
-  { id: "claude-3-7-sonnet", name: "Claude 3.7 Sonnet", reasoning: true },
-  { id: "claude-3-5-sonnet", name: "Claude 3.5 Sonnet", reasoning: false },
+  { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen", reasoning: true },
+  { id: "gemini-4-neon", name: "Gemini 4 Neon", reasoning: true },
+  { id: "gemini-4-carbon", name: "Gemini 4 Carbon", reasoning: true },
+  { id: "gemini-4-argon", name: "Gemini 4 Argon", reasoning: true },
+  { id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5 (Medium)", reasoning: true },
+  { id: "claude-opus-5-5-medium", name: "Claude Opus 5.5 (Medium)", reasoning: true },
 ]
 
 // Resolution order: env override first, then the bundled public Google client. A custom client ID
@@ -131,19 +136,67 @@ async function discoverProject(access: string): Promise<{ project: string; tier:
   throw new Error("This Google account has no Gemini Code Assist / Antigravity access yet. Open antigravity.google once, then try again.")
 }
 
+// The models the account is actually served, in wire form and with Google's display names. The
+// production endpoint answers for most accounts; the daily endpoint that streams responses is the
+// fallback. Yields undefined when both are unreachable or list nothing, so the caller keeps its
+// previous list. Never throws: fetch and JSON failures fall through to the next endpoint.
+export async function fetchAvailableModels(access: string, project: string): Promise<{ id: string; name: string }[] | undefined> {
+  for (const base of [PROD_API, DAILY_API]) {
+    try {
+      const res = await fetch(`${base}:fetchAvailableModels`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${access}`,
+          "Content-Type": "application/json",
+          "User-Agent": USER_AGENT,
+        },
+        body: JSON.stringify(project ? { project } : {}),
+      })
+      if (!res.ok) continue
+      const models = ((await res.json()) as Item)?.models
+      if (!models || typeof models !== "object" || Array.isArray(models)) continue
+      const roster = Object.entries(models as Record<string, Item | null>)
+        .filter(([id]) => id.length > 0)
+        .map(([id, info]) => ({
+          id,
+          name: typeof info?.displayName === "string" && info.displayName.length > 0 ? info.displayName : id,
+        }))
+      if (roster.length > 0) return roster
+    } catch {
+      continue
+    }
+  }
+  return undefined
+}
+
 export const AntigravityPlugin = define({
   id: "opencode.provider.google-antigravity",
   effect: Effect.fn(function* (ctx) {
     const loading = Semaphore.makeUnsafe(1)
     let antigravityCred: Credential.OAuth | undefined
     let source: Effect.Success<ReturnType<typeof ctx.integration.connection.active>>
+    let roster: { id: string; name: string }[] | undefined
 
     const load = Effect.fn("AntigravityPlugin.load")(function* () {
       const { connection, credential } = yield* activeCredential(ctx, integrationID)
       const previous = source
       antigravityCred = credential?.type === "oauth" && credential.methodID === methodID ? credential : undefined
       source = antigravityCred ? connection : undefined
+      if (previous !== source) roster = undefined
       return previous !== source
+    })
+
+    // Applies the account's model roster as soon as it answers; a failed fetch keeps the roster
+    // already registered, and a first fetch that fails leaves the static fallback in place.
+    const refreshModels = Effect.fn("AntigravityPlugin.refreshModels")(function* () {
+      const cred = antigravityCred
+      if (!cred) return
+      const next = yield* Effect.promise(() =>
+        fetchAvailableModels(cred.access, typeof cred.metadata?.project === "string" ? cred.metadata.project : ""),
+      )
+      if (next === undefined) return
+      roster = next
+      yield* ctx.provider.reload()
     })
 
     yield* ctx.integration.transform((editor) => {
@@ -322,7 +375,7 @@ export const AntigravityPlugin = define({
 
     yield* ctx.provider.transform((providers) => {
       if (!antigravityCred || !source) return
-      const models = DEFAULT_MODELS.map((m) =>
+      const models = (roster ?? DEFAULT_MODELS).map((m) =>
         Model.Info.make({
           ...Model.Info.default(providerID, Model.ID.make(m.id)),
           name: m.name,
@@ -357,7 +410,7 @@ export const AntigravityPlugin = define({
 
         const antigravityFetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
           const body = JSON.parse(init?.body as string) as Record<string, unknown>
-          const modelId = String(body.model ?? "gemini-2.5-flash")
+          const modelId = String(body.model ?? "gemini-3.8-flash")
           const isGemini = /gemini/i.test(modelId)
           const request = chatToGemini(body, { signatureFallback: isGemini })
           request.sessionId = geminiSessionId(body)
@@ -406,7 +459,9 @@ export const AntigravityPlugin = define({
 
     yield* ProviderRefresh.onSwitch(
       integrationID,
-      loading.withPermit(ProviderRefresh.reloadIfChanged(load(), ctx.provider.reload())),
+      loading.withPermit(ProviderRefresh.reloadIfChanged(load(), ctx.provider.reload())).pipe(Effect.andThen(refreshModels())),
     )
+
+    yield* Effect.forkScoped(refreshModels(), { startImmediately: true })
   }),
 })
