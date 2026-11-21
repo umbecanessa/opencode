@@ -15,13 +15,17 @@ const integrationID = Integration.ID.make("google-antigravity")
 const providerID = Provider.ID.make("google-antigravity")
 const methodID = Integration.MethodID.make("oauth")
 
-function withFetch<A, E, R>(handler: (url: string) => Response | Promise<Response>, body: Effect.Effect<A, E, R>) {
+function withFetch<A, E, R>(
+  handler: (url: string, agent: string) => Response | Promise<Response>,
+  body: Effect.Effect<A, E, R>,
+) {
   return Effect.acquireUseRelease(
     Effect.sync(() => {
       const previous = globalThis.fetch
-      globalThis.fetch = ((input: Parameters<typeof fetch>[0]) =>
+      globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
         handler(
           typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url ?? input),
+          String(((init?.headers ?? {}) as Record<string, string>)["User-Agent"] ?? ""),
         )) as typeof fetch
       return previous
     }),
@@ -89,8 +93,8 @@ it.effect("registers provider and models when Antigravity is connected", () =>
       const record = snap.records.get(providerID)
       const models = record?.models ? Array.from(record.models.values()) : []
       expect(models.length).toBeGreaterThan(0)
-      expect(models.some((m) => m.id === "gemini-3.8-flash")).toBe(true)
-      expect(models.some((m) => m.id === "gemini-4-neon")).toBe(true)
+      expect(models.some((m) => m.id === "gemini-3.8-flash-medium")).toBe(true)
+      expect(models.some((m) => m.id === "gemini-4-neon-medium")).toBe(true)
       expect(models.some((m) => m.id === "claude-sonnet-5-5-medium")).toBe(true)
       expect(models.some((m) => m.id === "gemini-2.5-flash")).toBe(false)
     }),
@@ -145,7 +149,7 @@ it.live("begins sign-in with the bundled client ID when a client secret is confi
   ),
 )
 
-it.effect("maps the roster to wire ids with display names", () =>
+it.effect("maps the roster to wire ids with display names and drops internal rows", () =>
   withFetch(
     (url) =>
       url.endsWith(":fetchAvailableModels")
@@ -153,6 +157,9 @@ it.effect("maps the roster to wire ids with display names", () =>
             models: {
               "gemini-4-neon": { displayName: "Gemini 4 Neon" },
               "claude-sonnet-5-5-medium": { quotaInfo: { isExhausted: false } },
+              "gemini-4-hydrogen-sonar": {},
+              "chat_20706": { isInternal: true },
+              "tab_flash_lite_preview": {},
             },
           })
         : new Response(null, { status: 404 }),
@@ -161,6 +168,24 @@ it.effect("maps the roster to wire ids with display names", () =>
       expect(roster).toEqual([
         { id: "gemini-4-neon", name: "Gemini 4 Neon" },
         { id: "claude-sonnet-5-5-medium", name: "claude-sonnet-5-5-medium" },
+      ])
+    }),
+  ),
+)
+
+it.effect("unions the CLI and IDE client-family rosters", () =>
+  withFetch(
+    (url, agent) =>
+      url.endsWith(":fetchAvailableModels")
+        ? agent.startsWith("antigravity/cli")
+          ? Response.json({ models: { "gemini-4-neon-medium": {} } })
+          : Response.json({ models: { "gemini-3.8-flash-high": { displayName: "Gemini 3.8 Flash (High)" } } })
+        : new Response(null, { status: 404 }),
+    Effect.gen(function* () {
+      const roster = yield* Effect.promise(() => fetchAvailableModels("token", "project-1"))
+      expect(roster).toEqual([
+        { id: "gemini-4-neon-medium", name: "gemini-4-neon-medium" },
+        { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)" },
       ])
     }),
   ),

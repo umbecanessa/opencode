@@ -25,6 +25,15 @@ const PROD_API = "https://cloudcode-pa.googleapis.com/v1internal"
 const DAILY_API = "https://daily-cloudcode-pa.googleapis.com/v1internal"
 const IDE_VERSION = "2.5.5"
 const USER_AGENT = `antigravity/ide/${IDE_VERSION} (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)`
+// The backend gates model availability by client family in the User-Agent, not by plan. The
+// gemini-4-* family is absent from :fetchAvailableModels and answers 404 to streamGenerateContent
+// under the IDE family above, while the CLI family below unlocks it (verified live 2026-11-22;
+// same split opencodex documents in src/adapters/client-fingerprint.ts). Gemini 3.x and Claude
+// rows work under both families.
+const CLI_VERSION = "1.3.4"
+const CLI_USER_AGENT = `antigravity/cli/${CLI_VERSION} (os_type=windows; arch=amd64; aidev_client; auth_method=oauth)`
+/** The User-Agent an inference request for `modelId` must carry. */
+const userAgentForModel = (modelId: string) => (modelId.startsWith("gemini-4-") ? CLI_USER_AGENT : USER_AGENT)
 const SCOPES = [
   "https://www.googleapis.com/auth/cloud-platform",
   "https://www.googleapis.com/auth/userinfo.email",
@@ -39,14 +48,16 @@ const providerID = Provider.ID.make("google-antigravity")
 export const PACKAGE = Provider.aisdk("@ai-sdk/google-antigravity")
 
 // Fallback shown before the account's real roster arrives and when :fetchAvailableModels is
-// unreachable. Keep it at the lineup Antigravity currently ships; the roster endpoint stays the source of truth.
-// Claude rows carry the default thinking level suffix because the wire only accepts the per-level ids.
+// unreachable. Every id here is a wire id verified to answer on live backends (2026-11); the
+// roster endpoint stays the source of truth. Rows carry the default thinking level suffix because
+// the wire only accepts the per-level ids.
 const DEFAULT_MODELS = [
-  { id: "gemini-3.8-flash", name: "Gemini 3.8 Flash", reasoning: false },
-  { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen", reasoning: true },
-  { id: "gemini-4-neon", name: "Gemini 4 Neon", reasoning: true },
-  { id: "gemini-4-carbon", name: "Gemini 4 Carbon", reasoning: true },
-  { id: "gemini-4-argon", name: "Gemini 4 Argon", reasoning: true },
+  { id: "gemini-3.8-flash-medium", name: "Gemini 3.8 Flash (Medium)", reasoning: false },
+  { id: "gemini-3.8-flash-high", name: "Gemini 3.8 Flash (High)", reasoning: true },
+  { id: "gemini-4-hydrogen-medium", name: "Gemini 4 Hydrogen (Medium)", reasoning: true },
+  { id: "gemini-4-neon-medium", name: "Gemini 4 Neon (Medium)", reasoning: true },
+  { id: "gemini-4-carbon-medium", name: "Gemini 4 Carbon (Medium)", reasoning: true },
+  { id: "gemini-4-argon-medium", name: "Gemini 4 Argon (Medium)", reasoning: true },
   { id: "claude-sonnet-5-5-medium", name: "Claude Sonnet 5.5 (Medium)", reasoning: true },
   { id: "claude-opus-5-5-medium", name: "Claude Opus 5.5 (Medium)", reasoning: true },
 ]
@@ -140,33 +151,44 @@ async function discoverProject(access: string): Promise<{ project: string; tier:
 // production endpoint answers for most accounts; the daily endpoint that streams responses is the
 // fallback. Yields undefined when both are unreachable or list nothing, so the caller keeps its
 // previous list. Never throws: fetch and JSON failures fall through to the next endpoint.
+// The models the account is actually served. Each backend answers with whatever roster belongs to
+// the client family the request claims, and the CLI family is the one that lists the gemini-4-*
+// family, so both families are asked on both backends and the results are merged; a displayName from
+// either family names the entry. Yields undefined when every call fails or lists nothing, so the
+// caller keeps its previous list. Never throws: fetch and JSON failures fall through.
 export async function fetchAvailableModels(access: string, project: string): Promise<{ id: string; name: string }[] | undefined> {
-  for (const base of [PROD_API, DAILY_API]) {
+  const merged = new Map<string, string>()
+  const ask = async (base: string, agent: string) => {
     try {
       const res = await fetch(`${base}:fetchAvailableModels`, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${access}`,
           "Content-Type": "application/json",
-          "User-Agent": USER_AGENT,
+          "User-Agent": agent,
         },
         body: JSON.stringify(project ? { project } : {}),
       })
-      if (!res.ok) continue
+      if (!res.ok) return
       const models = ((await res.json()) as Item)?.models
-      if (!models || typeof models !== "object" || Array.isArray(models)) continue
-      const roster = Object.entries(models as Record<string, Item | null>)
-        .filter(([id]) => id.length > 0)
-        .map(([id, info]) => ({
-          id,
-          name: typeof info?.displayName === "string" && info.displayName.length > 0 ? info.displayName : id,
-        }))
-      if (roster.length > 0) return roster
+      if (!models || typeof models !== "object" || Array.isArray(models)) return
+      for (const [id, info] of Object.entries(models as Record<string, Item | null>)) {
+        // Internal helper rows (tab-completion and chat backchannels) and the hidden -sonar
+        // rollout stubs are served alongside the real lineup but are not selectable models.
+        if (id.length === 0 || /^(tab_|chat_)/.test(id) || id.endsWith("-sonar")) continue
+        const display = typeof info?.displayName === "string" && info.displayName.length > 0 ? info.displayName : undefined
+        if (display !== undefined) merged.set(id, display)
+        else if (!merged.has(id)) merged.set(id, id)
+      }
     } catch {
-      continue
+      // Next backend or client family.
     }
   }
-  return undefined
+  for (const agent of [CLI_USER_AGENT, USER_AGENT]) {
+    for (const base of [PROD_API, DAILY_API]) await ask(base, agent)
+  }
+  if (merged.size === 0) return undefined
+  return [...merged].map(([id, name]) => ({ id, name }))
 }
 
 export const AntigravityPlugin = define({
@@ -410,7 +432,7 @@ export const AntigravityPlugin = define({
 
         const antigravityFetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
           const body = JSON.parse(init?.body as string) as Record<string, unknown>
-          const modelId = String(body.model ?? "gemini-3.8-flash")
+          const modelId = String(body.model ?? "gemini-3.8-flash-medium")
           const isGemini = /gemini/i.test(modelId)
           const request = chatToGemini(body, { signatureFallback: isGemini })
           request.sessionId = geminiSessionId(body)
@@ -421,7 +443,7 @@ export const AntigravityPlugin = define({
               Authorization: `Bearer ${cred.access}`,
               "Content-Type": "application/json",
               Accept: "text/event-stream",
-              "User-Agent": USER_AGENT,
+              "User-Agent": userAgentForModel(modelId),
             },
             body: JSON.stringify({
               model: modelId,
