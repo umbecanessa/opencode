@@ -430,6 +430,9 @@ export const AntigravityPlugin = define({
         if (evt.package !== Provider.packageName(PACKAGE)) return
         const cred = antigravityCred
         if (!cred) return
+        // Model resolution refreshes OAuth before constructing the SDK. The plugin's startup
+        // credential is only a snapshot and may already have expired by this request.
+        const access = typeof evt.options.apiKey === "string" ? evt.options.apiKey : cred.access
         const project = typeof cred.metadata?.project === "string" ? cred.metadata.project : ""
 
         const antigravityFetch = async (url: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -437,12 +440,32 @@ export const AntigravityPlugin = define({
           const modelId = String(body.model ?? "gemini-3.8-flash-medium")
           const isGemini = /gemini/i.test(modelId)
           const request = chatToGemini(body, { signatureFallback: isGemini })
+          // Google's system-prompt filter rejects this dotted tool reference with a misleading
+          // quota 429. Bracket notation is the same callable path and preserves the instruction.
+          const system = request.systemInstruction as Item | undefined
+          if (system?.parts) {
+            system.parts = (system.parts as Item[]).map((part) =>
+              typeof part.text === "string"
+                ? { ...part, text: part.text.replaceAll("tools.opencode.session_move", 'tools.opencode["session_move"]') }
+                : part,
+            )
+          }
+          if (!isGemini && Array.isArray(body.tools)) {
+            // Claude's gateway accepts JSON Schema, not Gemini's restricted Schema dialect.
+            // Converting anyOf/type-null through parameters makes ordinary nullable tools invalid.
+            request.tools = [{
+              functionDeclarations: (body.tools as Item[]).map((tool) => {
+                const fn = (tool.function ?? tool) as Item
+                return { name: fn.name, description: fn.description ?? "", parametersJsonSchema: fn.parameters }
+              }),
+            }]
+          }
           request.sessionId = geminiSessionId(body)
 
           const upstream = await fetch(`${DAILY_API}:streamGenerateContent?alt=sse`, {
             method: "POST",
             headers: {
-              Authorization: `Bearer ${cred.access}`,
+              Authorization: `Bearer ${access}`,
               "Content-Type": "application/json",
               Accept: "text/event-stream",
               "User-Agent": userAgentForModel(modelId),

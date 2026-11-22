@@ -1,4 +1,5 @@
 import { Credential } from "@opencode/core/credential"
+import type { LanguageModelV3 } from "@ai-sdk/provider"
 import { Integration } from "@opencode/core/integration"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHost } from "@opencode/core/plugin/host"
@@ -18,7 +19,7 @@ const providerID = Provider.ID.make("google-antigravity")
 const methodID = Integration.MethodID.make("oauth")
 
 function withFetch<A, E, R>(
-  handler: (url: string, agent: string) => Response | Promise<Response>,
+  handler: (url: string, agent: string, init?: RequestInit) => Response | Promise<Response>,
   body: Effect.Effect<A, E, R>,
 ) {
   return Effect.acquireUseRelease(
@@ -28,6 +29,7 @@ function withFetch<A, E, R>(
         handler(
           typeof input === "string" ? input : input instanceof URL ? input.toString() : String((input as Request).url ?? input),
           String(((init?.headers ?? {}) as Record<string, string>)["User-Agent"] ?? ""),
+          init,
         )) as typeof fetch
       return previous
     }),
@@ -180,6 +182,79 @@ it.effect("provides the bundled SDK for the stripped google-antigravity package 
     expect(event.sdk).toBeDefined()
   }),
 )
+
+it.effect("streams with the resolved OAuth token instead of the plugin startup snapshot", () => {
+  const authorization: string[] = []
+  const requests: Record<string, unknown>[] = []
+  return withFetch(
+    (url, agent, init) => {
+      if (!url.includes(":streamGenerateContent")) return new Response(null, { status: 503 })
+      authorization.push(new Headers(init?.headers).get("Authorization") ?? "")
+      requests.push(JSON.parse(String(init?.body)))
+      return new Response('data: {"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"OK"}]},"finishReason":"STOP"}]}}\n\n', {
+        headers: { "Content-Type": "text/event-stream" },
+      })
+    },
+    Effect.gen(function* () {
+      const services = yield* fixture
+      const created = yield* services.credentials.create({
+        integrationID,
+        value: Credential.OAuth.make({
+          type: "oauth",
+          methodID,
+          access: "startup-token",
+          refresh: "refresh-token",
+          expires: Date.now() + 3600_000,
+          metadata: { project: "test-project-123" },
+        }),
+      })
+      yield* services.credentials.activate(created.id)
+      const event = yield* services.aisdk.runSDK({
+        model: Model.Info.make({
+          ...Model.Info.default(providerID, Model.ID.make("gemini-4-hydrogen-medium")),
+          package: "aisdk:@ai-sdk/google-antigravity",
+        }),
+        package: "@ai-sdk/google-antigravity",
+        options: { apiKey: "refreshed-token" },
+      })
+      if (!event.sdk) throw new Error("Missing Antigravity SDK")
+      const model: LanguageModelV3 = event.sdk.languageModel("gemini-4-hydrogen-medium")
+      const result = yield* Effect.promise(() => model.doStream({
+        prompt: [
+          { role: "system", content: "Use tools.opencode.session_move({ directory: target })" },
+          { role: "user", content: [{ type: "text", text: "Reply OK" }] },
+        ],
+      }))
+      yield* Effect.promise(async () => {
+        for await (const part of result.stream) {
+          if (part.type === "error") throw part.error
+        }
+      })
+      expect(authorization).toEqual(["Bearer refreshed-token"])
+      expect(requests[0]).toMatchObject({ request: {
+        systemInstruction: { parts: [{ text: 'Use tools.opencode["session_move"]({ directory: target })' }] },
+      } })
+      const claude: LanguageModelV3 = event.sdk.languageModel("claude-sonnet-5-5-medium")
+      const stream = yield* Effect.promise(() => claude.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Reply OK" }] }],
+        tools: [{
+          type: "function",
+          name: "nullable_tool",
+          inputSchema: { type: "object", properties: { limit: { anyOf: [{ type: "number" }, { type: "null" }] } } },
+        }],
+      }))
+      yield* Effect.promise(async () => {
+        for await (const part of stream.stream) {
+          if (part.type === "error") throw part.error
+        }
+      })
+      expect(requests[1]).toMatchObject({ request: { tools: [{ functionDeclarations: [{
+        name: "nullable_tool",
+        parametersJsonSchema: { type: "object", properties: { limit: { anyOf: [{ type: "number" }, { type: "null" }] } } },
+      }] }] } })
+    }),
+  )
+})
 
 it.effect("maps the roster to wire ids with display names and drops internal rows", () =>
   withFetch(
