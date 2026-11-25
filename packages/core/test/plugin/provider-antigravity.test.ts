@@ -252,6 +252,30 @@ it.effect("streams with the resolved OAuth token instead of the plugin startup s
         name: "nullable_tool",
         parametersJsonSchema: { type: "object", properties: { limit: { anyOf: [{ type: "number" }, { type: "null" }] } } },
       }] }] } })
+      const history: LanguageModelV3 = event.sdk.languageModel("claude-opus-5-5-medium")
+      const historyStream = yield* Effect.promise(() => history.doStream({
+        prompt: [
+          { role: "user", content: [{ type: "text", text: "Read the file" }] },
+          {
+            role: "assistant",
+            content: [{ type: "tool-call", toolCallId: "call_1", toolName: "read", input: { path: "a.txt" } }],
+          },
+          {
+            role: "tool",
+            content: [{ type: "tool-result", toolCallId: "call_1", toolName: "read", output: { type: "text", value: "hello" } }],
+          },
+        ],
+      }))
+      yield* Effect.promise(async () => {
+        for await (const part of historyStream.stream) {
+          if (part.type === "error") throw part.error
+        }
+      })
+      const contents = ((requests[2] as { request: { contents: Array<Record<string, unknown>> } }).request).contents
+      expect(contents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ role: "model", parts: [expect.objectContaining({ functionCall: { id: "call_1", name: "read", args: { path: "a.txt" } } })] }),
+        expect.objectContaining({ role: "user", parts: [expect.objectContaining({ functionResponse: { id: "call_1", name: "read", response: { output: "hello" } } })] }),
+      ]))
     }),
   )
 })

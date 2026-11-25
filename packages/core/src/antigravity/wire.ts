@@ -114,6 +114,11 @@ function userParts(content: unknown): Item[] {
   return parts
 }
 
+// Anthropic tool_use.id accepts only [a-zA-Z0-9_-]; the converter rejects anything else.
+function sanitizeCallId(id: string): string {
+  return id.replace(/[^a-zA-Z0-9_-]/g, "_")
+}
+
 function parseArguments(raw: unknown): Item {
   if (typeof raw !== "string") return asItem(raw) ?? {}
   try {
@@ -135,7 +140,10 @@ function chatTools(body: { tools?: unknown }): Array<{ name: string; description
     }))
 }
 
-export function chatToGemini(body: Record<string, unknown>, opts: { signatureFallback: boolean }): Item {
+export function chatToGemini(
+  body: Record<string, unknown>,
+  opts: { signatureFallback: boolean; toolCallIds?: boolean },
+): Item {
   const system: string[] = []
   const contents: Array<{ role: "user" | "model"; parts: Item[] }> = []
   const callNames = new Map<string, string>()
@@ -159,7 +167,12 @@ export function chatToGemini(body: Record<string, unknown>, opts: { signatureFal
         const fn = (call.function ?? {}) as Item
         const id = String(call.id ?? "")
         callNames.set(id, String(fn.name))
-        const part: Item = { functionCall: { name: fn.name, args: parseArguments(fn.arguments) } }
+        const functionCall: Item = { name: fn.name, args: parseArguments(fn.arguments) }
+        // Claude-on-Antigravity maps functionCall.id to Anthropic tool_use.id; an id-less
+        // history entry fails upstream with "tool_use.id: Field required".
+        const wireId = opts.toolCallIds ? sanitizeCallId(id) : ""
+        if (wireId) functionCall.id = wireId
+        const part: Item = { functionCall }
         const signature = signatures.get(id)
         if (signature) part.thoughtSignature = signature
         parts.push(part)
@@ -167,7 +180,11 @@ export function chatToGemini(body: Record<string, unknown>, opts: { signatureFal
       push("model", parts)
     } else if (msg.role === "tool") {
       const id = String(msg.tool_call_id ?? "")
-      push("user", [{ functionResponse: { name: callNames.get(id) ?? "tool", response: { output: textOf(msg.content) } } }])
+      const functionResponse: Item = { name: callNames.get(id) ?? "tool", response: { output: textOf(msg.content) } }
+      // Same mapping as functionCall.id: this becomes Anthropic tool_result.tool_use_id.
+      const wireId = opts.toolCallIds ? sanitizeCallId(id) : ""
+      if (wireId) functionResponse.id = wireId
+      push("user", [{ functionResponse }])
     }
   }
   if (opts.signatureFallback) {

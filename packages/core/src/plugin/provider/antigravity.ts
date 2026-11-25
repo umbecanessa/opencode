@@ -439,7 +439,7 @@ export const AntigravityPlugin = define({
           const body = JSON.parse(init?.body as string) as Record<string, unknown>
           const modelId = String(body.model ?? "gemini-3.8-flash-medium")
           const isGemini = /gemini/i.test(modelId)
-          const request = chatToGemini(body, { signatureFallback: isGemini })
+          const request = chatToGemini(body, { signatureFallback: isGemini, toolCallIds: !isGemini })
           // Google's system-prompt filter rejects this dotted tool reference with a misleading
           // quota 429. Bracket notation is the same callable path and preserves the instruction.
           const system = request.systemInstruction as Item | undefined
